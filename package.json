@@ -2,12 +2,32 @@
   "name": "lace",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "build": "turbo run build",
+    "content:sync": "node scripts/not-implemented.mjs content:sync failure",
+    "db:generate": "node scripts/not-implemented.mjs db:generate failure",
+    "db:migrate:cloudflare": "node scripts/not-implemented.mjs db:migrate:cloudflare failure",
+    "db:migrate:node": "node scripts/not-implemented.mjs db:migrate:node failure",
+    "dev:cloudflare": "node scripts/not-implemented.mjs dev:cloudflare success",
+    "dev:node": "node scripts/not-implemented.mjs dev:node success",
+    "format:check": "oxfmt --check .",
+    "lint": "turbo run lint && node scripts/check-boundaries.mjs",
+    "spec:validate": "pnpm exec openspec validate --all --strict --no-interactive",
+    "test": "turbo run test && vitest run tests",
+    "test:integration": "node scripts/not-implemented.mjs test:integration failure",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
   "engines": {
     "node": ">=24.12.0 <25",
     "pnpm": ">=12 <13"
   },
-  "devDependencies": {
-    "@fission-ai/openspec": "catalog:"
-  }
+  "packageManager": "pnpm@12.3.4"
 }

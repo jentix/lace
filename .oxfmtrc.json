@@ -1,0 +1,13 @@
+{
+  "ignorePatterns": [
+    ".agents/**",
+    ".claude/**",
+    "docs/**",
+    "openspec/**",
+    "README.md",
+    "SECURITY.md",
+    "**/dist/**",
+    "**/coverage/**",
+    "node_modules/**"
+  ]
+}

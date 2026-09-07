@@ -1,0 +1,3 @@
+{
+  "ignorePatterns": [".agents/**", ".claude/**", "**/dist/**", "**/coverage/**", "node_modules/**"]
+}

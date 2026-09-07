@@ -66,9 +66,28 @@ not evidence that every member of the range is continuously tested.
 
 ## CI-used versions
 
-No CI workflow exists at Step 0, so no version is yet *CI-used*. Step 1 will
-configure CI to use the exact Node and pnpm baseline above. Until then, the
-versions in the first table are smoke-tested locally only.
+Step 1 configures GitHub Actions CI with Node 24.12.0 and pnpm 12.3.4 through
+Corepack. CI restores a pnpm-store cache keyed by operating system, those exact
+versions, and `pnpm-lock.yaml`; it does not cache `node_modules`.
+
+Every CI run installs with `pnpm install --frozen-lockfile`, verifies that the
+lockfile remains unchanged, then invokes the same root quality commands used
+locally: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, and `pnpm spec:validate`.
+
+### Dependency-boundary compatibility bridge
+
+`dependency-cruiser` is intentionally not installed, configured, or run in
+Step 1: version 18.2.0 supports TypeScript releases below the project-pinned
+TypeScript 7.0.2 baseline. The root lint command therefore runs a temporary
+TypeScript source-level boundary checker. It rejects forbidden architecture
+edges, cycles, cross-package source-path access, and Node built-ins in the
+portable `content` and `config` packages.
+
+Replace this checker with dependency-cruiser only after a dependency-cruiser
+release supports parsing TypeScript 7 without lowering the project's TypeScript
+baseline. That migration must retain the same boundary checks and negative
+fixture coverage.
 
 ## Baseline refresh policy
 

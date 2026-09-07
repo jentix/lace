@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.12.0
+          package-manager-cache: false
+
+      - name: Enable the pinned pnpm release
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.3.4 --activate
+
+      - name: Find pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-node-24.12.0-pnpm-12.3.4-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify lockfile is unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Validate OpenSpec
+        run: pnpm spec:validate
