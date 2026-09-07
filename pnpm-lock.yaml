@@ -122,6 +122,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    valibot:
+      specifier: 1.4.2
+      version: 1.4.2
     vitest:
       specifier: 5.0.0
       version: 5.0.0
@@ -246,6 +249,10 @@ importers:
         version: 5.0.0(vite@8.2.2(yaml@2.9.0))
 
   packages/content:
+    dependencies:
+      valibot:
+        specifier: 'catalog:'
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       oxlint:
         specifier: 'catalog:'
@@ -1421,6 +1428,14 @@ packages:
     engines: {node: '>=16.20.0'}
     hasBin: true
 
+  valibot@1.4.2:
+    resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
+    peerDependencies:
+      typescript: '>=5'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   vite@8.2.2:
     resolution: {integrity: sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2283,6 +2298,10 @@ snapshots:
       '@typescript/typescript-sunos-x64': 7.0.2
       '@typescript/typescript-win32-arm64': 7.0.2
       '@typescript/typescript-win32-x64': 7.0.2
+
+  valibot@1.4.2(typescript@7.0.2):
+    optionalDependencies:
+      typescript: 7.0.2
 
   vite@8.2.2(yaml@2.9.0):
     dependencies:

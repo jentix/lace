@@ -17,6 +17,9 @@
     "test": "vitest run src/index.test.mjs",
     "type-test": "tsc -p tsconfig.type-test.json --noEmit"
   },
+  "dependencies": {
+    "valibot": "catalog:"
+  },
   "devDependencies": {
     "oxlint": "catalog:",
     "typescript": "catalog:",
