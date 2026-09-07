@@ -478,7 +478,7 @@ export const field = {
     return buildStringField("textarea", options);
   },
 
-  /** Define a Tiptap JSON field; document semantics are validated in Session 2B. */
+  /** Define a safe Tiptap JSON field. */
   richText<const Options extends RichTextFieldOptions = RichTextFieldOptions>(
     options?: Options,
   ): RichTextFieldDefinition<Options> {

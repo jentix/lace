@@ -133,6 +133,36 @@ const invalidConfigurations = [
   ["wrong boolean default", () => field.boolean({ defaultValue: /** @type {boolean} */ ("true") })],
   ["wrong date default", () => field.date({ defaultValue: /** @type {string} */ (1) })],
   ["wrong rich-text default", () => field.richText({ defaultValue: /** @type {object} */ ([]) })],
+  [
+    "malformed rich-text default",
+    () =>
+      field.richText({ defaultValue: { content: [{ text: "Lace", type: "text" }], type: "doc" } }),
+  ],
+  [
+    "disallowed rich-text default node",
+    () => field.richText({ defaultValue: { content: [{ type: "html" }], type: "doc" } }),
+  ],
+  [
+    "unsafe rich-text default link",
+    () =>
+      field.richText({
+        defaultValue: {
+          content: [
+            {
+              content: [
+                {
+                  marks: [{ attrs: { href: "javascript:alert(1)" }, type: "link" }],
+                  text: "Lace",
+                  type: "text",
+                },
+              ],
+              type: "paragraph",
+            },
+          ],
+          type: "doc",
+        },
+      }),
+  ],
   ["too-short text default", () => field.text({ defaultValue: "x", minLength: 2 })],
   ["out-of-bounds number default", () => field.number({ defaultValue: 6, max: 5 })],
   ["unknown select default", () => field.select({ defaultValue: "other", options: ["news"] })],
