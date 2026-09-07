@@ -43,7 +43,7 @@ incompatible:
   cross-package deep imports.
 - pnpm catalogs centralize third-party versions; the lockfile is committed.
 - Turborepo orchestrates `build`, `typecheck`, `lint`, and `test`.
-- ESLint flat config and Prettier are the lint/format pair.
+- Oxlint config and Oxfmt are the lint/format pair.
 - Vitest is used for unit, contract, and API integration tests; Playwright is
   reserved for browser flows.
 - IDs are ULIDs generated through the application `IdGenerator` port.
@@ -142,7 +142,7 @@ rules are mechanically enforced.
 
 1. Create root `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`,
    `pnpm-workspace.yaml` catalog entries, `turbo.json`, `.editorconfig`,
-   `.gitignore`, Prettier config, ESLint flat config, and strict base TypeScript
+   `.gitignore`, Oxfmt config, Oxlint config, and strict base TypeScript
    configs for library, browser, Node, and Worker targets.
 2. Scaffold every package and app named in the architecture, including
    `apps/builder`. Each package gets a private initial version, explicit
