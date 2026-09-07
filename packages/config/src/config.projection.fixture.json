@@ -1,0 +1,82 @@
+{
+  "blocks": [
+    {
+      "fields": {
+        "body": { "required": false, "type": "richText" },
+        "eyebrow": { "required": false, "type": "text" },
+        "heading": { "required": true, "type": "text" },
+        "image": { "required": false, "type": "media" },
+        "primaryActionLabel": { "required": false, "type": "text" },
+        "primaryActionUrl": { "required": false, "type": "url" }
+      },
+      "type": "hero",
+      "version": 1
+    },
+    {
+      "fields": { "content": { "required": true, "type": "richText" } },
+      "type": "richText",
+      "version": 1
+    },
+    {
+      "fields": {
+        "alt": { "required": true, "type": "text" },
+        "caption": { "required": false, "type": "text" },
+        "media": { "required": true, "type": "media" }
+      },
+      "type": "image",
+      "version": 1
+    },
+    {
+      "fields": {
+        "attribution": { "required": false, "type": "text" },
+        "quote": { "required": true, "type": "text" }
+      },
+      "type": "quote",
+      "version": 1
+    },
+    {
+      "fields": {
+        "actionLabel": { "required": true, "type": "text" },
+        "actionUrl": { "required": true, "type": "url" },
+        "body": { "required": false, "type": "richText" },
+        "heading": { "required": true, "type": "text" }
+      },
+      "type": "cta",
+      "version": 1
+    }
+  ],
+  "content": [
+    {
+      "blocks": ["hero"],
+      "fields": {},
+      "key": "home",
+      "kind": "page",
+      "label": "Home",
+      "path": "/",
+      "projectionHash": "ef1f112c3ffd7edef434c65b38968b1e60e5239bd57ee0f0633b226817b06120",
+      "structureHash": "2cd34703ae098ed58db97729aa8079ff48e791dff001d80af66328c45370d189",
+      "version": 1
+    },
+    {
+      "blocks": ["richText", "image", "quote"],
+      "fields": {
+        "author": { "required": false, "type": "text" },
+        "category": {
+          "options": ["engineering", "design", "news"],
+          "required": false,
+          "type": "select"
+        },
+        "publishedAt": { "required": true, "type": "date" }
+      },
+      "key": "posts",
+      "kind": "collection",
+      "label": "Posts",
+      "projectionHash": "859ebf6d3cdf3d206f78928f29227cb260f42e3d1b0144e34c588d57273c84f1",
+      "route": "/blog/:slug",
+      "structureHash": "a7544e8e5599ffb53027cb3dff46d495df1aa59809bb4e633293205530d164e6",
+      "version": 1
+    }
+  ],
+  "projectionHash": "8c424864e2926177d089fbdc8ca30c8ae8b2e6c98dce076b23eef44682e10153",
+  "structureHash": "26b2950d249668ab2ec5ddab651f36d030d9a7782c3f8db559478a91cc6583a8"
+}

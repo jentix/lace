@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { field } from "@lacecms/content";
+import { builtInBlocks, canonicalizeJson, field } from "@lacecms/content";
+import fixtureConfig from "../dist/config.fixture.js";
 import {
   ConfigurationError,
   defineCollection,
@@ -10,6 +12,8 @@ import {
   packageName,
   resolveCollectionRoute,
 } from "../dist/index.js";
+
+const blocks = Object.values(builtInBlocks);
 
 function postModel(overrides = {}) {
   return defineCollection({
@@ -84,18 +88,27 @@ test.each([
 });
 
 test("rejects duplicate identity and configuration-detectable routes", async () => {
-  await expect(defineConfig({ content: [homeModel(), homeModel()] })).rejects.toThrow(/share key/u);
+  await expect(defineConfig({ blocks, content: [homeModel(), homeModel()] })).rejects.toThrow(
+    /share key/u,
+  );
   await expect(
-    defineConfig({ content: [postModel(), postModel({ key: "articles", route: "/blog/:slug" })] }),
+    defineConfig({
+      blocks,
+      content: [postModel(), postModel({ key: "articles", route: "/blog/:slug" })],
+    }),
   ).rejects.toThrow(/share route/u);
   await expect(
-    defineConfig({ content: [homeModel({ path: "/blog/releases" }), postModel()] }),
+    defineConfig({ blocks, content: [homeModel({ path: "/blog/releases" }), postModel()] }),
   ).rejects.toThrow(/collides/u);
   await expect(
-    defineConfig({ content: [postModel(), postModel({ key: "articles", renamedFrom: "posts" })] }),
+    defineConfig({
+      blocks,
+      content: [postModel(), postModel({ key: "articles", renamedFrom: "posts" })],
+    }),
   ).rejects.toThrow(/renamedFrom/u);
   await expect(
     defineConfig({
+      blocks,
       content: [homeModel({ renamedFrom: "landing" }), postModel({ renamedFrom: "landing" })],
     }),
   ).rejects.toThrow(/share renamedFrom/u);
@@ -143,7 +156,7 @@ test("normalizes only canonical page and collection routes", () => {
 });
 
 test("produces stable per-model and whole-config hashes", async () => {
-  const first = await defineConfig({ content: [postModel(), homeModel()] });
+  const first = await defineConfig({ blocks, content: [postModel(), homeModel()] });
   const reorderedFields = defineCollection({
     blocks: ["richText", "image"],
     fields: {
@@ -155,8 +168,9 @@ test("produces stable per-model and whole-config hashes", async () => {
     route: "/blog/:slug",
     version: 1,
   });
-  const second = await defineConfig({ content: [homeModel(), reorderedFields] });
+  const second = await defineConfig({ blocks, content: [homeModel(), reorderedFields] });
   const displayChanged = await defineConfig({
+    blocks,
     content: [
       definePage({
         blocks: ["hero"],
@@ -170,6 +184,7 @@ test("produces stable per-model and whole-config hashes", async () => {
     ],
   });
   const structuralChanged = await defineConfig({
+    blocks,
     content: [homeModel({ version: 2 }), postModel()],
   });
 
@@ -181,4 +196,29 @@ test("produces stable per-model and whole-config hashes", async () => {
   expect(first.structureHash).not.toBe(structuralChanged.structureHash);
   expect(Object.isFrozen(first)).toBe(true);
   expect(Object.isFrozen(first.content)).toBe(true);
+});
+
+test("rejects model blocks missing from the root registry and separates projections", async () => {
+  await expect(defineConfig({ blocks: [], content: [homeModel()] })).rejects.toThrow(
+    /unregistered/u,
+  );
+
+  const config = await defineConfig({ blocks, content: [homeModel(), postModel()] });
+  expect(config.public).toEqual({
+    blocks: config.blocks,
+    content: config.content,
+    projectionHash: config.projectionHash,
+    structureHash: config.structureHash,
+  });
+  expect(JSON.stringify(config.public)).not.toContain("validate");
+  expect(config.runtime.blocks.get("hero")?.validate({ heading: "Lace" }, "publish")).toEqual({
+    heading: "Lace",
+  });
+});
+
+test("snapshots the architecture root fixture's canonical public projection", () => {
+  const expected = JSON.parse(
+    readFileSync(new URL("./config.projection.fixture.json", import.meta.url), "utf8"),
+  );
+  expect(canonicalizeJson(fixtureConfig.public)).toBe(canonicalizeJson(expected));
 });

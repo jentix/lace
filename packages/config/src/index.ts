@@ -1,5 +1,20 @@
-import { MAX_SLUG_LENGTH, sha256CanonicalJson, toFieldMetadata } from "@lacecms/content";
-import type { FieldDefinition, FieldIsRequired, FieldValue, JsonValue } from "@lacecms/content";
+import {
+  defineBlockRegistry,
+  MAX_SLUG_LENGTH,
+  sha256CanonicalJson,
+  toBlockMetadata,
+  toBlockRegistryMetadata,
+  toFieldMetadata,
+} from "@lacecms/content";
+import type {
+  BlockDefinition,
+  BlockMetadata,
+  BlockRegistry,
+  FieldDefinition,
+  FieldIsRequired,
+  FieldValue,
+  JsonValue,
+} from "@lacecms/content";
 
 export const packageName = "@lacecms/config";
 
@@ -96,13 +111,31 @@ export type NormalizedContentModel<Fields extends FieldMap = FieldMap> =
 
 /** Input accepted by the asynchronous portable configuration normalizer. */
 export interface LaceConfigInput<Models extends readonly ContentModelDefinition[]> {
+  readonly blocks?: readonly BlockDefinition[];
   readonly content: Models;
 }
 
-/** Complete portable configuration with stable per-model and overall hashes. */
-export interface NormalizedConfig<_Models extends readonly ContentModelDefinition[]> {
+/** JSON-safe configuration sent to admin and public consumers. */
+export interface PublicConfigProjection {
+  readonly blocks: readonly BlockMetadata[];
   readonly content: readonly NormalizedContentModel[];
   readonly projectionHash: string;
+  readonly structureHash: string;
+}
+
+/** Executable startup configuration, including runtime block validators. */
+export interface RuntimeConfigProjection {
+  readonly blocks: BlockRegistry;
+  readonly content: readonly NormalizedContentModel[];
+}
+
+/** Complete portable configuration with explicit runtime and JSON projections. */
+export interface NormalizedConfig<_Models extends readonly ContentModelDefinition[]> {
+  readonly blocks: readonly BlockMetadata[];
+  readonly content: readonly NormalizedContentModel[];
+  readonly projectionHash: string;
+  readonly public: PublicConfigProjection;
+  readonly runtime: RuntimeConfigProjection;
   readonly structureHash: string;
 }
 
@@ -390,6 +423,19 @@ function assertUniqueModels(models: readonly ContentModelDefinition[]): void {
   }
 }
 
+function assertRegisteredModelBlocks(
+  models: readonly ContentModelDefinition[],
+  registry: BlockRegistry,
+): void {
+  for (const model of models) {
+    for (const type of model.blocks) {
+      if (registry.get(type) === undefined) {
+        fail(`model "${model.key}" references unregistered block type "${type}".`);
+      }
+    }
+  }
+}
+
 function asJsonValue(value: unknown): JsonValue {
   return value as JsonValue;
 }
@@ -415,8 +461,11 @@ function omitDisplayMetadata(value: JsonValue): MutableJsonValue {
   return projection;
 }
 
-function modelForHash(model: ContentModelDefinition): JsonValue {
-  return asJsonValue(model);
+function modelForHash(model: ContentModelDefinition, registry: BlockRegistry): JsonValue {
+  return asJsonValue({
+    ...model,
+    blockDefinitions: model.blocks.map((type) => toBlockMetadata(registry.get(type)!)),
+  });
 }
 
 function normalizedModelForHash(model: NormalizedContentModel): JsonValue {
@@ -448,13 +497,15 @@ export async function defineConfig<const Models extends readonly ContentModelDef
     fail("config.content must be an array of models.");
   }
 
+  const registry = defineBlockRegistry(input.blocks ?? []);
   const models = [...input.content];
   assertUniqueModels(models);
+  assertRegisteredModelBlocks(models, registry);
   models.sort((left, right) => left.key.localeCompare(right.key));
 
   const normalizedModels = await Promise.all(
     models.map(async (model) => {
-      const projection = modelForHash(model);
+      const projection = modelForHash(model, registry);
       const normalized: NormalizedContentModel = {
         ...model,
         projectionHash: await sha256CanonicalJson(projection),
@@ -464,13 +515,21 @@ export async function defineConfig<const Models extends readonly ContentModelDef
     }),
   );
 
+  const blocks = toBlockRegistryMetadata(registry);
   const projection = {
+    blocks,
     content: normalizedModels.map(normalizedModelForHash),
   } as unknown as JsonValue;
-  const normalized: NormalizedConfig<Models> = {
+  const publicProjection: PublicConfigProjection = {
+    blocks,
     content: deepFreeze(normalizedModels),
     projectionHash: await sha256CanonicalJson(projection),
     structureHash: await sha256CanonicalJson(omitDisplayMetadata(projection)),
+  };
+  const normalized: NormalizedConfig<Models> = {
+    ...publicProjection,
+    public: deepFreeze({ ...publicProjection }),
+    runtime: deepFreeze({ blocks: registry, content: publicProjection.content }),
   };
   return deepFreeze(normalized);
 }

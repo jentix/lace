@@ -1,12 +1,4 @@
-# content-model-configuration Specification
-
-## Purpose
-
-Defines the portable content-model configuration contract that lets a Lace
-installation describe typed pages and collections with deterministic public
-routes and configuration identity hashes.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Typed, stable content-model definitions
 The system SHALL let configuration code define page and collection models with
@@ -31,48 +23,6 @@ a rename when it is absent.
   non-integer version, an invalid `renamedFrom` key, a repeated current or former
   key, or an allowed block type absent from the registry
 - **THEN** configuration normalization fails before application startup
-
-### Requirement: Canonical page and collection routes
-The system SHALL accept only canonical absolute page paths and collection route
-patterns. A page path SHALL be fixed. A collection route SHALL contain exactly
-one complete `:slug` segment and no other parameter segment. Paths and patterns
-SHALL reject query strings, fragments, dot segments, duplicate slashes, and a
-trailing slash other than the root path. The configuration SHALL reject duplicate
-page paths, duplicate collection patterns, and a page path that matches a
-collection route pattern.
-
-#### Scenario: Normalize valid fixed and collection routes
-- **WHEN** a page uses `/` or `/about` and a collection uses `/blog/:slug`
-- **THEN** configuration retains those canonical paths and patterns
-
-#### Scenario: Reject an ambiguous or unsafe route
-- **WHEN** a path or pattern includes a query string, fragment, dot segment,
-  duplicate slash, non-root trailing slash, missing slug placeholder, multiple
-  slug placeholders, or another parameter segment
-- **THEN** configuration normalization fails before application startup
-
-#### Scenario: Reject a fixed-path collision visible in configuration
-- **WHEN** two pages share a path, two collections share a pattern, or a page
-  path matches a collection's slug route pattern
-- **THEN** configuration normalization fails and identifies the conflicting
-  model identities
-
-### Requirement: Safe collection-route resolution
-The system SHALL resolve a canonical collection route pattern with a submitted
-slug only when the slug is lowercase ASCII letters or digits joined by single
-hyphens and the resolved result remains a canonical absolute path. Resolution
-SHALL substitute exactly the route's one slug segment and SHALL not interpret
-the slug as another route segment, query string, fragment, or path traversal.
-
-#### Scenario: Resolve a collection item path
-- **WHEN** a collection route `/blog/:slug` is resolved with slug
-  `release-notes`
-- **THEN** the resolved public path is `/blog/release-notes`
-
-#### Scenario: Reject an unsafe collection slug
-- **WHEN** route resolution receives a slug with a slash, uppercase character,
-  empty segment, query, fragment, or dot segment
-- **THEN** resolution fails without producing a public path
 
 ### Requirement: Deterministic normalized configuration identity
 The system SHALL return model and whole-configuration definitions as detached,

@@ -1,5 +1,6 @@
-import { field } from "./index.js";
+import { defineBlock, field } from "./index.js";
 import type {
+  BlockDataValues,
   FieldDefinition,
   FieldDefinitionVisitor,
   FieldIsRequired,
@@ -27,6 +28,14 @@ const selectWithDefault = field.select({
 });
 const url = field.url({ defaultValue: "https://lacecms.dev" });
 const media = field.media({ defaultValue: "01K4M0D3LQYH8ND26GG2DDC8N2" });
+const hero = defineBlock({
+  fields: {
+    eyebrow: field.text(),
+    heading: field.text({ required: true }),
+  },
+  type: "hero",
+  version: 1,
+});
 
 type _text = Expect<Equal<FieldValue<typeof text>, string>>;
 type _textarea = Expect<Equal<FieldValue<typeof textarea>, string>>;
@@ -41,6 +50,9 @@ type _media = Expect<Equal<FieldValue<typeof media>, string>>;
 type _required = Expect<Equal<FieldIsRequired<typeof text>, true>>;
 type _defaultIsRequired = Expect<Equal<FieldIsRequired<typeof textarea>, true>>;
 type _selectDefaultIsRequired = Expect<Equal<FieldIsRequired<typeof selectWithDefault>, true>>;
+type _blockValues = Expect<
+  Equal<BlockDataValues<typeof hero.fields>, Readonly<{ eyebrow?: string; heading: string }>>
+>;
 
 declare const anyField: FieldDefinition;
 const _optionalCommonMetadata = anyField.label;
@@ -51,6 +63,9 @@ field.select({ defaultValue: "other", options: ["design", "engineering"] as cons
 
 // @ts-expect-error Number defaults must be numeric.
 field.number({ defaultValue: "one" });
+
+// @ts-expect-error A block version is mandatory.
+defineBlock({ fields: {}, type: "missing-version" });
 
 const exhaustiveVisitor: FieldDefinitionVisitor<string> = {
   boolean: () => "boolean",
