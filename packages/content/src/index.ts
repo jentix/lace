@@ -1,3 +1,5 @@
+import * as v from "valibot";
+
 /** A JSON primitive that can be transported between Lace runtimes. */
 export type JsonPrimitive = boolean | null | number | string;
 
@@ -48,8 +50,8 @@ export type BooleanFieldOptions = CommonFieldOptions<boolean>;
 /** Options supported by date, datetime, URL, and media fields. */
 export type StringValueFieldOptions = CommonFieldOptions<string>;
 
-/** Options supported by a rich-text field before Session 2B document checks. */
-export interface RichTextFieldOptions extends CommonFieldOptions<JsonObject> {}
+/** Options supported by a safe Tiptap rich-text field. */
+export interface RichTextFieldOptions extends CommonFieldOptions<SafeRichTextDocument> {}
 
 /** Options supported by select fields. */
 export interface SelectFieldOptions<Choices extends readonly string[]> extends CommonFieldOptions<
@@ -151,7 +153,7 @@ export type FieldValue<Definition extends FieldDefinition> = Definition["type"] 
   : Definition["type"] extends "number"
     ? number
     : Definition["type"] extends "richText"
-      ? JsonObject
+      ? SafeRichTextDocument
       : Definition["type"] extends "select"
         ? Definition extends { readonly options: readonly (infer Choice)[] }
           ? Choice
@@ -487,8 +489,8 @@ export const field = {
     addDefault(
       definition,
       normalized,
-      (value) => value !== null && !Array.isArray(value) && typeof value === "object",
-      "must be a JSON object.",
+      (value) => isSafeRichTextDocument(value),
+      "must be a safe rich-text document.",
     );
     return deepFreeze(definition) as RichTextFieldDefinition<Options>;
   },
@@ -631,4 +633,569 @@ export function toFieldMetadata(definition: FieldDefinition): FieldMetadata {
     fail("definition", "must be a field-definition object.");
   }
   return deepFreeze(normalized) as FieldMetadata;
+}
+
+/** A mark permitted in Lace rich-text documents. */
+export type SafeRichTextMark =
+  | { readonly type: "bold" | "code" | "italic" | "strike" }
+  | { readonly attrs: { readonly href: string }; readonly type: "link" };
+
+/** A node permitted in Lace rich-text documents. */
+export type SafeRichTextNode =
+  | { readonly type: "hardBreak" }
+  | { readonly marks?: readonly SafeRichTextMark[]; readonly text: string; readonly type: "text" }
+  | { readonly content?: readonly SafeRichTextNode[]; readonly type: "paragraph" }
+  | {
+      readonly attrs: { readonly level: 1 | 2 | 3 };
+      readonly content?: readonly SafeRichTextNode[];
+      readonly type: "heading";
+    }
+  | { readonly content: readonly SafeRichTextNode[]; readonly type: "bulletList" | "orderedList" }
+  | { readonly content: readonly SafeRichTextNode[]; readonly type: "listItem" }
+  | { readonly content: readonly SafeRichTextNode[]; readonly type: "blockquote" };
+
+/** The closed, safe Tiptap document representation supported by Lace. */
+export interface SafeRichTextDocument {
+  readonly content: readonly SafeRichTextNode[];
+  readonly type: "doc";
+}
+
+/** A stable path segment for validation errors. */
+export type ValidationPathSegment = number | string;
+
+/** A portable validation error that callers can associate with form values. */
+export interface ContentValidationIssue {
+  readonly code: string;
+  readonly message: string;
+  readonly path: readonly ValidationPathSegment[];
+}
+
+/** Thrown when submitted content fails a portable validation contract. */
+export class ContentValidationError extends Error {
+  public readonly issues: readonly ContentValidationIssue[];
+
+  public constructor(issues: readonly ContentValidationIssue[]) {
+    super(issues.map((issue) => `${formatValidationPath(issue.path)} ${issue.message}`).join("; "));
+    this.name = "ContentValidationError";
+    this.issues = issues;
+  }
+}
+
+function formatValidationPath(path: readonly ValidationPathSegment[]): string {
+  if (path.length === 0) {
+    return "$";
+  }
+
+  return path.reduce<string>((result, segment) => {
+    return typeof segment === "number" ? `${result}[${segment}]` : `${result}.${segment}`;
+  }, "$");
+}
+
+function invalid(path: readonly ValidationPathSegment[], code: string, message: string): never {
+  throw new ContentValidationError([{ code, message, path }]);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null && typeof value === "object" && !Array.isArray(value) && isPlainObject(value)
+  );
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: readonly ValidationPathSegment[],
+): void {
+  const allowed = new Set([...required, ...optional]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      invalid([...path, key], "unknown_key", "is not permitted.");
+    }
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) {
+      invalid([...path, key], "missing_key", "is required.");
+    }
+  }
+}
+
+/** Returns whether a URL is permitted in Lace URL fields and rich-text links. */
+export function isSafeUrl(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    /\s/u.test(value) ||
+    value.includes(String.fromCodePoint(0))
+  ) {
+    return false;
+  }
+  if (value.startsWith("#")) {
+    return true;
+  }
+  if (value.startsWith("/")) {
+    return !value.startsWith("//");
+  }
+  return /^(?:https?:\/\/[^/?#\s]+(?:[/?#][^\s]*)?|mailto:[^\s@]+@[^\s@]+|tel:\+?[0-9(). -]+)$/u.test(
+    value,
+  );
+}
+
+function assertMarks(value: unknown, path: readonly ValidationPathSegment[]): void {
+  if (!Array.isArray(value)) {
+    invalid(path, "invalid_marks", "must be an array.");
+  }
+  for (const [index, mark] of value.entries()) {
+    const markPath = [...path, index];
+    if (!isRecord(mark) || typeof mark.type !== "string") {
+      invalid(markPath, "invalid_mark", "must be a mark object.");
+    }
+    if (mark.type === "link") {
+      assertExactKeys(mark, ["attrs", "type"], [], markPath);
+      if (!isRecord(mark.attrs)) {
+        invalid([...markPath, "attrs"], "invalid_link_attributes", "must be an object.");
+      }
+      assertExactKeys(mark.attrs, ["href"], [], [...markPath, "attrs"]);
+      if (!isSafeUrl(mark.attrs.href)) {
+        invalid([...markPath, "attrs", "href"], "unsafe_url", "must be an approved URL.");
+      }
+      continue;
+    }
+    if (
+      mark.type === "bold" ||
+      mark.type === "code" ||
+      mark.type === "italic" ||
+      mark.type === "strike"
+    ) {
+      assertExactKeys(mark, ["type"], [], markPath);
+      continue;
+    }
+    invalid([...markPath, "type"], "unknown_mark", "is not permitted.");
+  }
+}
+
+function assertRichTextChildren(
+  value: unknown,
+  path: readonly ValidationPathSegment[],
+  allowed: readonly SafeRichTextNode["type"][],
+): void {
+  if (!Array.isArray(value)) {
+    invalid(path, "invalid_content", "must be an array.");
+  }
+  for (const [index, child] of value.entries()) {
+    assertRichTextNode(child, [...path, index]);
+    if (!allowed.includes(child.type)) {
+      invalid([...path, index, "type"], "invalid_child", "is not permitted in this node.");
+    }
+  }
+}
+
+function assertRichTextNode(
+  value: unknown,
+  path: readonly ValidationPathSegment[],
+): asserts value is SafeRichTextNode {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    invalid(path, "invalid_node", "must be a rich-text node object.");
+  }
+
+  if (value.type === "text") {
+    assertExactKeys(value, ["text", "type"], ["marks"], path);
+    if (typeof value.text !== "string") {
+      invalid([...path, "text"], "invalid_text", "must be a string.");
+    }
+    if (Object.hasOwn(value, "marks")) {
+      assertMarks(value.marks, [...path, "marks"]);
+    }
+    return;
+  }
+
+  if (value.type === "hardBreak") {
+    assertExactKeys(value, ["type"], [], path);
+    return;
+  }
+
+  if (value.type === "paragraph") {
+    assertExactKeys(value, ["type"], ["content"], path);
+    if (Object.hasOwn(value, "content")) {
+      assertRichTextChildren(value.content, [...path, "content"], ["hardBreak", "text"]);
+    }
+    return;
+  }
+
+  if (value.type === "heading") {
+    assertExactKeys(value, ["attrs", "type"], ["content"], path);
+    if (!isRecord(value.attrs)) {
+      invalid([...path, "attrs"], "invalid_heading_attributes", "must be an object.");
+    }
+    assertExactKeys(value.attrs, ["level"], [], [...path, "attrs"]);
+    if (value.attrs.level !== 1 && value.attrs.level !== 2 && value.attrs.level !== 3) {
+      invalid([...path, "attrs", "level"], "invalid_heading_level", "must be 1, 2, or 3.");
+    }
+    if (Object.hasOwn(value, "content")) {
+      assertRichTextChildren(value.content, [...path, "content"], ["hardBreak", "text"]);
+    }
+    return;
+  }
+
+  if (value.type === "bulletList" || value.type === "orderedList") {
+    assertExactKeys(value, ["content", "type"], [], path);
+    assertRichTextChildren(value.content, [...path, "content"], ["listItem"]);
+    return;
+  }
+
+  if (value.type === "listItem") {
+    assertExactKeys(value, ["content", "type"], [], path);
+    assertRichTextChildren(
+      value.content,
+      [...path, "content"],
+      ["bulletList", "orderedList", "paragraph"],
+    );
+    return;
+  }
+
+  if (value.type === "blockquote") {
+    assertExactKeys(value, ["content", "type"], [], path);
+    assertRichTextChildren(
+      value.content,
+      [...path, "content"],
+      ["bulletList", "orderedList", "paragraph"],
+    );
+    return;
+  }
+
+  invalid([...path, "type"], "unknown_node", "is not permitted.");
+}
+
+/** Validates and returns a closed, safe rich-text document. */
+export function validateRichTextDocument(value: unknown): SafeRichTextDocument {
+  if (!isRecord(value) || value.type !== "doc") {
+    invalid([], "invalid_document", "must be a doc node.");
+  }
+  assertExactKeys(value, ["content", "type"], [], []);
+  assertRichTextChildren(
+    value.content,
+    ["content"],
+    ["blockquote", "bulletList", "heading", "orderedList", "paragraph"],
+  );
+  return value as unknown as SafeRichTextDocument;
+}
+
+function isSafeRichTextDocument(value: unknown): value is SafeRichTextDocument {
+  try {
+    validateRichTextDocument(value);
+    return true;
+  } catch (error) {
+    if (error instanceof ContentValidationError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** A total handler map for every supported field definition. */
+export type FieldDefinitionVisitor<Result> = {
+  readonly [Type in FieldType]: (
+    definition: Extract<FieldDefinition, { readonly type: Type }>,
+  ) => Result;
+};
+
+/** Visits a field descriptor exhaustively. */
+export function visitFieldDefinition<Result>(
+  definition: FieldDefinition,
+  visitor: FieldDefinitionVisitor<Result>,
+): Result {
+  switch (definition.type) {
+    case "boolean":
+      return visitor.boolean(definition);
+    case "date":
+      return visitor.date(definition);
+    case "datetime":
+      return visitor.datetime(definition);
+    case "media":
+      return visitor.media(definition);
+    case "number":
+      return visitor.number(definition);
+    case "richText":
+      return visitor.richText(definition);
+    case "select":
+      return visitor.select(definition);
+    case "text":
+      return visitor.text(definition);
+    case "textarea":
+      return visitor.textarea(definition);
+    case "url":
+      return visitor.url(definition);
+  }
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return false;
+  }
+  const parts = value.split("-");
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+function isUtcIsoDatetime(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+function isFieldValue(definition: FieldDefinition, value: unknown): boolean {
+  return visitFieldDefinition(definition, {
+    boolean: () => typeof value === "boolean",
+    date: () => isCalendarDate(value),
+    datetime: () => isUtcIsoDatetime(value),
+    media: () => typeof value === "string" && value.length > 0,
+    number: (fieldDefinition) =>
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      (fieldDefinition.min === undefined || value >= fieldDefinition.min) &&
+      (fieldDefinition.max === undefined || value <= fieldDefinition.max),
+    richText: () => isSafeRichTextDocument(value),
+    select: (fieldDefinition) =>
+      typeof value === "string" && fieldDefinition.options.includes(value),
+    text: (fieldDefinition) =>
+      typeof value === "string" &&
+      (fieldDefinition.minLength === undefined || value.length >= fieldDefinition.minLength) &&
+      (fieldDefinition.maxLength === undefined || value.length <= fieldDefinition.maxLength),
+    textarea: (fieldDefinition) =>
+      typeof value === "string" &&
+      (fieldDefinition.minLength === undefined || value.length >= fieldDefinition.minLength) &&
+      (fieldDefinition.maxLength === undefined || value.length <= fieldDefinition.maxLength),
+    url: () => isSafeUrl(value),
+  });
+}
+
+/** A Valibot runtime schema compiled from a field definition. */
+export type CompiledFieldSchema<Definition extends FieldDefinition> = v.BaseSchema<
+  unknown,
+  FieldValue<Definition>,
+  v.BaseIssue<unknown>
+>;
+
+/** Compiles a field definition into its Valibot runtime schema. */
+export function compileFieldSchema<Definition extends FieldDefinition>(
+  definition: Definition,
+): CompiledFieldSchema<Definition> {
+  return v.custom<FieldValue<Definition>>((value) =>
+    isFieldValue(definition, value),
+  ) as CompiledFieldSchema<Definition>;
+}
+
+/** Validates a submitted field value and returns its inferred value type. */
+export function validateFieldValue<Definition extends FieldDefinition>(
+  definition: Definition,
+  value: unknown,
+  path: readonly ValidationPathSegment[] = [],
+): FieldValue<Definition> {
+  const result = v.safeParse(compileFieldSchema(definition), value);
+  if (!result.success) {
+    invalid(path, "invalid_field_value", "does not conform to its field definition.");
+  }
+  return result.output;
+}
+
+/** A model field map accepted by the draft and publish validators. */
+export type ModelFieldDefinitions = Readonly<Record<string, FieldDefinition>>;
+
+/** A validated set of model field values. */
+export type ModelFieldValues = Readonly<Record<string, FieldValue<FieldDefinition>>>;
+
+/** The validation state of a content snapshot. */
+export type ContentValidationMode = "draft" | "publish";
+
+/** Validates field data for either an incomplete draft or a publish candidate. */
+export function validateModelFields(
+  definitions: ModelFieldDefinitions,
+  value: unknown,
+  mode: ContentValidationMode,
+): ModelFieldValues {
+  if (!isRecord(value)) {
+    invalid([], "invalid_fields", "must be an object.");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!Object.hasOwn(definitions, key)) {
+      invalid([key], "unknown_field", "is not defined by this model.");
+    }
+  }
+
+  const output: Record<string, FieldValue<FieldDefinition>> = {};
+  for (const [key, definition] of Object.entries(definitions)) {
+    if (Object.hasOwn(value, key)) {
+      output[key] = validateFieldValue(definition, value[key], [key]);
+      continue;
+    }
+    if (Object.hasOwn(definition, "defaultValue")) {
+      output[key] = validateFieldValue(definition, definition.defaultValue, [key]);
+      continue;
+    }
+    if (mode === "publish" && definition.required) {
+      invalid([key], "missing_required_field", "is required for publication.");
+    }
+  }
+  return output;
+}
+
+/** Maximum title length shared by draft, publish, REST, and admin validation. */
+export const MAX_TITLE_LENGTH = 200;
+/** Maximum slug length shared by publish, REST, and admin validation. */
+export const MAX_SLUG_LENGTH = 100;
+/** Maximum flat top-level block count for one entry. */
+export const MAX_TOP_LEVEL_BLOCKS = 200;
+/** Maximum UTF-8 bytes in fields JSON or a single block data JSON value. */
+export const MAX_JSON_BYTES = 1_000_000;
+
+/** The only entry kinds required before model definitions are introduced. */
+export type ContentModelKind = "collection" | "page";
+
+/** A block-like value whose data can be limited before the Step 3 block registry exists. */
+export interface EntryBlockData {
+  readonly data: JsonValue;
+}
+
+/** System data validated alongside a model field record. */
+export interface EntryPayloadInput {
+  readonly blocks: readonly EntryBlockData[];
+  readonly fields: JsonObject;
+  readonly kind: ContentModelKind;
+  readonly slug?: string;
+  readonly title: string;
+}
+
+/** Returns canonical JSON with recursively sorted object keys. */
+export function canonicalizeJson(value: JsonValue): string {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalizeJson).join(",")}]`;
+  }
+  const object = value as JsonObject;
+  const entries = Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalizeJson(object[key]!)}`);
+  return `{${entries.join(",")}}`;
+}
+
+interface TextEncoderLike {
+  encode(input: string): Uint8Array;
+}
+
+interface TextEncoderConstructorLike {
+  new (): TextEncoderLike;
+}
+
+/** Gets the UTF-8 byte count of portable JSON through canonical serialization. */
+export function canonicalJsonByteLength(value: JsonValue): number {
+  const TextEncoderConstructor = (
+    globalThis as unknown as { readonly TextEncoder?: TextEncoderConstructorLike }
+  ).TextEncoder;
+  if (TextEncoderConstructor === undefined) {
+    throw new Error("TextEncoder is required for canonical JSON byte measurement.");
+  }
+  return new TextEncoderConstructor().encode(canonicalizeJson(value)).byteLength;
+}
+
+/** Minimal portable shape used by the SHA-256 helper. */
+export interface WebCryptoLike {
+  readonly subtle: {
+    digest(algorithm: "SHA-256", data: Uint8Array): Promise<ArrayBuffer>;
+  };
+}
+
+function getWebCrypto(): WebCryptoLike {
+  const crypto = (globalThis as unknown as { readonly crypto?: WebCryptoLike }).crypto;
+  if (crypto === undefined) {
+    throw new Error("Web Crypto is required for canonical JSON hashing.");
+  }
+  return crypto;
+}
+
+/** Hashes canonical JSON UTF-8 bytes with Web Crypto SHA-256 as lowercase hexadecimal. */
+export async function sha256CanonicalJson(
+  value: JsonValue,
+  webCrypto: WebCryptoLike = getWebCrypto(),
+): Promise<string> {
+  const TextEncoderConstructor = (
+    globalThis as unknown as { readonly TextEncoder?: TextEncoderConstructorLike }
+  ).TextEncoder;
+  if (TextEncoderConstructor === undefined) {
+    throw new Error("TextEncoder is required for canonical JSON hashing.");
+  }
+  const digest = new Uint8Array(
+    await webCrypto.subtle.digest(
+      "SHA-256",
+      new TextEncoderConstructor().encode(canonicalizeJson(value)),
+    ),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function assertJsonSize(value: JsonValue, path: readonly ValidationPathSegment[]): void {
+  if (canonicalJsonByteLength(value) > MAX_JSON_BYTES) {
+    invalid(path, "json_too_large", `must not exceed ${MAX_JSON_BYTES} UTF-8 bytes.`);
+  }
+}
+
+/** Validates system entry data and shared payload limits for a draft or publish candidate. */
+export function validateEntryPayload(
+  input: EntryPayloadInput,
+  mode: ContentValidationMode,
+): EntryPayloadInput {
+  if (input.kind !== "collection" && input.kind !== "page") {
+    invalid(["kind"], "invalid_model_kind", "must be page or collection.");
+  }
+  if (typeof input.title !== "string" || input.title.length === 0) {
+    invalid(["title"], "missing_title", "is required.");
+  }
+  if (input.title.length > MAX_TITLE_LENGTH) {
+    invalid(["title"], "title_too_long", `must not exceed ${MAX_TITLE_LENGTH} characters.`);
+  }
+  if (
+    input.slug !== undefined &&
+    (typeof input.slug !== "string" || input.slug.length > MAX_SLUG_LENGTH)
+  ) {
+    invalid(["slug"], "slug_too_long", `must not exceed ${MAX_SLUG_LENGTH} characters.`);
+  }
+  if (
+    mode === "publish" &&
+    input.kind === "collection" &&
+    (input.slug === undefined || input.slug.length === 0)
+  ) {
+    invalid(["slug"], "missing_slug", "is required for collection publication.");
+  }
+  if (!Array.isArray(input.blocks)) {
+    invalid(["blocks"], "invalid_blocks", "must be an array.");
+  }
+  if (input.blocks.length > MAX_TOP_LEVEL_BLOCKS) {
+    invalid(
+      ["blocks"],
+      "too_many_blocks",
+      `must not contain more than ${MAX_TOP_LEVEL_BLOCKS} blocks.`,
+    );
+  }
+  assertJsonSize(input.fields, ["fields"]);
+  for (const [index, block] of input.blocks.entries()) {
+    if (!isRecord(block) || !Object.hasOwn(block, "data")) {
+      invalid(["blocks", index], "invalid_block", "must contain JSON data.");
+    }
+    assertJsonSize(block.data as JsonValue, ["blocks", index, "data"]);
+  }
+  return input;
 }

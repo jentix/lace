@@ -1,5 +1,11 @@
 import { field } from "./index.js";
-import type { FieldDefinition, FieldIsRequired, FieldValue, JsonObject } from "./index.js";
+import type {
+  FieldDefinition,
+  FieldDefinitionVisitor,
+  FieldIsRequired,
+  FieldValue,
+  SafeRichTextDocument,
+} from "./index.js";
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
@@ -9,7 +15,7 @@ type Expect<Value extends true> = Value;
 
 const text = field.text({ required: true });
 const textarea = field.textarea({ defaultValue: "Draft" });
-const richText = field.richText({ defaultValue: { type: "doc" } });
+const richText = field.richText({ defaultValue: { content: [], type: "doc" } });
 const number = field.number({ defaultValue: 1 });
 const boolean = field.boolean({ defaultValue: false });
 const date = field.date({ defaultValue: "2026-09-07" });
@@ -24,7 +30,7 @@ const media = field.media({ defaultValue: "01K4M0D3LQYH8ND26GG2DDC8N2" });
 
 type _text = Expect<Equal<FieldValue<typeof text>, string>>;
 type _textarea = Expect<Equal<FieldValue<typeof textarea>, string>>;
-type _richText = Expect<Equal<FieldValue<typeof richText>, JsonObject>>;
+type _richText = Expect<Equal<FieldValue<typeof richText>, SafeRichTextDocument>>;
 type _number = Expect<Equal<FieldValue<typeof number>, number>>;
 type _boolean = Expect<Equal<FieldValue<typeof boolean>, boolean>>;
 type _date = Expect<Equal<FieldValue<typeof date>, string>>;
@@ -45,3 +51,21 @@ field.select({ defaultValue: "other", options: ["design", "engineering"] as cons
 
 // @ts-expect-error Number defaults must be numeric.
 field.number({ defaultValue: "one" });
+
+const exhaustiveVisitor: FieldDefinitionVisitor<string> = {
+  boolean: () => "boolean",
+  date: () => "date",
+  datetime: () => "datetime",
+  media: () => "media",
+  number: () => "number",
+  richText: () => "richText",
+  select: () => "select",
+  text: () => "text",
+  textarea: () => "textarea",
+  url: () => "url",
+};
+void exhaustiveVisitor;
+
+// @ts-expect-error A visitor must handle every field discriminant.
+const incompleteVisitor: FieldDefinitionVisitor<string> = { boolean: () => "boolean" };
+void incompleteVisitor;
