@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Lace is a single-site, self-hosted headless CMS with a static Astro site.
+  Read docs/mvp-architecture.md first for product scope and architecture invariants.
+  Read docs/mvp-implementation-roadmap.md for delivery order and session boundaries.
+  Accepted capability behavior lives in openspec/specs/**.
+  Active change artifacts may refine but must not silently contradict architecture or accepted specs.
+  The monorepo uses TypeScript, pnpm workspaces, Turborepo, Oxlint, and Oxfmt.
+  It targets Node/SQLite/MinIO and Cloudflare Workers/D1/R2 through narrow adapters.
+  One roadmap session unit normally maps to one just-in-time OpenSpec change.
+
+rules:
+  proposal:
+    - Name the roadmap step and session unit that the change implements.
+    - Cite the relevant architecture sections and affected capability specs.
+    - State explicit scope, non-goals, dependencies, and externally visible outcomes.
+    - Do not combine roadmap units unless the proposal explains why they cannot be verified independently.
+  specs:
+    - Write testable normative requirements and concrete success, failure, authorization, and concurrency scenarios where applicable.
+    - Preserve the architecture's Node and Cloudflare behavioral parity.
+    - Do not weaken an architecture invariant or accepted requirement implicitly.
+  design:
+    - Map responsibilities to the repository package boundaries and preserve dependency direction.
+    - Describe portability, persistence atomicity, security, migrations, failure recovery, and observability when relevant.
+    - Record rejected alternatives when they could otherwise lead to materially different implementations.
+  tasks:
+    - Make every task independently verifiable and traceable to the specs and design.
+    - Include relevant tests, documentation, and migration work in the same change.
+    - Do not use placeholder tasks such as explore the codebase or finish later.
+    - Keep the task set within one roadmap session unit unless combined scope was explicitly approved.
+
+operations:
+  apply:
+    guidance:
+      - Use Oxlint and Oxfmt; do not introduce ESLint or Prettier dependencies or configuration.
+      - Complete and verify one task before marking its checkbox complete.
+      - Stop and update planning artifacts when implementation conflicts with the design, specs, architecture, or roadmap scope.
+      - Run focused tests and the change's required root quality checks before reporting completion.
+  archive:
+    guidance:
+      - Prefer synchronizing delta specs into main specs before archiving.
+      - Confirm strict OpenSpec validation and all implementation tasks are complete.
+      - Report the archived path and the capabilities updated in main specs.

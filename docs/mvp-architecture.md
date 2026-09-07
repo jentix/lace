@@ -117,6 +117,30 @@ D1 and SQLite store media metadata and object keys only. Binary content is store
 
 An editor may continue changing the draft immediately after publication without changing what public API consumers see.
 
+### 4.8 Spec-driven delivery
+
+Implementation uses the repository-local OpenSpec `spec-driven` workflow. Each
+roadmap session unit is normally one just-in-time OpenSpec change with proposal,
+delta specs, design, and tasks. Planning and implementation are separate actions:
+an agent must not write production code in the proposal action, and it must not
+apply a change until its required artifacts are ready and the user explicitly
+requests the apply action.
+
+Completed changes are validated, their delta specs are synchronized into the
+main specs, and then they are archived. If implementation reveals a conflict
+with the architecture, the agent pauses implementation and updates the planning
+artifacts; a deliberate architectural change updates this document and the
+roadmap before code proceeds.
+
+Authority order is:
+
+1. `docs/mvp-architecture.md` for product scope and architectural invariants;
+2. `openspec/specs/**` for detailed, accepted capability behavior;
+3. active OpenSpec change artifacts for the proposed delta;
+4. `docs/mvp-implementation-roadmap.md` for sequence and session boundaries.
+
+Lower levels may add detail but may not contradict a higher level silently.
+
 ## 5. System context
 
 ```text
@@ -212,6 +236,10 @@ packages/
 docs/
 ├── mvp-architecture.md
 └── adr/                       # architectural decision records added as needed
+
+openspec/
+├── specs/                     # accepted capability specifications
+└── changes/                   # active and archived implementation changes
 ```
 
 Dependency direction (`A -> B` means package A may import package B):
@@ -1341,7 +1369,8 @@ Major dependency groups:
 - Node.js current active LTS for the Node runtime and tooling;
 - Vite;
 - Turborepo for dependency-aware workspace task orchestration and caching;
-- ESLint and Prettier, or a single agreed formatter/linter tool;
+- `@fission-ai/openspec` for spec-driven change planning and lifecycle management;
+- Oxlint and Oxfmt, configured through `.oxlintrc.json` and `.oxfmtrc.json`;
 - Vitest.
 
 ### Site
@@ -1530,6 +1559,8 @@ This is not the detailed implementation plan, but it establishes dependency orde
 - Publishing writes an outbox event and triggers a static rebuild.
 - The supported onboarding path is a generator for a new/empty project.
 - The user's Astro site is not overwritten during Lace upgrades.
+- Implementation changes follow the repository-local OpenSpec workflow.
+- Oxlint and Oxfmt are the linting and formatting toolchain.
 
 ## 25. Planning defaults and remaining release decisions
 

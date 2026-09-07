@@ -34,7 +34,69 @@ Every session follows the same completion rules:
 5. User-visible or operational behavior is documented in the same change.
 6. No dependency-direction rule from the architecture is violated.
 
-## 3. Fixed implementation conventions
+## 3. OpenSpec delivery workflow
+
+OpenSpec is mandatory for roadmap implementation after this bootstrap planning
+update. Changes are created just in time; do not pre-create all roadmap changes.
+
+### Change granularity and naming
+
+- One recommended session unit maps to one OpenSpec change by default.
+- Use kebab-case names prefixed by the roadmap unit, for example
+  `m00-baseline-adrs`, `m02a-field-descriptors`, or
+  `m14b-cloudflare-worker-r2`.
+- A change may cover two neighboring units only when the proposal explains why
+  they cannot be reviewed or verified independently and the user approves the
+  combined scope.
+- A change may contain delta specs for multiple capabilities when the session
+  unit genuinely crosses them; do not create artificial one-file-per-package
+  capabilities.
+- `skip_specs` is allowed only for a purely mechanical/tooling change with no
+  observable capability requirement, and its proposal must justify the skip.
+
+### Required lifecycle for every unit
+
+1. **Propose.** Use the repository's `openspec-propose` skill. It creates the
+   complete artifact set required by the configured schema: proposal, delta
+   specs, design when applicable, and tasks. The proposal cites the roadmap unit
+   and relevant architecture sections, states scope and non-goals, and identifies
+   affected capability specs. This action is planning-only and ends without code
+   changes.
+2. **Review.** The user reviews the artifacts. Material ambiguity is resolved in
+   the artifacts before apply. An existing proposal is revised through
+   `openspec-update-change`, not by silently changing implementation intent.
+3. **Apply.** After an explicit user request, use `openspec-apply-change`. Read all
+   context files returned by the CLI, implement pending tasks in order, verify
+   each task, and mark its checkbox only after its specified behavior is complete.
+4. **Reconcile.** If implementation exposes a design or scope problem, stop the
+   apply workflow. Update the OpenSpec artifacts—and architecture/roadmap first if
+   their invariants change—then resume only after review.
+5. **Validate.** Before completion, run
+   `openspec validate <change-name> --type change --strict` plus the tests and
+   quality commands required by the unit. An OpenSpec task is not complete when
+   behavior or verification is deferred.
+6. **Archive.** After an explicit user request, use `openspec-archive-change`.
+   Synchronize delta specs into `openspec/specs/**` unless the reviewed change
+   intentionally has no specs, verify the sync, and archive the completed change.
+
+Proposal, apply, and archive are separate agent turns, although they may remain
+in the same Codex task. The 43 units below count implementation/apply units; the
+planning and archive turns are workflow gates, not additional implementation
+units.
+
+### CI and source-of-truth rules
+
+- CI runs `openspec validate --all --strict` and rejects invalid active or main
+  specs.
+- Accepted main specs refine the architecture but never override it silently.
+- Active change artifacts describe proposed behavior and are not accepted product
+  truth until synchronized during archive.
+- Tasks must link behavior, implementation, tests, and documentation closely
+  enough that completion can be verified without interpreting intent from chat.
+- Agents do not implement roadmap work that has no active, apply-ready OpenSpec
+  change.
+
+## 4. Fixed implementation conventions
 
 These conventions remove choices that would otherwise make two implementations
 incompatible:
@@ -43,7 +105,11 @@ incompatible:
   cross-package deep imports.
 - pnpm catalogs centralize third-party versions; the lockfile is committed.
 - Turborepo orchestrates `build`, `typecheck`, `lint`, and `test`.
-- Oxlint config and Oxfmt are the lint/format pair.
+- `@fission-ai/openspec` is pinned as a root development dependency; project
+  commands use `pnpm exec openspec` rather than relying on a global install.
+- Oxlint and Oxfmt are the lint/format pair. Use repository-root
+  `.oxlintrc.json` and `.oxfmtrc.json`; do not add ESLint or Prettier packages,
+  configs, plugins, or compatibility wrappers.
 - Vitest is used for unit, contract, and API integration tests; Playwright is
   reserved for browser flows.
 - IDs are ULIDs generated through the application `IdGenerator` port.
@@ -55,7 +121,7 @@ incompatible:
   camelCase; DTO mapping is explicit.
 - Test fixtures use deterministic clocks and ID sequences.
 
-## 4. Dependency and delivery overview
+## 5. Dependency and delivery overview
 
 ```text
 foundation
@@ -100,7 +166,7 @@ units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
 
-## 5. Detailed implementation steps
+## 6. Detailed implementation steps
 
 ## Step 0 — Baseline and ADRs
 
@@ -110,9 +176,9 @@ few decisions whose rationale is not obvious from code.
 ### Substeps
 
 1. Record the exact current stable versions of Node LTS, pnpm, TypeScript,
-   Turborepo, Hono, Valibot, Drizzle, Better Auth, Astro, React, Vite, Wrangler,
-   Vitest, and Playwright. Verify compatibility in a disposable smoke package
-   before pinning them.
+   Turborepo, `@fission-ai/openspec`, Oxlint, Oxfmt, Hono, Valibot, Drizzle,
+   Better Auth, Astro, React, Vite, Wrangler, Vitest, and Playwright. Verify
+   compatibility in a disposable smoke package before pinning them.
 2. Add ADRs for:
    - package/dependency boundaries;
    - guarded D1 batches versus interactive Node transactions;
@@ -142,7 +208,7 @@ rules are mechanically enforced.
 
 1. Create root `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`,
    `pnpm-workspace.yaml` catalog entries, `turbo.json`, `.editorconfig`,
-   `.gitignore`, Oxfmt config, Oxlint config, and strict base TypeScript
+   `.gitignore`, `.oxfmtrc.json`, `.oxlintrc.json`, and strict base TypeScript
    configs for library, browser, Node, and Worker targets.
 2. Scaffold every package and app named in the architecture, including
    `apps/builder`. Each package gets a private initial version, explicit
@@ -152,11 +218,14 @@ rules are mechanically enforced.
    yet must print a clear “not implemented in milestone N” message and exit
    successfully only for non-verification developer commands; `build`,
    `typecheck`, `lint`, and `test` must genuinely execute across the workspace.
+   Add `spec:validate` as
+   `openspec validate --all --strict --no-interactive` through the pinned local
+   CLI.
 4. Configure dependency-cruiser to encode
    the architecture import graph. Add a fixture proving an illegal import fails.
-5. Add GitHub Actions for install with frozen lockfile, lint, typecheck, unit
-   tests, build, and lockfile/cache integrity. Integration jobs are added when
-   their runtimes exist.
+5. Add GitHub Actions for install with frozen lockfile, Oxfmt check, Oxlint,
+   typecheck, unit tests, build, OpenSpec strict validation, and lockfile/cache
+   integrity. Integration jobs are added when their runtimes exist.
 
 ### Acceptance
 
@@ -920,7 +989,7 @@ From a clean machine/project template:
 **Session boundary:** L; use 17A, 17B, and 17C. Do not combine the security pass
 with the release-documentation session.
 
-## 6. Recommended first delivery slices
+## 7. Recommended first delivery slices
 
 The full roadmap is intentionally larger than a single development session. The
 best checkpoints for demonstrating useful progress are:
