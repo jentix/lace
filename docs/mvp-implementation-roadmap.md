@@ -221,8 +221,11 @@ rules are mechanically enforced.
    Add `spec:validate` as
    `openspec validate --all --strict --no-interactive` through the pinned local
    CLI.
-4. Configure dependency-cruiser to encode
-   the architecture import graph. Add a fixture proving an illegal import fails.
+4. Configure a TypeScript source-level boundary checker to encode the
+   architecture import graph. Add a fixture proving an illegal import fails.
+   Dependency-cruiser is deferred until it supports the project-pinned
+   TypeScript 7 baseline; the active OpenSpec change MUST record the deferral
+   and its replacement check.
 5. Add GitHub Actions for install with frozen lockfile, Oxfmt check, Oxlint,
    typecheck, unit tests, build, OpenSpec strict validation, and lockfile/cache
    integrity. Integration jobs are added when their runtimes exist.
