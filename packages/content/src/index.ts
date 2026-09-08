@@ -148,13 +148,15 @@ export type FieldDefinition =
   | UrlFieldDefinition;
 
 /** The submitted value type associated with a field descriptor. */
-export type FieldValue<Definition extends FieldDefinition> = Definition["type"] extends "boolean"
+export type FieldValue<Definition extends FieldDefinition> = Definition extends {
+  readonly type: "boolean";
+}
   ? boolean
-  : Definition["type"] extends "number"
+  : Definition extends { readonly type: "number" }
     ? number
-    : Definition["type"] extends "richText"
+    : Definition extends { readonly type: "richText" }
       ? SafeRichTextDocument
-      : Definition["type"] extends "select"
+      : Definition extends { readonly type: "select" }
         ? Definition extends { readonly options: readonly (infer Choice)[] }
           ? Choice
           : never
@@ -1019,33 +1021,291 @@ export function validateModelFields(
   definitions: ModelFieldDefinitions,
   value: unknown,
   mode: ContentValidationMode,
+  path: readonly ValidationPathSegment[] = [],
 ): ModelFieldValues {
   if (!isRecord(value)) {
-    invalid([], "invalid_fields", "must be an object.");
+    invalid(path, "invalid_fields", "must be an object.");
   }
 
   for (const key of Object.keys(value)) {
     if (!Object.hasOwn(definitions, key)) {
-      invalid([key], "unknown_field", "is not defined by this model.");
+      invalid([...path, key], "unknown_field", "is not defined by this model.");
     }
   }
 
   const output: Record<string, FieldValue<FieldDefinition>> = {};
   for (const [key, definition] of Object.entries(definitions)) {
     if (Object.hasOwn(value, key)) {
-      output[key] = validateFieldValue(definition, value[key], [key]);
+      output[key] = validateFieldValue(definition, value[key], [...path, key]);
       continue;
     }
     if (Object.hasOwn(definition, "defaultValue")) {
-      output[key] = validateFieldValue(definition, definition.defaultValue, [key]);
+      output[key] = validateFieldValue(definition, definition.defaultValue, [...path, key]);
       continue;
     }
     if (mode === "publish" && definition.required) {
-      invalid([key], "missing_required_field", "is required for publication.");
+      invalid([...path, key], "missing_required_field", "is required for publication.");
     }
   }
   return output;
 }
+
+const BLOCK_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9-]*$/u;
+const FIELD_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/u;
+
+/** Thrown when a block definition or registry is not portable or internally consistent. */
+export class BlockConfigurationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "BlockConfigurationError";
+  }
+}
+
+/** Input accepted by the portable block-definition DSL. */
+export interface BlockDefinitionInput<
+  Fields extends ModelFieldDefinitions = ModelFieldDefinitions,
+> {
+  readonly defaultValue?: unknown;
+  readonly description?: string;
+  readonly fields: Fields;
+  readonly label?: string;
+  readonly type: string;
+  readonly version: number;
+}
+
+/** The data shape inferred from a block's field definitions. */
+export type BlockDataValues<Fields extends ModelFieldDefinitions> = Readonly<
+  {
+    [Key in keyof Fields as FieldIsRequired<Fields[Key]> extends true ? Key : never]: FieldValue<
+      Fields[Key]
+    >;
+  } & {
+    readonly [
+      Key in keyof Fields as FieldIsRequired<Fields[Key]> extends true ? never : Key
+    ]?: FieldValue<Fields[Key]>;
+  }
+>;
+
+/** A detached JSON-safe representation of a block definition. */
+export interface BlockMetadata<Fields extends ModelFieldDefinitions = ModelFieldDefinitions> {
+  readonly defaultValue?: BlockDataValues<Fields>;
+  readonly description?: string;
+  readonly fields: Fields;
+  readonly label?: string;
+  readonly type: string;
+  readonly version: number;
+}
+
+/** An executable block definition retained only in the runtime projection. */
+export interface BlockDefinition<
+  Fields extends ModelFieldDefinitions = ModelFieldDefinitions,
+> extends BlockMetadata<Fields> {
+  readonly validate: (value: unknown, mode: ContentValidationMode) => BlockDataValues<Fields>;
+}
+
+function blockFail(message: string): never {
+  throw new BlockConfigurationError(message);
+}
+
+function normalizeBlockFields(value: unknown): ModelFieldDefinitions {
+  if (!isRecord(value)) {
+    blockFail("fields must be a plain object.");
+  }
+  const fields: Record<string, FieldDefinition> = {};
+  for (const [key, definition] of Object.entries(value)) {
+    if (!FIELD_KEY_PATTERN.test(key)) {
+      blockFail(`fields.${key} must be a valid field key.`);
+    }
+    try {
+      fields[key] = toFieldMetadata(definition as FieldDefinition);
+    } catch (error) {
+      if (error instanceof FieldConfigurationError) {
+        blockFail(`fields.${key} must be a field definition.`);
+      }
+      throw error;
+    }
+  }
+  return deepFreeze(fields);
+}
+
+/** Defines a versioned block using only portable field descriptors. */
+export function defineBlock<const Fields extends ModelFieldDefinitions>(
+  input: BlockDefinitionInput<Fields>,
+): BlockDefinition<Fields> {
+  if (!isRecord(input)) {
+    blockFail("block must be a plain object.");
+  }
+  for (const key of Object.keys(input)) {
+    if (!new Set(["defaultValue", "description", "fields", "label", "type", "version"]).has(key)) {
+      blockFail(`block.${key} is not permitted.`);
+    }
+  }
+  if (typeof input.type !== "string" || !BLOCK_TYPE_PATTERN.test(input.type)) {
+    blockFail(
+      "type must begin with an ASCII letter and contain only letters, digits, and hyphens.",
+    );
+  }
+  if (
+    typeof input.version !== "number" ||
+    !Number.isSafeInteger(input.version) ||
+    input.version < 1
+  ) {
+    blockFail("version must be a positive integer.");
+  }
+  if (input.label !== undefined && typeof input.label !== "string") {
+    blockFail("label must be a string when provided.");
+  }
+  if (input.description !== undefined && typeof input.description !== "string") {
+    blockFail("description must be a string when provided.");
+  }
+
+  const fields = normalizeBlockFields(input.fields) as Fields;
+  let defaultValue: BlockDataValues<Fields> | undefined;
+  if (input.defaultValue !== undefined) {
+    try {
+      const normalized = normalizeJsonValue(
+        input.defaultValue,
+        "defaultValue",
+        new WeakSet<object>(),
+      );
+      if (!isRecord(normalized)) {
+        blockFail("defaultValue must be a plain object.");
+      }
+      defaultValue = deepFreeze(
+        validateModelFields(fields, normalized, "draft"),
+      ) as BlockDataValues<Fields>;
+    } catch (error) {
+      if (error instanceof ContentValidationError) {
+        blockFail("defaultValue must conform to the block fields.");
+      }
+      throw error;
+    }
+  }
+  const definition: BlockDefinition<Fields> = {
+    ...(defaultValue === undefined ? {} : { defaultValue }),
+    ...(input.description === undefined ? {} : { description: input.description }),
+    fields,
+    ...(input.label === undefined ? {} : { label: input.label }),
+    type: input.type,
+    validate: (value, mode) => {
+      if (!isRecord(value)) {
+        return validateModelFields(fields, value, mode) as BlockDataValues<Fields>;
+      }
+      const withDefault = defaultValue === undefined ? value : { ...defaultValue, ...value };
+      return validateModelFields(fields, withDefault, mode) as BlockDataValues<Fields>;
+    },
+    version: input.version,
+  };
+  return deepFreeze(definition);
+}
+
+/** Projects a block definition into detached, JSON-safe metadata. */
+export function toBlockMetadata(definition: BlockDefinition): BlockMetadata {
+  const metadata: BlockMetadata = {
+    ...(definition.defaultValue === undefined ? {} : { defaultValue: definition.defaultValue }),
+    ...(definition.description === undefined ? {} : { description: definition.description }),
+    fields: Object.fromEntries(
+      Object.entries(definition.fields).map(([key, fieldDefinition]) => [
+        key,
+        toFieldMetadata(fieldDefinition),
+      ]),
+    ),
+    ...(definition.label === undefined ? {} : { label: definition.label }),
+    type: definition.type,
+    version: definition.version,
+  };
+  return deepFreeze(metadata);
+}
+
+/** A registry of the current executable definition for every allowed block type. */
+export interface BlockRegistry {
+  readonly blocks: readonly BlockDefinition[];
+  readonly get: (type: string) => BlockDefinition | undefined;
+}
+
+/** Creates a registry and rejects duplicate current block types. */
+export function defineBlockRegistry(blocks: readonly BlockDefinition[]): BlockRegistry {
+  if (!Array.isArray(blocks)) {
+    blockFail("blocks must be an array of block definitions.");
+  }
+  const definitions = new Map<string, BlockDefinition>();
+  for (const definition of blocks) {
+    if (definitions.has(definition.type)) {
+      blockFail(`blocks contains duplicate block type "${definition.type}".`);
+    }
+    definitions.set(definition.type, definition);
+  }
+  const normalized = deepFreeze([...definitions.values()]);
+  return Object.freeze({ blocks: normalized, get: (type: string) => definitions.get(type) });
+}
+
+/** Projects a registry to immutable JSON-safe metadata for admin and public clients. */
+export function toBlockRegistryMetadata(registry: BlockRegistry): readonly BlockMetadata[] {
+  return deepFreeze(registry.blocks.map(toBlockMetadata));
+}
+
+/** Validates one block's field record, applying its whole-record default first. */
+export function validateBlockData<Fields extends ModelFieldDefinitions>(
+  definition: BlockDefinition<Fields>,
+  value: unknown,
+  mode: ContentValidationMode,
+  path: readonly ValidationPathSegment[] = [],
+): BlockDataValues<Fields> {
+  if (!isRecord(value)) {
+    return validateModelFields(definition.fields, value, mode, path) as BlockDataValues<Fields>;
+  }
+  const withDefault =
+    definition.defaultValue === undefined ? value : { ...definition.defaultValue, ...value };
+  return validateModelFields(definition.fields, withDefault, mode, path) as BlockDataValues<Fields>;
+}
+
+/** Starter blocks implemented exclusively through the public block and field DSL. */
+export const builtInBlocks = deepFreeze({
+  cta: defineBlock({
+    fields: {
+      actionLabel: field.text({ required: true }),
+      actionUrl: field.url({ required: true }),
+      body: field.richText(),
+      heading: field.text({ required: true }),
+    },
+    type: "cta",
+    version: 1,
+  }),
+  hero: defineBlock({
+    fields: {
+      body: field.richText(),
+      eyebrow: field.text(),
+      heading: field.text({ required: true }),
+      image: field.media(),
+      primaryActionLabel: field.text(),
+      primaryActionUrl: field.url(),
+    },
+    type: "hero",
+    version: 1,
+  }),
+  image: defineBlock({
+    fields: {
+      alt: field.text({ required: true }),
+      caption: field.text(),
+      media: field.media({ required: true }),
+    },
+    type: "image",
+    version: 1,
+  }),
+  quote: defineBlock({
+    fields: {
+      attribution: field.text(),
+      quote: field.text({ required: true }),
+    },
+    type: "quote",
+    version: 1,
+  }),
+  richText: defineBlock({
+    fields: { content: field.richText({ required: true }) },
+    type: "richText",
+    version: 1,
+  }),
+});
 
 /** Maximum title length shared by draft, publish, REST, and admin validation. */
 export const MAX_TITLE_LENGTH = 200;
@@ -1198,4 +1458,114 @@ export function validateEntryPayload(
     assertJsonSize(block.data as JsonValue, ["blocks", index, "data"]);
   }
   return input;
+}
+
+/** Model information required to validate a complete entry aggregate. */
+export interface EntryAggregateModel {
+  readonly blocks: readonly string[];
+  readonly fields: ModelFieldDefinitions;
+  readonly kind: ContentModelKind;
+}
+
+/** One ordered, typed block submitted as part of an entry aggregate. */
+export interface EntryAggregateBlock {
+  readonly data: JsonObject;
+  readonly key: string;
+  readonly schemaVersion: number;
+  readonly type: string;
+}
+
+/** A full draft or publish candidate validated against a model and its registry. */
+export interface EntryAggregateInput {
+  readonly blocks: readonly EntryAggregateBlock[];
+  readonly fields: JsonObject;
+  readonly kind: ContentModelKind;
+  readonly slug?: string;
+  readonly title: string;
+}
+
+/** The normalized form of a valid entry aggregate. */
+export interface ValidatedEntryAggregate {
+  readonly blocks: readonly (Omit<EntryAggregateBlock, "data"> & {
+    readonly data: ModelFieldValues;
+  })[];
+  readonly fields: ModelFieldValues;
+  readonly kind: ContentModelKind;
+  readonly slug?: string;
+  readonly title: string;
+}
+
+/** Validates all system, model-field, and ordered block data for one content entry. */
+export function validateEntryAggregate(
+  input: EntryAggregateInput,
+  model: EntryAggregateModel,
+  registry: BlockRegistry,
+  mode: ContentValidationMode,
+): ValidatedEntryAggregate {
+  if (input.kind !== model.kind) {
+    invalid(["kind"], "model_kind_mismatch", "must match the content model kind.");
+  }
+  validateEntryPayload(
+    {
+      blocks: input.blocks,
+      fields: {},
+      kind: input.kind,
+      ...(input.slug === undefined ? {} : { slug: input.slug }),
+      title: input.title,
+    },
+    mode,
+  );
+  const fields = validateModelFields(model.fields, input.fields, mode, ["fields"]);
+  assertJsonSize(fields as JsonValue, ["fields"]);
+
+  const keys = new Set<string>();
+  const blocks: (Omit<EntryAggregateBlock, "data"> & { readonly data: ModelFieldValues })[] = [];
+  for (const [index, block] of input.blocks.entries()) {
+    const path: readonly ValidationPathSegment[] = ["blocks", index];
+    if (!isRecord(block)) {
+      invalid(path, "invalid_block", "must be an object.");
+    }
+    assertExactKeys(block, ["data", "key", "schemaVersion", "type"], [], path);
+    if (typeof block.key !== "string" || !BLOCK_TYPE_PATTERN.test(block.key)) {
+      invalid([...path, "key"], "invalid_block_key", "must be a stable block key.");
+    }
+    if (keys.has(block.key)) {
+      invalid([...path, "key"], "duplicate_block_key", "must be unique within the entry.");
+    }
+    keys.add(block.key);
+    if (typeof block.type !== "string") {
+      invalid([...path, "type"], "invalid_block_type", "must be a string.");
+    }
+    if (!model.blocks.includes(block.type)) {
+      invalid([...path, "type"], "disallowed_block_type", "is not allowed by this model.");
+    }
+    const definition = registry.get(block.type);
+    if (definition === undefined) {
+      invalid([...path, "type"], "unregistered_block_type", "is not registered.");
+    }
+    if (block.schemaVersion !== definition.version) {
+      invalid(
+        [...path, "schemaVersion"],
+        "stale_block_version",
+        "does not match the registered version.",
+      );
+    }
+    assertJsonSize(block.data as JsonValue, [...path, "data"]);
+    const data = validateBlockData(definition, block.data, mode, [...path, "data"]);
+    blocks.push(
+      deepFreeze({
+        data: data as ModelFieldValues,
+        key: block.key,
+        schemaVersion: block.schemaVersion,
+        type: block.type,
+      }),
+    );
+  }
+  return deepFreeze({
+    blocks: deepFreeze(blocks),
+    fields,
+    kind: input.kind,
+    ...(input.slug === undefined ? {} : { slug: input.slug }),
+    title: input.title,
+  });
 }

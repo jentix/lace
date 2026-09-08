@@ -1,17 +1,25 @@
 import { expect, test } from "vitest";
 import {
+  BlockConfigurationError,
   ContentValidationError,
   FieldConfigurationError,
   MAX_JSON_BYTES,
   MAX_SLUG_LENGTH,
   MAX_TITLE_LENGTH,
   MAX_TOP_LEVEL_BLOCKS,
+  builtInBlocks,
   canonicalJsonByteLength,
   canonicalizeJson,
   compileFieldSchema,
+  defineBlock,
+  defineBlockRegistry,
   field,
   isSafeUrl,
   sha256CanonicalJson,
+  toBlockMetadata,
+  toBlockRegistryMetadata,
+  validateBlockData,
+  validateEntryAggregate,
   toFieldMetadata,
   validateEntryPayload,
   validateFieldValue,
@@ -243,6 +251,118 @@ test("validates model fields in draft and publish modes", () => {
   });
   expect(() => validateModelFields(definitions, { extra: true }, "draft")).toThrow(/\$\.extra/u);
   expect(() => validateModelFields(definitions, { body: 1 }, "draft")).toThrow(/\$\.body/u);
+});
+
+test("defines detached versioned blocks with defaults and metadata", () => {
+  const defaults = { eyebrow: "News" };
+  const block = defineBlock({
+    defaultValue: defaults,
+    fields: {
+      eyebrow: field.text(),
+      heading: field.text({ required: true }),
+    },
+    label: "Hero",
+    type: "hero",
+    version: 1,
+  });
+  defaults.eyebrow = "Changed";
+
+  expect(validateBlockData(block, { heading: "Lace" }, "publish")).toEqual({
+    eyebrow: "News",
+    heading: "Lace",
+  });
+  expect(block.validate({ heading: "Lace" }, "publish")).toEqual({
+    eyebrow: "News",
+    heading: "Lace",
+  });
+  expect(toBlockMetadata(block)).toEqual({
+    defaultValue: { eyebrow: "News" },
+    fields: {
+      eyebrow: { required: false, type: "text" },
+      heading: { required: true, type: "text" },
+    },
+    label: "Hero",
+    type: "hero",
+    version: 1,
+  });
+  expect(JSON.stringify(toBlockMetadata(block))).not.toContain("validate");
+  expect(Object.isFrozen(block)).toBe(true);
+  expect(Object.isFrozen(block.fields)).toBe(true);
+
+  expect(() => defineBlock({ fields: {}, type: "bad_type", version: 1 })).toThrow(
+    BlockConfigurationError,
+  );
+  expect(() => defineBlock({ fields: {}, type: "hero", version: 0 })).toThrow(
+    BlockConfigurationError,
+  );
+  expect(() =>
+    defineBlock({ defaultValue: { missing: true }, fields: {}, type: "hero", version: 1 }),
+  ).toThrow(BlockConfigurationError);
+});
+
+test("registers public-DSL built-ins and validates ordered entry aggregates", () => {
+  const registry = defineBlockRegistry(Object.values(builtInBlocks));
+  expect(registry.get("hero")).toBe(builtInBlocks.hero);
+  expect(toBlockRegistryMetadata(registry).map((block) => block.type)).toEqual([
+    "cta",
+    "hero",
+    "image",
+    "quote",
+    "richText",
+  ]);
+  expect(builtInBlocks.hero.fields.heading.required).toBe(true);
+  expect(builtInBlocks.image.fields.media.required).toBe(true);
+  expect(builtInBlocks.richText.fields.content.type).toBe("richText");
+  expect(() => defineBlockRegistry([builtInBlocks.hero, builtInBlocks.hero])).toThrow(
+    BlockConfigurationError,
+  );
+
+  const aggregate = validateEntryAggregate(
+    {
+      blocks: [{ data: { heading: "Welcome" }, key: "block-1", schemaVersion: 1, type: "hero" }],
+      fields: { summary: "A page" },
+      kind: "page",
+      title: "Home",
+    },
+    { blocks: ["hero"], fields: { summary: field.text() }, kind: "page" },
+    registry,
+    "publish",
+  );
+  expect(aggregate.blocks[0]).toEqual({
+    data: { heading: "Welcome" },
+    key: "block-1",
+    schemaVersion: 1,
+    type: "hero",
+  });
+  expect(() =>
+    validateEntryAggregate(
+      {
+        blocks: [
+          { data: { heading: "One" }, key: "block-1", schemaVersion: 1, type: "hero" },
+          { data: { heading: "Two" }, key: "block-1", schemaVersion: 1, type: "hero" },
+        ],
+        fields: {},
+        kind: "page",
+        title: "Home",
+      },
+      { blocks: ["hero"], fields: {}, kind: "page" },
+      registry,
+      "draft",
+    ),
+  ).toThrow(/\$\.blocks\[1\]\.key/u);
+  expect(() =>
+    validateEntryAggregate(
+      {
+        blocks: [{ data: { heading: "Welcome" }, key: "block-1", schemaVersion: 2, type: "hero" }],
+        fields: {},
+        kind: "page",
+        title: "Home",
+      },
+      { blocks: ["hero"], fields: {}, kind: "page" },
+      registry,
+      "draft",
+    ),
+  ).toThrow(/\$\.blocks\[0\]\.schemaVersion/u);
 });
 
 test("allows only the confirmed rich-text grammar and URL policy", () => {

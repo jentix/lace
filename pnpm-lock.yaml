@@ -237,6 +237,10 @@ importers:
         version: 5.0.0(vite@8.2.2(yaml@2.9.0))
 
   packages/config:
+    dependencies:
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:../content
     devDependencies:
       oxlint:
         specifier: 'catalog:'
