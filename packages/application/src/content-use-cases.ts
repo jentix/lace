@@ -1,0 +1,351 @@
+import type { NormalizedContentModel, RuntimeConfigProjection } from "@lacecms/config";
+import { sha256CanonicalJson, validateEntryAggregate } from "@lacecms/content";
+import type { FieldDefinition, JsonObject, JsonValue } from "@lacecms/content";
+import {
+  DomainError,
+  assertOrderedBlockPositions,
+  blockKey,
+  contentEntryId,
+  contentModelKey,
+  contentSnapshotId,
+  createContentEntry,
+  requirePermission,
+  resolveContentPublicPath,
+} from "@lacecms/domain";
+import type {
+  Actor,
+  ContentBlock,
+  ContentEntry,
+  ContentEntryId,
+  ContentModelKey,
+  ContentModelRoute,
+  DraftSnapshot,
+  PublishedSnapshot,
+} from "@lacecms/domain";
+import { publicationIdempotencyKey, publicationRequestFingerprint } from "./index.js";
+import type {
+  Clock,
+  ContentCommandResult,
+  ContentEntryCommandPort,
+  ContentEntryReadPort,
+  ContentEntrySummary,
+  CursorPage,
+  IdGenerator,
+  MediaReadPort,
+  OpaqueCursor,
+  PublicationIdempotencyKey,
+  PublicContentReadPort,
+  PublishContentEntryResult,
+  SiteBuildTrigger,
+} from "./index.js";
+
+export interface ContentUseCaseDependencies {
+  readonly clock: Clock;
+  readonly config: RuntimeConfigProjection;
+  readonly content: ContentEntryReadPort & ContentEntryCommandPort & PublicContentReadPort;
+  readonly idGenerator: IdGenerator;
+  readonly media: MediaReadPort;
+  readonly siteBuildTrigger?: SiteBuildTrigger;
+}
+
+export interface CompleteDraftInput {
+  readonly blocks: readonly ContentBlock[];
+  readonly fields: JsonObject;
+  readonly slug?: string;
+  readonly title: string;
+}
+
+export interface CreateContentEntryUseCaseInput extends CompleteDraftInput {
+  readonly actor: Actor;
+  readonly modelKey: ContentModelKey | string;
+}
+
+export interface ListContentEntriesUseCaseInput {
+  readonly actor: Actor;
+  readonly after?: OpaqueCursor;
+  readonly limit: number;
+  readonly modelKey: string;
+}
+
+export interface LoadContentEntryUseCaseInput {
+  readonly actor: Actor;
+  readonly entryId: ContentEntryId;
+}
+
+export interface SaveContentDraftUseCaseInput extends CompleteDraftInput {
+  readonly actor: Actor;
+  readonly entryId: ContentEntryId;
+  readonly expectedRevision: number;
+}
+
+export interface PublishContentEntryUseCaseInput {
+  readonly actor: Actor;
+  readonly entryId: ContentEntryId;
+  readonly expectedRevision: number;
+  readonly idempotencyKey?: string;
+}
+
+export interface DeleteContentEntryUseCaseInput {
+  readonly actor: Actor;
+  readonly entryId: ContentEntryId;
+}
+
+export type BuildDispatchOutcome =
+  | Readonly<{ readonly status: "accepted"; readonly buildId?: string }>
+  | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
+
+export interface PublishContentEntryUseCaseResult {
+  readonly build: BuildDispatchOutcome;
+  readonly entry: ContentEntry;
+  readonly publication: "published" | "replayed";
+}
+
+interface NormalizedDraft extends CompleteDraftInput {
+  readonly blocks: readonly ContentBlock[];
+  readonly fields: JsonObject;
+}
+
+function detached<Value>(value: Value): Value {
+  return JSON.parse(JSON.stringify(value)) as Value;
+}
+
+function modelRoute(model: NormalizedContentModel): ContentModelRoute {
+  const key = contentModelKey(model.key);
+  return model.kind === "page"
+    ? { key, kind: "page", path: model.path }
+    : { key, kind: "collection", route: model.route };
+}
+
+function commandEntry(result: ContentCommandResult): ContentEntry {
+  if (result.entry === undefined) {
+    throw new DomainError("CONTENT_INVALID_STATE", "Content command did not return an entry.");
+  }
+  return detached(result.entry);
+}
+
+/**
+ * Portable orchestration for content lifecycle commands. Transport handlers and
+ * persistence adapters remain outside this service.
+ */
+export class ContentUseCases {
+  public constructor(private readonly dependencies: ContentUseCaseDependencies) {}
+
+  public async create(input: CreateContentEntryUseCaseInput): Promise<ContentEntry> {
+    requirePermission(input.actor, "content:write");
+    const model = this.model(input.modelKey);
+    const draft = await this.validateDraft(input, model, "draft");
+    const now = this.dependencies.clock.now();
+    const id = contentEntryId(this.dependencies.idGenerator.next());
+    const entry = createContentEntry({
+      draft: {
+        ...draft,
+        createdAt: now,
+        entryId: id,
+        id: contentSnapshotId(this.dependencies.idGenerator.next()),
+        revision: 1,
+        state: "draft",
+        updatedAt: now,
+        updatedBy: input.actor,
+      },
+      id,
+      model: modelRoute(model),
+    });
+    return commandEntry(await this.dependencies.content.create({ entry }));
+  }
+
+  public async list(
+    input: ListContentEntriesUseCaseInput,
+  ): Promise<CursorPage<ContentEntrySummary>> {
+    requirePermission(input.actor, "content:read");
+    return detached(
+      await this.dependencies.content.list({
+        ...(input.after === undefined ? {} : { after: input.after }),
+        limit: input.limit,
+        modelKey: contentModelKey(input.modelKey),
+      }),
+    );
+  }
+
+  public async load(input: LoadContentEntryUseCaseInput): Promise<ContentEntry | null> {
+    requirePermission(input.actor, "content:read");
+    const entry = await this.dependencies.content.load({ entryId: input.entryId });
+    return entry === null ? null : detached(entry);
+  }
+
+  public async loadDraft(input: LoadContentEntryUseCaseInput): Promise<DraftSnapshot | null> {
+    requirePermission(input.actor, "content:read");
+    const draft = await this.dependencies.content.loadDraft({ entryId: input.entryId });
+    return draft === null ? null : detached(draft);
+  }
+
+  public async loadPublished(
+    input: LoadContentEntryUseCaseInput,
+  ): Promise<PublishedSnapshot | null> {
+    requirePermission(input.actor, "content:read");
+    const published = await this.dependencies.content.loadPublished({ entryId: input.entryId });
+    return published === null ? null : detached(published);
+  }
+
+  public async save(input: SaveContentDraftUseCaseInput): Promise<ContentEntry> {
+    requirePermission(input.actor, "content:write");
+    const entry = await this.entry(input.entryId);
+    const draft = await this.validateDraft(input, this.model(entry.model.key), "draft");
+    return commandEntry(
+      await this.dependencies.content.saveCompleteDraft({
+        entryId: entry.id,
+        mutation: {
+          ...draft,
+          expectedRevision: input.expectedRevision,
+          updatedAt: this.dependencies.clock.now(),
+          updatedBy: input.actor,
+        },
+      }),
+    );
+  }
+
+  public async publish(
+    input: PublishContentEntryUseCaseInput,
+  ): Promise<PublishContentEntryUseCaseResult> {
+    requirePermission(input.actor, "content:publish");
+    const entry = await this.entry(input.entryId);
+    const draft = await this.validateDraft(entry.draft, this.model(entry.model.key), "publish");
+    resolveContentPublicPath(entry.model, draft.slug);
+    const result = await this.dependencies.content.publish({
+      entryId: entry.id,
+      expectedRevision: input.expectedRevision,
+      ...(input.idempotencyKey === undefined
+        ? {}
+        : { idempotency: await this.idempotency(input, draft) }),
+      publishedAt: this.dependencies.clock.now(),
+      publishedBy: input.actor,
+      publishedSnapshotId: contentSnapshotId(this.dependencies.idGenerator.next()),
+    });
+    return {
+      build: await this.dispatchBuild(result, input.actor),
+      entry: detached(result.entry),
+      publication: result.outcome,
+    };
+  }
+
+  public async delete(input: DeleteContentEntryUseCaseInput): Promise<void> {
+    requirePermission(input.actor, "content:write");
+    const entry = await this.entry(input.entryId);
+    if (entry.published !== undefined) requirePermission(input.actor, "content:publish");
+    await this.dependencies.content.delete({ entryId: entry.id });
+  }
+
+  private async dispatchBuild(
+    result: PublishContentEntryResult,
+    actor: Actor,
+  ): Promise<BuildDispatchOutcome> {
+    if (result.outcome === "replayed") return { status: "not-dispatched" };
+    if (this.dependencies.siteBuildTrigger === undefined) return { status: "unavailable" };
+    const exportContent = await this.dependencies.content.exportBuildContent();
+    try {
+      const build = await this.dependencies.siteBuildTrigger.trigger({
+        requestedAt: this.dependencies.clock.now(),
+        requestedBy: actor,
+        targetVersion: exportContent.version,
+      });
+      return build.accepted
+        ? { ...(build.buildId === undefined ? {} : { buildId: build.buildId }), status: "accepted" }
+        : { status: "rejected" };
+    } catch {
+      return { status: "unavailable" };
+    }
+  }
+
+  private async entry(entryId: ContentEntryId): Promise<ContentEntry> {
+    const entry = await this.dependencies.content.load({ entryId });
+    if (entry === null) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    }
+    return entry;
+  }
+
+  private async idempotency(
+    input: PublishContentEntryUseCaseInput,
+    draft: NormalizedDraft,
+  ): Promise<{
+    readonly actorId: Actor["id"];
+    readonly fingerprint: ReturnType<typeof publicationRequestFingerprint>;
+    readonly key: PublicationIdempotencyKey;
+  }> {
+    return {
+      actorId: input.actor.id,
+      fingerprint: publicationRequestFingerprint(
+        await sha256CanonicalJson({
+          actorId: input.actor.id,
+          draft,
+          entryId: input.entryId,
+          expectedRevision: input.expectedRevision,
+        } as unknown as JsonValue),
+      ),
+      key: publicationIdempotencyKey(input.idempotencyKey!),
+    };
+  }
+
+  private model(key: string): NormalizedContentModel {
+    const model = this.dependencies.config.content.find((candidate) => candidate.key === key);
+    if (model === undefined) {
+      throw new DomainError("CONTENT_INVALID_STATE", `Content model ${key} does not exist.`);
+    }
+    return model;
+  }
+
+  private async validateDraft(
+    input: CompleteDraftInput,
+    model: NormalizedContentModel,
+    mode: "draft" | "publish",
+  ): Promise<NormalizedDraft> {
+    assertOrderedBlockPositions(input.blocks);
+    const aggregate = validateEntryAggregate(
+      {
+        blocks: input.blocks.map(({ data, key, schemaVersion, type }) => ({
+          data,
+          key,
+          schemaVersion,
+          type,
+        })),
+        fields: input.fields,
+        kind: model.kind,
+        ...(input.slug === undefined ? {} : { slug: input.slug }),
+        title: input.title,
+      },
+      model,
+      this.dependencies.config.blocks,
+      mode,
+    );
+    const blocks = aggregate.blocks.map((block, index) => ({
+      data: block.data as JsonObject,
+      key: blockKey(block.key),
+      position: input.blocks[index]!.position,
+      schemaVersion: block.schemaVersion,
+      type: block.type,
+    }));
+    const normalized = {
+      blocks,
+      fields: aggregate.fields as JsonObject,
+      ...(aggregate.slug === undefined ? {} : { slug: aggregate.slug }),
+      title: aggregate.title,
+    };
+    await this.validateMedia(normalized.fields, model.fields);
+    for (const block of normalized.blocks) {
+      await this.validateMedia(block.data, this.dependencies.config.blocks.get(block.type)!.fields);
+    }
+    return normalized;
+  }
+
+  private async validateMedia(
+    values: JsonObject,
+    definitions: Readonly<Record<string, FieldDefinition>>,
+  ): Promise<void> {
+    for (const [key, definition] of Object.entries(definitions)) {
+      if (definition.type !== "media" || !Object.hasOwn(values, key)) continue;
+      const media = await this.dependencies.media.loadMedia(values[key] as string);
+      if (media === null || media.status !== "active") {
+        throw new DomainError("CONTENT_INVALID_STATE", `Media ${values[key]} is unavailable.`);
+      }
+    }
+  }
+}

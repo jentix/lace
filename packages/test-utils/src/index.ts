@@ -1,1 +1,547 @@
+import { dispatcherLeaseId, opaqueCursor, opaqueTokenVerifier } from "@lacecms/application";
+import type {
+  ApplyModelSyncInput,
+  ApplyModelSyncResult,
+  BuildContentExport,
+  BuildTriggerResult,
+  ByteStream,
+  Cache,
+  ClaimDispatcherEventsInput,
+  Clock,
+  CompleteDispatcherLeaseInput,
+  ContentCommandResult,
+  ContentEntryCommandPort,
+  ContentEntryReadPort,
+  ContentEntrySummary,
+  CreateContentEntryInput,
+  CursorPage,
+  DeleteContentEntryInput,
+  DispatcherEvent,
+  DispatcherLease,
+  DispatcherLeasePort,
+  IdGenerator,
+  InspectModelSyncInput,
+  ListContentEntriesInput,
+  ListPublicContentInput,
+  LoadContentEntryInput,
+  ModelSyncInspection,
+  ModelSyncPort,
+  ModelSyncRecord,
+  ObjectStorage,
+  OpaqueCursor,
+  OpaqueTokenHasher,
+  OpaqueTokenSecret,
+  OpaqueTokenVerifier,
+  PublicContentEntry,
+  PublicContentReadPort,
+  PublishContentEntryCommand,
+  PublishContentEntryResult,
+  PutObjectInput,
+  ReadUrlOptions,
+  SaveCompleteDraftInput,
+  SiteBuildRequest,
+  SiteBuildTrigger,
+  StoredObject,
+} from "@lacecms/application";
+import type { NormalizedContentModel } from "@lacecms/config";
+import {
+  DomainError,
+  assertEntryCreationAllowed,
+  assertPublicPathAvailable,
+  contentModelKey,
+  contentSnapshotId,
+  createContentEntry,
+  publishContentEntry,
+  resolveContentPublicPath,
+  saveCompleteDraft,
+  unixMilliseconds,
+} from "@lacecms/domain";
+import type {
+  ContentEntry,
+  PublishedRoute,
+  PublishedSnapshot,
+  UnixMilliseconds,
+} from "@lacecms/domain";
+
 export const packageName = "@lacecms/test-utils";
+
+function assertPositiveInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new TypeError(`${name} must be a positive safe integer.`);
+  }
+}
+
+function clone<Value>(value: Value): Value {
+  return JSON.parse(JSON.stringify(value)) as Value;
+}
+
+function copyEntry(entry: ContentEntry): ContentEntry {
+  const draft = clone(entry.draft);
+  const copied = createContentEntry({ draft, id: entry.id, model: clone(entry.model) });
+  if (entry.published === undefined) return copied;
+  const publishedSource = createContentEntry({
+    draft: {
+      ...clone(entry.published),
+      id: contentSnapshotId(`copy-${entry.published.id}`),
+      state: "draft",
+    },
+    id: entry.id,
+    model: clone(entry.model),
+  });
+  const publication = publishContentEntry(publishedSource, {
+    expectedRevision: publishedSource.draft.revision,
+    publishedAt: entry.published.createdAt,
+    publishedBy: entry.published.updatedBy,
+    publishedSnapshotId: entry.published.id,
+  });
+  return Object.freeze({
+    draft: copied.draft,
+    id: copied.id,
+    model: copied.model,
+    published: publication.published!,
+  });
+}
+
+function copyCursorPage<Value>(page: CursorPage<Value>): CursorPage<Value> {
+  return Object.freeze({
+    items: Object.freeze(page.items.map((item) => clone(item))),
+    ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+  });
+}
+
+async function collectBytes(stream: ByteStream): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    const copied = chunk.slice();
+    chunks.push(copied);
+    size += copied.byteLength;
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function bytesStream(bytes: Uint8Array): ByteStream {
+  return {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+      yield bytes.slice();
+    },
+  };
+}
+
+/** Deterministic clock for portable application and adapter contract tests. */
+export class DeterministicClock implements Clock {
+  private value: UnixMilliseconds;
+
+  public constructor(initial: UnixMilliseconds) {
+    this.value = initial;
+  }
+
+  public advanceBy(milliseconds: number): UnixMilliseconds {
+    if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
+      throw new TypeError("milliseconds must be a non-negative safe integer.");
+    }
+    this.value = unixMilliseconds(this.value + milliseconds);
+    return this.now();
+  }
+
+  public now(): UnixMilliseconds {
+    return this.value;
+  }
+}
+
+/** Deterministic IDs make stateful fakes reproducible without a runtime UUID API. */
+export class DeterministicIdGenerator implements IdGenerator {
+  private nextValue = 1;
+
+  public constructor(private readonly prefix = "id") {}
+
+  public next(): string {
+    const value = `${this.prefix}-${this.nextValue}`;
+    this.nextValue += 1;
+    return value;
+  }
+}
+
+export class InMemoryObjectStorage implements ObjectStorage {
+  private readonly objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
+
+  public async createReadUrl(key: string, options?: ReadUrlOptions): Promise<string> {
+    if (!this.objects.has(key)) throw new Error(`Object ${key} does not exist.`);
+    const expires = options?.expiresAt === undefined ? "" : `?expires=${options.expiresAt}`;
+    return `memory-object://${encodeURIComponent(key)}${expires}`;
+  }
+
+  public async delete(key: string): Promise<void> {
+    this.objects.delete(key);
+  }
+
+  public async get(key: string): Promise<ByteStream | null> {
+    const object = this.objects.get(key);
+    return object === undefined ? null : bytesStream(object.bytes);
+  }
+
+  public async put(input: PutObjectInput): Promise<StoredObject> {
+    const bytes = await collectBytes(input.body);
+    this.objects.set(input.key, { bytes: bytes.slice(), contentType: input.contentType });
+    return Object.freeze({
+      contentType: input.contentType,
+      key: input.key,
+      size: bytes.byteLength,
+    });
+  }
+}
+
+/** An intentionally simple cache fake; production callers must tolerate misses. */
+export class InMemoryCache implements Cache {
+  private readonly values = new Map<string, unknown>();
+
+  public async delete(key: string): Promise<void> {
+    this.values.delete(key);
+  }
+
+  public async get<Value>(key: string): Promise<Value | null> {
+    const value = this.values.get(key);
+    return value === undefined ? null : (clone(value) as Value);
+  }
+
+  public async set<Value>(key: string, value: Value): Promise<void> {
+    this.values.set(key, clone(value));
+  }
+}
+
+export class InMemorySiteBuildTrigger implements SiteBuildTrigger {
+  public readonly requests: SiteBuildRequest[] = [];
+
+  public constructor(private readonly result: BuildTriggerResult = { accepted: true }) {}
+
+  public async trigger(input: SiteBuildRequest): Promise<BuildTriggerResult> {
+    this.requests.push(clone(input));
+    return clone(this.result);
+  }
+}
+
+/** Test-only deterministic verifier; production adapters provide password hashing. */
+export class DeterministicTokenHasher implements OpaqueTokenHasher {
+  public async hash(secret: OpaqueTokenSecret): Promise<OpaqueTokenVerifier> {
+    let value = 2_166_136_261;
+    for (const character of secret) {
+      value ^= character.codePointAt(0) ?? 0;
+      value = Math.imul(value, 16_777_619);
+    }
+    return opaqueTokenVerifier(`test-v1-${(value >>> 0).toString(16)}`);
+  }
+
+  public async verify(secret: OpaqueTokenSecret, verifier: OpaqueTokenVerifier): Promise<boolean> {
+    return verifier === (await this.hash(secret));
+  }
+}
+
+interface StoredLease {
+  readonly expiresAt: UnixMilliseconds;
+  readonly eventId: string;
+}
+
+interface StoredPublicationIdempotency {
+  readonly entry: ContentEntry;
+  readonly fingerprint: string;
+}
+
+export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
+  private readonly events = new Map<string, DispatcherEvent>();
+  private readonly leases = new Map<string, StoredLease>();
+  private nextLease = 1;
+
+  public enqueue(event: DispatcherEvent): void {
+    this.events.set(event.id, clone(event));
+  }
+
+  public async claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]> {
+    assertPositiveInteger(input.limit, "limit");
+    assertPositiveInteger(input.leaseDurationMs, "leaseDurationMs");
+    const activelyLeased = new Set(
+      [...this.leases.values()]
+        .filter((lease) => lease.expiresAt > input.now)
+        .map((lease) => lease.eventId),
+    );
+    const leases: DispatcherLease[] = [];
+    for (const event of [...this.events.values()].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    )) {
+      if (
+        leases.length === input.limit ||
+        event.availableAt > input.now ||
+        activelyLeased.has(event.id)
+      )
+        continue;
+      const id = dispatcherLeaseId(`lease-${this.nextLease}`);
+      this.nextLease += 1;
+      const expiresAt = unixMilliseconds(input.now + input.leaseDurationMs);
+      this.leases.set(id, { eventId: event.id, expiresAt });
+      leases.push(Object.freeze({ event: clone(event), expiresAt, id }));
+    }
+    return Object.freeze(leases);
+  }
+
+  public async complete(input: CompleteDispatcherLeaseInput): Promise<void> {
+    const lease = this.leases.get(input.leaseId);
+    if (lease === undefined || lease.expiresAt < input.completedAt) {
+      throw new Error("Dispatcher lease is missing or expired.");
+    }
+    this.leases.delete(input.leaseId);
+    if (input.outcome === "succeeded") {
+      this.events.delete(lease.eventId);
+      return;
+    }
+    const event = this.events.get(lease.eventId);
+    if (event !== undefined) {
+      this.events.set(event.id, {
+        ...event,
+        attempts: event.attempts + 1,
+        availableAt: input.completedAt,
+      });
+    }
+  }
+}
+
+function modelRecord(model: NormalizedContentModel): ModelSyncRecord {
+  return Object.freeze({
+    key: contentModelKey(model.key),
+    kind: model.kind,
+    projectionHash: model.projectionHash,
+    structureHash: model.structureHash,
+    version: model.version,
+  });
+}
+
+function summarize(entry: ContentEntry): ContentEntrySummary {
+  return Object.freeze({
+    draftRevision: entry.draft.revision,
+    id: entry.id,
+    modelKey: entry.model.key,
+    ...(entry.published === undefined ? {} : { publishedSnapshotId: entry.published.id }),
+    title: entry.draft.title,
+    updatedAt: entry.draft.updatedAt,
+  });
+}
+
+/**
+ * Reference content adapter used by tests before SQLite/D1 implementations.
+ * It validates every guard before replacing its private indexes.
+ */
+export class InMemoryContentStore
+  implements ModelSyncPort, ContentEntryReadPort, ContentEntryCommandPort, PublicContentReadPort
+{
+  private readonly entries = new Map<string, ContentEntry>();
+  private readonly models = new Map<string, ModelSyncRecord>();
+  private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
+  private readonly routes = new Map<string, PublishedRoute>();
+  private publicVersion = 0;
+
+  public async inspect(input: InspectModelSyncInput): Promise<ModelSyncInspection> {
+    const incoming = new Map(input.models.map((model) => [model.key, modelRecord(model)]));
+    const added = [...incoming.keys()].filter((key) => !this.models.has(key)).map(contentModelKey);
+    const removed = [...this.models.keys()]
+      .filter((key) => !incoming.has(key))
+      .map(contentModelKey);
+    const changed = [...incoming.entries()]
+      .filter(([key, record]) => this.models.get(key)?.structureHash !== record.structureHash)
+      .filter(([key]) => this.models.has(key))
+      .map(([key]) => contentModelKey(key));
+    return Object.freeze({
+      added: Object.freeze(added),
+      changed: Object.freeze(changed),
+      removed: Object.freeze(removed),
+    });
+  }
+
+  public async apply(input: ApplyModelSyncInput): Promise<ApplyModelSyncResult> {
+    const inspection = await this.inspect(input);
+    const incoming = input.models.map(modelRecord);
+    const structureHash = incoming
+      .map((model) => model.structureHash)
+      .sort()
+      .join(":");
+    if (
+      input.expectedStructureHash !== undefined &&
+      input.expectedStructureHash !== structureHash
+    ) {
+      throw new DomainError(
+        "CONTENT_REVISION_CONFLICT",
+        "Configuration structure hash no longer matches.",
+      );
+    }
+    this.models.clear();
+    for (const model of incoming) this.models.set(model.key, clone(model));
+    return Object.freeze({ inspection, models: Object.freeze(incoming.map(clone)) });
+  }
+
+  public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {
+    const entry = copyEntry(input.entry);
+    if (this.entries.has(entry.id)) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Content entry already exists.");
+    }
+    const existingEntryCount = [...this.entries.values()].filter(
+      (candidate) => candidate.model.key === entry.model.key,
+    ).length;
+    assertEntryCreationAllowed(entry.model.kind, existingEntryCount);
+    this.entries.set(entry.id, entry);
+    return Object.freeze({ entry: copyEntry(entry), status: "created" });
+  }
+
+  public async delete(input: DeleteContentEntryInput): Promise<ContentCommandResult> {
+    const entry = this.entries.get(input.entryId);
+    if (entry === undefined)
+      throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    const nextRoutes = new Map(this.routes);
+    for (const [path, route] of nextRoutes)
+      if (route.entryId === input.entryId) nextRoutes.delete(path);
+    this.entries.delete(input.entryId);
+    this.routes.clear();
+    for (const [path, route] of nextRoutes) this.routes.set(path, route);
+    if (entry.published !== undefined) this.publicVersion += 1;
+    return Object.freeze({ status: "deleted" });
+  }
+
+  public async load(input: LoadContentEntryInput): Promise<ContentEntry | null> {
+    const entry = this.entries.get(input.entryId);
+    return entry === undefined ? null : copyEntry(entry);
+  }
+
+  public async loadDraft(input: LoadContentEntryInput): Promise<ContentEntry["draft"] | null> {
+    const entry = await this.load(input);
+    return entry?.draft ?? null;
+  }
+
+  public async loadPublished(input: LoadContentEntryInput): Promise<PublishedSnapshot | null> {
+    const entry = await this.load(input);
+    return entry?.published ?? null;
+  }
+
+  public async list(input: ListContentEntriesInput): Promise<CursorPage<ContentEntrySummary>> {
+    const entries = [...this.entries.values()]
+      .filter((entry) => entry.model.key === input.modelKey)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    return this.page(entries.map(summarize), input.after, input.limit, `entries:${input.modelKey}`);
+  }
+
+  public async saveCompleteDraft(input: SaveCompleteDraftInput): Promise<ContentCommandResult> {
+    const entry = this.entries.get(input.entryId);
+    if (entry === undefined)
+      throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    const saved = saveCompleteDraft(entry, input.mutation);
+    this.entries.set(saved.id, saved);
+    return Object.freeze({ entry: copyEntry(saved), status: "saved" });
+  }
+
+  public async publish(input: PublishContentEntryCommand): Promise<PublishContentEntryResult> {
+    const idempotencyMapKey = this.publicationIdempotencyMapKey(input);
+    if (idempotencyMapKey !== undefined) {
+      const prior = this.publicationIdempotency.get(idempotencyMapKey);
+      if (prior !== undefined) {
+        if (prior.fingerprint !== input.idempotency!.fingerprint) {
+          throw new DomainError(
+            "CONTENT_INVALID_STATE",
+            "Publication idempotency key was reused with different input.",
+          );
+        }
+        return Object.freeze({
+          entry: copyEntry(prior.entry),
+          outcome: "replayed",
+          status: "published",
+        });
+      }
+    }
+    const entry = this.entries.get(input.entryId);
+    if (entry === undefined)
+      throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    const published = publishContentEntry(entry, input);
+    const path = resolveContentPublicPath(published.model, published.published!.slug);
+    assertPublicPathAvailable(path, published.id, this.routes.get(path));
+    const nextRoutes = new Map(this.routes);
+    for (const [existingPath, route] of nextRoutes) {
+      if (route.entryId === published.id) nextRoutes.delete(existingPath);
+    }
+    nextRoutes.set(path, {
+      entryId: published.id,
+      path,
+      snapshotId: published.published!.id,
+      updatedAt: input.publishedAt,
+    });
+    this.entries.set(published.id, published);
+    this.routes.clear();
+    for (const [routePath, route] of nextRoutes) this.routes.set(routePath, route);
+    this.publicVersion += 1;
+    if (idempotencyMapKey !== undefined) {
+      this.publicationIdempotency.set(idempotencyMapKey, {
+        entry: copyEntry(published),
+        fingerprint: input.idempotency!.fingerprint,
+      });
+    }
+    return Object.freeze({
+      entry: copyEntry(published),
+      outcome: "published",
+      status: "published",
+    });
+  }
+
+  public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
+    const entries = [...this.routes.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([path, route]) => ({ entry: this.entries.get(route.entryId)!, path }))
+      .filter(({ entry }) => entry.published !== undefined)
+      .map(({ entry, path }) => Object.freeze({ entry: copyEntry(entry), path }));
+    return this.page(entries, input.after, input.limit, "public");
+  }
+
+  public async exportBuildContent(): Promise<BuildContentExport> {
+    const page = await this.listPublic({ limit: Number.MAX_SAFE_INTEGER });
+    return Object.freeze({ entries: page.items, version: this.publicVersion });
+  }
+
+  private page<Value>(
+    items: readonly Value[],
+    after: OpaqueCursor | undefined,
+    limit: number,
+    prefix: string,
+  ): CursorPage<Value> {
+    assertPositiveInteger(limit, "limit");
+    const start = this.cursorOffset(after, prefix);
+    const slice = items.slice(start, start + limit);
+    const nextOffset = start + slice.length;
+    return copyCursorPage({
+      items: slice,
+      ...(nextOffset < items.length ? { nextCursor: opaqueCursor(`${prefix}:${nextOffset}`) } : {}),
+    });
+  }
+
+  private cursorOffset(cursor: OpaqueCursor | undefined, prefix: string): number {
+    if (cursor === undefined) return 0;
+    const cursorPrefix = `${prefix}:`;
+    if (!cursor.startsWith(cursorPrefix)) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Cursor is invalid.");
+    }
+    const offsetText = cursor.slice(cursorPrefix.length);
+    const offset = Number(offsetText);
+    if (!Number.isSafeInteger(offset) || offset < 0 || String(offset) !== offsetText) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Cursor offset is invalid.");
+    }
+    return offset;
+  }
+
+  private publicationIdempotencyMapKey(input: PublishContentEntryCommand): string | undefined {
+    if (input.idempotency === undefined) return undefined;
+    if (input.idempotency.actorId !== input.publishedBy.id) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        "Publication idempotency actor must match the publishing actor.",
+      );
+    }
+    return `${input.entryId}:${input.idempotency.actorId}:${input.idempotency.key}`;
+  }
+}
