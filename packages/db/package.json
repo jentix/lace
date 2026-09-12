@@ -12,9 +12,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate --config ../../drizzle.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
     "test": "vitest run src/index.test.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "oxlint": "catalog:",
