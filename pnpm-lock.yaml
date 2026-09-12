@@ -201,6 +201,16 @@ importers:
         version: 5.0.0(vite@8.2.2(yaml@2.9.0))
 
   packages/application:
+    dependencies:
+      '@lacecms/config':
+        specifier: workspace:*
+        version: link:../config
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:../content
+      '@lacecms/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       oxlint:
         specifier: 'catalog:'
@@ -357,6 +367,19 @@ importers:
         version: 5.0.0(vite@8.2.2(yaml@2.9.0))
 
   packages/test-utils:
+    dependencies:
+      '@lacecms/application':
+        specifier: workspace:*
+        version: link:../application
+      '@lacecms/config':
+        specifier: workspace:*
+        version: link:../config
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:../content
+      '@lacecms/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       oxlint:
         specifier: 'catalog:'

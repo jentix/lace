@@ -16,6 +16,11 @@
     "lint": "oxlint src",
     "test": "vitest run src/index.test.mjs"
   },
+  "dependencies": {
+    "@lacecms/config": "workspace:*",
+    "@lacecms/content": "workspace:*",
+    "@lacecms/domain": "workspace:*"
+  },
   "devDependencies": {
     "oxlint": "catalog:",
     "typescript": "catalog:",
