@@ -2,6 +2,7 @@ import type { NormalizedContentModel } from "@lacecms/config";
 import type { JsonObject } from "@lacecms/content";
 import type {
   Actor,
+  ActorId,
   Brand,
   CompleteDraftMutation,
   ContentEntry,
@@ -22,6 +23,8 @@ export type OpaqueTokenSecret = Brand<string, "OpaqueTokenSecret">;
 export type OpaqueTokenVerifier = Brand<string, "OpaqueTokenVerifier">;
 export type DispatcherEventId = Brand<string, "DispatcherEventId">;
 export type DispatcherLeaseId = Brand<string, "DispatcherLeaseId">;
+export type PublicationIdempotencyKey = Brand<string, "PublicationIdempotencyKey">;
+export type PublicationRequestFingerprint = Brand<string, "PublicationRequestFingerprint">;
 
 function opaqueBrand<Name extends string>(value: string, name: Name): Brand<string, Name> {
   if (typeof value !== "string" || value.length === 0) {
@@ -48,6 +51,16 @@ export function dispatcherEventId(value: string): DispatcherEventId {
 
 export function dispatcherLeaseId(value: string): DispatcherLeaseId {
   return opaqueBrand(value, "DispatcherLeaseId");
+}
+
+/** A caller-supplied key that makes one guarded publication retry-safe. */
+export function publicationIdempotencyKey(value: string): PublicationIdempotencyKey {
+  return opaqueBrand(value, "PublicationIdempotencyKey");
+}
+
+/** Canonical application-generated identity of the complete publication request. */
+export function publicationRequestFingerprint(value: string): PublicationRequestFingerprint {
+  return opaqueBrand(value, "PublicationRequestFingerprint");
 }
 
 /** A transport-neutral cursor page. Cursors are intentionally opaque to callers. */
@@ -127,9 +140,17 @@ export interface SaveCompleteDraftInput {
 export interface PublishContentEntryCommand {
   readonly entryId: ContentEntryId;
   readonly expectedRevision: number;
+  readonly idempotency?: PublicationIdempotency;
   readonly publishedAt: UnixMilliseconds;
   readonly publishedBy: Actor;
   readonly publishedSnapshotId: ContentSnapshotId;
+}
+
+/** Atomic idempotency scope retained alongside a successful publication. */
+export interface PublicationIdempotency {
+  readonly actorId: ActorId;
+  readonly fingerprint: PublicationRequestFingerprint;
+  readonly key: PublicationIdempotencyKey;
 }
 
 export interface DeleteContentEntryInput {
@@ -144,6 +165,13 @@ export interface ContentCommandResult {
   readonly status: ContentCommandStatus;
 }
 
+/** A publication result distinguishes a fresh commit from an idempotent replay. */
+export interface PublishContentEntryResult {
+  readonly entry: ContentEntry;
+  readonly outcome: "published" | "replayed";
+  readonly status: "published";
+}
+
 /**
  * Specialized state-changing operations. These deliberately replace a generic
  * transaction callback so D1 and SQLite can preserve identical semantics.
@@ -151,7 +179,7 @@ export interface ContentCommandResult {
 export interface ContentEntryCommandPort {
   create(input: CreateContentEntryInput): Promise<ContentCommandResult>;
   delete(input: DeleteContentEntryInput): Promise<ContentCommandResult>;
-  publish(input: PublishContentEntryCommand): Promise<ContentCommandResult>;
+  publish(input: PublishContentEntryCommand): Promise<PublishContentEntryResult>;
   saveCompleteDraft(input: SaveCompleteDraftInput): Promise<ContentCommandResult>;
 }
 
@@ -273,3 +301,5 @@ export interface DispatcherLeasePort {
 export interface MediaReadPort {
   loadMedia(id: string): Promise<MediaMetadata | null>;
 }
+
+export * from "./content-use-cases.js";

@@ -35,6 +35,7 @@ import type {
   PublicContentEntry,
   PublicContentReadPort,
   PublishContentEntryCommand,
+  PublishContentEntryResult,
   PutObjectInput,
   ReadUrlOptions,
   SaveCompleteDraftInput,
@@ -246,6 +247,11 @@ interface StoredLease {
   readonly eventId: string;
 }
 
+interface StoredPublicationIdempotency {
+  readonly entry: ContentEntry;
+  readonly fingerprint: string;
+}
+
 export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
   private readonly events = new Map<string, DispatcherEvent>();
   private readonly leases = new Map<string, StoredLease>();
@@ -333,6 +339,7 @@ export class InMemoryContentStore
 {
   private readonly entries = new Map<string, ContentEntry>();
   private readonly models = new Map<string, ModelSyncRecord>();
+  private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
   private readonly routes = new Map<string, PublishedRoute>();
   private publicVersion = 0;
 
@@ -432,7 +439,24 @@ export class InMemoryContentStore
     return Object.freeze({ entry: copyEntry(saved), status: "saved" });
   }
 
-  public async publish(input: PublishContentEntryCommand): Promise<ContentCommandResult> {
+  public async publish(input: PublishContentEntryCommand): Promise<PublishContentEntryResult> {
+    const idempotencyMapKey = this.publicationIdempotencyMapKey(input);
+    if (idempotencyMapKey !== undefined) {
+      const prior = this.publicationIdempotency.get(idempotencyMapKey);
+      if (prior !== undefined) {
+        if (prior.fingerprint !== input.idempotency!.fingerprint) {
+          throw new DomainError(
+            "CONTENT_INVALID_STATE",
+            "Publication idempotency key was reused with different input.",
+          );
+        }
+        return Object.freeze({
+          entry: copyEntry(prior.entry),
+          outcome: "replayed",
+          status: "published",
+        });
+      }
+    }
     const entry = this.entries.get(input.entryId);
     if (entry === undefined)
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
@@ -453,7 +477,17 @@ export class InMemoryContentStore
     this.routes.clear();
     for (const [routePath, route] of nextRoutes) this.routes.set(routePath, route);
     this.publicVersion += 1;
-    return Object.freeze({ entry: copyEntry(published), status: "published" });
+    if (idempotencyMapKey !== undefined) {
+      this.publicationIdempotency.set(idempotencyMapKey, {
+        entry: copyEntry(published),
+        fingerprint: input.idempotency!.fingerprint,
+      });
+    }
+    return Object.freeze({
+      entry: copyEntry(published),
+      outcome: "published",
+      status: "published",
+    });
   }
 
   public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
@@ -498,5 +532,16 @@ export class InMemoryContentStore
       throw new DomainError("CONTENT_INVALID_STATE", "Cursor offset is invalid.");
     }
     return offset;
+  }
+
+  private publicationIdempotencyMapKey(input: PublishContentEntryCommand): string | undefined {
+    if (input.idempotency === undefined) return undefined;
+    if (input.idempotency.actorId !== input.publishedBy.id) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        "Publication idempotency actor must match the publishing actor.",
+      );
+    }
+    return `${input.entryId}:${input.idempotency.actorId}:${input.idempotency.key}`;
   }
 }

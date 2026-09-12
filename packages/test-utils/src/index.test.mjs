@@ -19,7 +19,15 @@ import {
   createContentEntry,
   unixMilliseconds,
 } from "@lacecms/domain";
-import { dispatcherEventId, opaqueTokenSecret } from "@lacecms/application";
+import {
+  dispatcherEventId,
+  opaqueTokenSecret,
+  publicationIdempotencyKey,
+  publicationRequestFingerprint,
+} from "@lacecms/application";
+import { ContentUseCases } from "@lacecms/application";
+import { defineCollection, defineConfig, definePage } from "@lacecms/config";
+import { defineBlock, field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/test-utils"));
 
 const admin = { id: actorId("admin"), role: "admin" };
@@ -225,4 +233,325 @@ test("enforces singleton, revision, route, and immutable-publication boundaries 
   ).rejects.toMatchObject({ code: "CONTENT_ROUTE_CONFLICT" });
   expect(await store.loadPublished({ entryId: contentEntryId("post-b") })).toBeNull();
   expect((await store.exportBuildContent()).entries).toHaveLength(1);
+});
+
+test("replays matching idempotent publications without changing public content", async () => {
+  const store = new InMemoryContentStore();
+  const model = { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" };
+  await store.create({ entry: entry({ id: "post-idempotent", model, slug: "first" }) });
+  const input = {
+    entryId: contentEntryId("post-idempotent"),
+    expectedRevision: 1,
+    idempotency: {
+      actorId: admin.id,
+      fingerprint: publicationRequestFingerprint("sha256:first"),
+      key: publicationIdempotencyKey("request-1"),
+    },
+    publishedAt: unixMilliseconds(2),
+    publishedBy: admin,
+    publishedSnapshotId: contentSnapshotId("post-idempotent-published"),
+  };
+  const first = await store.publish(input);
+  const version = (await store.exportBuildContent()).version;
+  const replay = await store.publish(input);
+
+  expect(first.outcome).toBe("published");
+  expect(replay).toMatchObject({ outcome: "replayed", status: "published" });
+  expect(replay.entry).not.toBe(first.entry);
+  expect((await store.exportBuildContent()).version).toBe(version);
+  await expect(
+    store.publish({
+      ...input,
+      idempotency: {
+        ...input.idempotency,
+        fingerprint: publicationRequestFingerprint("sha256:other"),
+      },
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+  expect((await store.exportBuildContent()).version).toBe(version);
+});
+
+test("runs the authorized in-memory content lifecycle with validation and isolated publications", async () => {
+  const config = await defineConfig({
+    blocks: [
+      defineBlock({
+        fields: { image: field.media({ required: true }) },
+        type: "asset",
+        version: 1,
+      }),
+    ],
+    content: [
+      definePage({
+        blocks: ["asset"],
+        fields: { label: field.text({ defaultValue: "Home" }) },
+        key: "home",
+        path: "/",
+        version: 1,
+      }),
+      defineCollection({
+        blocks: ["asset"],
+        key: "posts",
+        route: "/blog/:slug",
+        version: 1,
+      }),
+    ],
+  });
+  const store = new InMemoryContentStore();
+  const trigger = new InMemorySiteBuildTrigger({ accepted: true });
+  const useCases = new ContentUseCases({
+    clock: new DeterministicClock(unixMilliseconds(10)),
+    config: config.runtime,
+    content: store,
+    idGenerator: new DeterministicIdGenerator("content"),
+    media: {
+      async loadMedia(id) {
+        return id === "media-1"
+          ? {
+              createdAt: unixMilliseconds(1),
+              createdBy: admin.id,
+              filename: "cover.png",
+              id,
+              mimeType: "image/png",
+              size: 1,
+              status: "active",
+              storageKey: "media/cover.png",
+              updatedAt: unixMilliseconds(1),
+            }
+          : id === "inactive"
+            ? {
+                createdAt: unixMilliseconds(1),
+                createdBy: admin.id,
+                filename: "inactive.png",
+                id,
+                mimeType: "image/png",
+                size: 1,
+                status: "deleting",
+                storageKey: "media/inactive.png",
+                updatedAt: unixMilliseconds(1),
+              }
+            : null;
+      },
+    },
+    siteBuildTrigger: trigger,
+  });
+  const draft = {
+    blocks: [
+      {
+        data: { image: "media-1" },
+        key: blockKey("hero"),
+        position: 1000,
+        schemaVersion: 1,
+        type: "asset",
+      },
+    ],
+    fields: {},
+    title: "Home",
+  };
+
+  const created = await useCases.create({ actor: editor, modelKey: "home", ...draft });
+  expect(created.draft.fields).toEqual({ label: "Home" });
+  const viewer = { id: actorId("viewer"), role: "viewer" };
+  expect((await useCases.list({ actor: viewer, limit: 1, modelKey: "home" })).items).toHaveLength(
+    1,
+  );
+  await expect(useCases.load({ actor: viewer, entryId: created.id })).resolves.toMatchObject({
+    id: created.id,
+  });
+  await expect(
+    useCases.create({ actor: viewer, modelKey: "posts", ...draft, slug: "denied" }),
+  ).rejects.toMatchObject({
+    code: "AUTHORIZATION_DENIED",
+  });
+  await expect(
+    useCases.publish({ actor: editor, entryId: created.id, expectedRevision: 1 }),
+  ).rejects.toMatchObject({
+    code: "AUTHORIZATION_DENIED",
+  });
+  await expect(
+    useCases.save({
+      actor: editor,
+      entryId: created.id,
+      expectedRevision: 1,
+      ...draft,
+      blocks: [{ ...draft.blocks[0], data: { image: "missing" } }],
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+  await expect(
+    useCases.save({
+      actor: editor,
+      entryId: created.id,
+      expectedRevision: 1,
+      ...draft,
+      fields: { unknown: true },
+    }),
+  ).rejects.toMatchObject({ name: "ContentValidationError" });
+  await expect(
+    useCases.save({
+      actor: editor,
+      entryId: created.id,
+      expectedRevision: 1,
+      ...draft,
+      blocks: [...draft.blocks, { ...draft.blocks[0], key: blockKey("second"), position: 1000 }],
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+  await expect(
+    useCases.save({
+      actor: editor,
+      entryId: created.id,
+      expectedRevision: 1,
+      ...draft,
+      title: "x".repeat(201),
+    }),
+  ).rejects.toMatchObject({ name: "ContentValidationError" });
+  await expect(
+    useCases.save({
+      actor: editor,
+      entryId: created.id,
+      expectedRevision: 1,
+      ...draft,
+      blocks: [{ ...draft.blocks[0], data: { image: "inactive" } }],
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+  expect((await useCases.loadDraft({ actor: admin, entryId: created.id })).revision).toBe(1);
+
+  const incomplete = await useCases.create({
+    actor: editor,
+    modelKey: "posts",
+    ...draft,
+    blocks: [{ ...draft.blocks[0], data: {} }],
+    slug: "incomplete",
+  });
+  await expect(
+    useCases.publish({ actor: admin, entryId: incomplete.id, expectedRevision: 1 }),
+  ).rejects.toMatchObject({ name: "ContentValidationError" });
+
+  const publication = await useCases.publish({
+    actor: admin,
+    entryId: created.id,
+    expectedRevision: 1,
+    idempotencyKey: "publish-home",
+  });
+  const replay = await useCases.publish({
+    actor: admin,
+    entryId: created.id,
+    expectedRevision: 1,
+    idempotencyKey: "publish-home",
+  });
+  expect(publication).toMatchObject({ build: { status: "accepted" }, publication: "published" });
+  expect(replay).toMatchObject({ build: { status: "not-dispatched" }, publication: "replayed" });
+  expect(trigger.requests).toHaveLength(1);
+
+  await useCases.save({
+    actor: editor,
+    entryId: created.id,
+    expectedRevision: 1,
+    ...draft,
+    title: "Edited draft",
+  });
+  expect((await useCases.loadPublished({ actor: admin, entryId: created.id })).title).toBe("Home");
+  await expect(useCases.delete({ actor: editor, entryId: created.id })).rejects.toMatchObject({
+    code: "AUTHORIZATION_DENIED",
+  });
+
+  const firstPost = await useCases.create({
+    actor: editor,
+    modelKey: "posts",
+    ...draft,
+    slug: "first",
+  });
+  await expect(
+    useCases.publish({ actor: admin, entryId: firstPost.id, expectedRevision: 1 }),
+  ).resolves.toMatchObject({ publication: "published" });
+  const conflictingPost = await useCases.create({
+    actor: editor,
+    modelKey: "posts",
+    ...draft,
+    slug: "first",
+  });
+  await expect(
+    useCases.publish({ actor: admin, entryId: conflictingPost.id, expectedRevision: 1 }),
+  ).rejects.toMatchObject({ code: "CONTENT_ROUTE_CONFLICT" });
+  expect(await useCases.loadPublished({ actor: admin, entryId: conflictingPost.id })).toBeNull();
+});
+
+test("reports rejected and unavailable builds without undoing a publication", async () => {
+  const config = await defineConfig({
+    blocks: [
+      defineBlock({
+        fields: { image: field.media({ required: true }) },
+        type: "asset",
+        version: 1,
+      }),
+    ],
+    content: [
+      defineCollection({ blocks: ["asset"], key: "posts", route: "/blog/:slug", version: 1 }),
+    ],
+  });
+  const store = new InMemoryContentStore();
+  const dependencies = {
+    clock: new DeterministicClock(unixMilliseconds(10)),
+    config: config.runtime,
+    content: store,
+    idGenerator: new DeterministicIdGenerator("build"),
+    media: {
+      async loadMedia() {
+        return {
+          createdAt: unixMilliseconds(1),
+          createdBy: admin.id,
+          filename: "cover.png",
+          id: "media-1",
+          mimeType: "image/png",
+          size: 1,
+          status: "active",
+          storageKey: "media/cover.png",
+          updatedAt: unixMilliseconds(1),
+        };
+      },
+    },
+  };
+  const draft = {
+    blocks: [
+      {
+        data: { image: "media-1" },
+        key: blockKey("hero"),
+        position: 1000,
+        schemaVersion: 1,
+        type: "asset",
+      },
+    ],
+    fields: {},
+    slug: "first",
+    title: "First",
+  };
+  const rejected = new ContentUseCases({
+    ...dependencies,
+    siteBuildTrigger: new InMemorySiteBuildTrigger({ accepted: false }),
+  });
+  const entry = await rejected.create({ actor: editor, modelKey: "posts", ...draft });
+  await expect(
+    rejected.publish({ actor: admin, entryId: entry.id, expectedRevision: 1 }),
+  ).resolves.toMatchObject({ build: { status: "rejected" }, publication: "published" });
+  expect((await rejected.loadPublished({ actor: admin, entryId: entry.id })).title).toBe("First");
+
+  await rejected.save({
+    actor: editor,
+    entryId: entry.id,
+    expectedRevision: 1,
+    ...draft,
+    title: "Second",
+  });
+  const unavailable = new ContentUseCases({
+    ...dependencies,
+    siteBuildTrigger: {
+      async trigger() {
+        throw new Error("offline");
+      },
+    },
+  });
+  await expect(
+    unavailable.publish({ actor: admin, entryId: entry.id, expectedRevision: 2 }),
+  ).resolves.toMatchObject({ build: { status: "unavailable" }, publication: "published" });
+  expect((await unavailable.loadPublished({ actor: admin, entryId: entry.id })).title).toBe(
+    "Second",
+  );
 });
