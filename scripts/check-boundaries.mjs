@@ -42,6 +42,8 @@ const allowedDependencies = new Map([
       "@lacecms/db",
       "@lacecms/auth",
       "@lacecms/config",
+      "@lacecms/content",
+      "@lacecms/domain",
     ]),
   ],
   [

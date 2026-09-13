@@ -12,11 +12,22 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:migrate": "pnpm run build && node dist/migrate.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
     "test": "vitest run src/index.test.mjs"
   },
+  "dependencies": {
+    "@lacecms/application": "workspace:*",
+    "@lacecms/content": "workspace:*",
+    "@lacecms/db": "workspace:*",
+    "@lacecms/domain": "workspace:*",
+    "better-sqlite3": "catalog:",
+    "drizzle-orm": "catalog:"
+  },
   "devDependencies": {
+    "@types/better-sqlite3": "catalog:",
+    "@types/node": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

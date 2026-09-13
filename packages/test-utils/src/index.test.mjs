@@ -8,6 +8,8 @@ import {
   InMemoryDispatcherLeasePort,
   InMemoryObjectStorage,
   InMemorySiteBuildTrigger,
+  assertAtomicCheckpoints,
+  assertQueryPlanUsesIndex,
   packageName,
 } from "../dist/index.js";
 import {
@@ -17,6 +19,7 @@ import {
   contentModelKey,
   contentSnapshotId,
   createContentEntry,
+  mediaId,
   unixMilliseconds,
 } from "@lacecms/domain";
 import {
@@ -29,6 +32,19 @@ import { ContentUseCases } from "@lacecms/application";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { defineBlock, field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/test-utils"));
+
+test("provides reusable atomic-checkpoint and query-plan contract helpers", async () => {
+  const visited = [];
+  await assertAtomicCheckpoints({
+    checkpoints: ["first", "second"],
+    run: async (checkpoint) => visited.push(checkpoint),
+  });
+  expect(visited).toEqual(["first", "second"]);
+  expect(() =>
+    assertQueryPlanUsesIndex([{ detail: "USING INDEX expected_idx" }], "expected_idx"),
+  ).not.toThrow();
+  expect(() => assertQueryPlanUsesIndex([{ detail: "SCAN table" }], "expected_idx")).toThrow();
+});
 
 const admin = { id: actorId("admin"), role: "admin" };
 const editor = { id: actorId("editor"), role: "editor" };
@@ -205,6 +221,8 @@ test("enforces singleton, revision, route, and immutable-publication boundaries 
     publishedBy: admin,
     publishedSnapshotId: contentSnapshotId("post-a-published"),
   });
+  expect(await store.loadPublic("/blog/first")).toMatchObject({ entry: { id: "post-a" } });
+  expect(await store.loadPublic("/blog/missing")).toBeNull();
   await expect(
     store.saveCompleteDraft({
       entryId: contentEntryId("post-a"),
@@ -233,6 +251,32 @@ test("enforces singleton, revision, route, and immutable-publication boundaries 
   ).rejects.toMatchObject({ code: "CONTENT_ROUTE_CONFLICT" });
   expect(await store.loadPublished({ entryId: contentEntryId("post-b") })).toBeNull();
   expect((await store.exportBuildContent()).entries).toHaveLength(1);
+});
+
+test("marks only unreferenced active media for independent deletion", async () => {
+  const store = new InMemoryContentStore();
+  store.registerMedia({
+    createdAt: unixMilliseconds(1),
+    createdBy: admin.id,
+    filename: "unused.png",
+    id: mediaId("unused-media"),
+    mimeType: "image/png",
+    size: 1,
+    status: "active",
+    storageKey: "media/unused",
+    updatedAt: unixMilliseconds(1),
+  });
+  await expect(
+    store.markForDeletion({
+      mediaId: mediaId("unused-media"),
+      requestedAt: unixMilliseconds(2),
+      requestedBy: admin,
+    }),
+  ).resolves.toMatchObject({
+    media: { status: "deleting", updatedAt: 2 },
+    status: "deleting",
+  });
+  expect(store.mediaDeletionRequests).toEqual(["unused-media"]);
 });
 
 test("replays matching idempotent publications without changing public content", async () => {
@@ -297,6 +341,12 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
     ],
   });
   const store = new InMemoryContentStore();
+  const receivedCreateInputs = [];
+  const create = store.create.bind(store);
+  store.create = async (input) => {
+    receivedCreateInputs.push(input);
+    return create(input);
+  };
   const trigger = new InMemorySiteBuildTrigger({ accepted: true });
   const useCases = new ContentUseCases({
     clock: new DeterministicClock(unixMilliseconds(10)),
@@ -350,6 +400,9 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
 
   const created = await useCases.create({ actor: editor, modelKey: "home", ...draft });
   expect(created.draft.fields).toEqual({ label: "Home" });
+  expect(receivedCreateInputs[0].mediaReferences).toEqual([
+    { fieldPath: "image", mediaId: "media-1", sourceKey: "hero" },
+  ]);
   const viewer = { id: actorId("viewer"), role: "viewer" };
   expect((await useCases.list({ actor: viewer, limit: 1, modelKey: "home" })).items).toHaveLength(
     1,

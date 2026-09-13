@@ -475,10 +475,18 @@ export function createContentEntry(input: {
   return deepFreeze({ draft: cloneSnapshot(input.draft), id: input.id, model: { ...input.model } });
 }
 
+/** A validated relational media-reference projection for one mutable draft. */
+export interface DraftMediaReference {
+  readonly fieldPath: string;
+  readonly mediaId: MediaId;
+  readonly sourceKey: "$fields" | BlockKey;
+}
+
 export interface CompleteDraftMutation {
   readonly blocks: readonly ContentBlock[];
   readonly expectedRevision: number;
   readonly fields: JsonObject;
+  readonly mediaReferences: readonly DraftMediaReference[];
   readonly slug?: string;
   readonly title: string;
   readonly updatedAt: UnixMilliseconds;

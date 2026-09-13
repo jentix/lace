@@ -5,9 +5,9 @@
   "scripts": {
     "build": "turbo run build",
     "content:sync": "node scripts/not-implemented.mjs content:sync failure",
-    "db:generate": "node scripts/not-implemented.mjs db:generate failure",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate:cloudflare": "node scripts/not-implemented.mjs db:migrate:cloudflare failure",
-    "db:migrate:node": "node scripts/not-implemented.mjs db:migrate:node failure",
+    "db:migrate:node": "pnpm --filter @lacecms/db run build && pnpm --filter @lacecms/platform-node run db:migrate",
     "dev:cloudflare": "node scripts/not-implemented.mjs dev:cloudflare success",
     "dev:node": "node scripts/not-implemented.mjs dev:node success",
     "format:check": "oxfmt --check .",
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@fission-ai/openspec": "catalog:",
+    "drizzle-kit": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "turbo": "catalog:",

@@ -10,6 +10,8 @@ import type {
   ContentModelKey,
   ContentModelRoute,
   ContentSnapshotId,
+  DraftMediaReference,
+  MediaId,
   MediaMetadata,
   PublishedSnapshot,
   SiteBuildId,
@@ -130,6 +132,7 @@ export interface ContentEntryReadPort {
 
 export interface CreateContentEntryInput {
   readonly entry: ContentEntry;
+  readonly mediaReferences: readonly DraftMediaReference[];
 }
 
 export interface SaveCompleteDraftInput {
@@ -154,6 +157,8 @@ export interface PublicationIdempotency {
 }
 
 export interface DeleteContentEntryInput {
+  readonly deletedAt: UnixMilliseconds;
+  readonly deletedBy: Actor;
   readonly entryId: ContentEntryId;
 }
 
@@ -200,6 +205,8 @@ export interface BuildContentExport {
 
 export interface PublicContentReadPort {
   exportBuildContent(): Promise<BuildContentExport>;
+  loadPublic(path: string): Promise<PublicContentEntry | null>;
+  loadPublicMedia(id: string): Promise<MediaMetadata | null>;
   listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>>;
 }
 
@@ -300,6 +307,23 @@ export interface DispatcherLeasePort {
 /** Metadata-only media reads remain separate from binary object storage. */
 export interface MediaReadPort {
   loadMedia(id: string): Promise<MediaMetadata | null>;
+}
+
+/** A durable request to delete binary media asynchronously after reference checks. */
+export interface MarkMediaForDeletionInput {
+  readonly mediaId: MediaId;
+  readonly requestedAt: UnixMilliseconds;
+  readonly requestedBy: Actor;
+}
+
+export interface MarkMediaForDeletionResult {
+  readonly media: MediaMetadata;
+  readonly status: "deleting";
+}
+
+/** Mutation remains separate from metadata reads and binary object storage. */
+export interface MediaCommandPort {
+  markForDeletion(input: MarkMediaForDeletionInput): Promise<MarkMediaForDeletionResult>;
 }
 
 export * from "./content-use-cases.js";

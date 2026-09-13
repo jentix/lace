@@ -24,6 +24,9 @@ import type {
   ListContentEntriesInput,
   ListPublicContentInput,
   LoadContentEntryInput,
+  MarkMediaForDeletionInput,
+  MarkMediaForDeletionResult,
+  MediaCommandPort,
   ModelSyncInspection,
   ModelSyncPort,
   ModelSyncRecord,
@@ -58,12 +61,32 @@ import {
 } from "@lacecms/domain";
 import type {
   ContentEntry,
+  DraftMediaReference,
+  MediaMetadata,
   PublishedRoute,
   PublishedSnapshot,
   UnixMilliseconds,
 } from "@lacecms/domain";
 
 export const packageName = "@lacecms/test-utils";
+
+/** Reusable assertion primitive for persistence adapters with injectable write checkpoints. */
+export async function assertAtomicCheckpoints(input: {
+  readonly checkpoints: readonly string[];
+  readonly run: (checkpoint: string) => Promise<void>;
+}): Promise<void> {
+  for (const checkpoint of input.checkpoints) await input.run(checkpoint);
+}
+
+/** Makes index-plan fixtures insensitive to SQLite's non-semantic planner wording. */
+export function assertQueryPlanUsesIndex(
+  rows: readonly { readonly detail: string }[],
+  index: string,
+): void {
+  if (!rows.some((row) => row.detail.includes(index))) {
+    throw new Error(`Expected query plan to use index ${index}.`);
+  }
+}
 
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -335,11 +358,19 @@ function summarize(entry: ContentEntry): ContentEntrySummary {
  * It validates every guard before replacing its private indexes.
  */
 export class InMemoryContentStore
-  implements ModelSyncPort, ContentEntryReadPort, ContentEntryCommandPort, PublicContentReadPort
+  implements
+    ModelSyncPort,
+    ContentEntryReadPort,
+    ContentEntryCommandPort,
+    MediaCommandPort,
+    PublicContentReadPort
 {
+  public readonly mediaDeletionRequests: string[] = [];
   private readonly entries = new Map<string, ContentEntry>();
   private readonly models = new Map<string, ModelSyncRecord>();
+  private readonly media = new Map<string, MediaMetadata>();
   private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
+  private readonly references = new Map<string, readonly DraftMediaReference[]>();
   private readonly routes = new Map<string, PublishedRoute>();
   private publicVersion = 0;
 
@@ -391,6 +422,7 @@ export class InMemoryContentStore
     ).length;
     assertEntryCreationAllowed(entry.model.kind, existingEntryCount);
     this.entries.set(entry.id, entry);
+    this.references.set(entry.draft.id, clone(input.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(entry), status: "created" });
   }
 
@@ -402,6 +434,8 @@ export class InMemoryContentStore
     for (const [path, route] of nextRoutes)
       if (route.entryId === input.entryId) nextRoutes.delete(path);
     this.entries.delete(input.entryId);
+    this.references.delete(entry.draft.id);
+    if (entry.published !== undefined) this.references.delete(entry.published.id);
     this.routes.clear();
     for (const [path, route] of nextRoutes) this.routes.set(path, route);
     if (entry.published !== undefined) this.publicVersion += 1;
@@ -436,6 +470,7 @@ export class InMemoryContentStore
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
     const saved = saveCompleteDraft(entry, input.mutation);
     this.entries.set(saved.id, saved);
+    this.references.set(saved.draft.id, clone(input.mutation.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(saved), status: "saved" });
   }
 
@@ -474,6 +509,7 @@ export class InMemoryContentStore
       updatedAt: input.publishedAt,
     });
     this.entries.set(published.id, published);
+    this.references.set(published.published!.id, clone(this.references.get(entry.draft.id) ?? []));
     this.routes.clear();
     for (const [routePath, route] of nextRoutes) this.routes.set(routePath, route);
     this.publicVersion += 1;
@@ -497,6 +533,44 @@ export class InMemoryContentStore
       .filter(({ entry }) => entry.published !== undefined)
       .map(({ entry, path }) => Object.freeze({ entry: copyEntry(entry), path }));
     return this.page(entries, input.after, input.limit, "public");
+  }
+
+  public async loadPublic(path: string): Promise<PublicContentEntry | null> {
+    const route = this.routes.get(path);
+    if (route === undefined) return null;
+    const entry = this.entries.get(route.entryId);
+    return entry?.published === undefined ? null : Object.freeze({ entry: copyEntry(entry), path });
+  }
+
+  public async loadPublicMedia(id: string): Promise<MediaMetadata | null> {
+    const isPublished = [...this.routes.values()].some((route) =>
+      (this.references.get(route.snapshotId) ?? []).some((reference) => reference.mediaId === id),
+    );
+    const value = this.media.get(id);
+    return isPublished && value !== undefined ? clone(value) : null;
+  }
+
+  public registerMedia(value: MediaMetadata): void {
+    this.media.set(value.id, clone(value));
+  }
+
+  public async markForDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    const media = this.media.get(input.mediaId);
+    if (media === undefined || media.status !== "active") {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is not eligible for deletion.");
+    }
+    const referenced = [...this.references.values()].some((references) =>
+      references.some((reference) => reference.mediaId === input.mediaId),
+    );
+    if (referenced) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    }
+    const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
+    this.media.set(input.mediaId, clone(deleting));
+    this.mediaDeletionRequests.push(input.mediaId);
+    return Object.freeze({ media: clone(deleting), status: "deleting" });
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {

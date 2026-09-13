@@ -9,6 +9,7 @@ import {
   contentModelKey,
   contentSnapshotId,
   createContentEntry,
+  mediaId,
   requirePermission,
   resolveContentPublicPath,
 } from "@lacecms/domain";
@@ -19,6 +20,7 @@ import type {
   ContentEntryId,
   ContentModelKey,
   ContentModelRoute,
+  DraftMediaReference,
   DraftSnapshot,
   PublishedSnapshot,
 } from "@lacecms/domain";
@@ -103,6 +105,7 @@ export interface PublishContentEntryUseCaseResult {
 interface NormalizedDraft extends CompleteDraftInput {
   readonly blocks: readonly ContentBlock[];
   readonly fields: JsonObject;
+  readonly mediaReferences: readonly DraftMediaReference[];
 }
 
 function detached<Value>(value: Value): Value {
@@ -150,7 +153,9 @@ export class ContentUseCases {
       id,
       model: modelRoute(model),
     });
-    return commandEntry(await this.dependencies.content.create({ entry }));
+    return commandEntry(
+      await this.dependencies.content.create({ entry, mediaReferences: draft.mediaReferences }),
+    );
   }
 
   public async list(
@@ -231,7 +236,11 @@ export class ContentUseCases {
     requirePermission(input.actor, "content:write");
     const entry = await this.entry(input.entryId);
     if (entry.published !== undefined) requirePermission(input.actor, "content:publish");
-    await this.dependencies.content.delete({ entryId: entry.id });
+    await this.dependencies.content.delete({
+      deletedAt: this.dependencies.clock.now(),
+      deletedBy: input.actor,
+      entryId: entry.id,
+    });
   }
 
   private async dispatchBuild(
@@ -329,23 +338,34 @@ export class ContentUseCases {
       ...(aggregate.slug === undefined ? {} : { slug: aggregate.slug }),
       title: aggregate.title,
     };
-    await this.validateMedia(normalized.fields, model.fields);
+    const mediaReferences = await this.validateMedia(normalized.fields, model.fields, "$fields");
     for (const block of normalized.blocks) {
-      await this.validateMedia(block.data, this.dependencies.config.blocks.get(block.type)!.fields);
+      mediaReferences.push(
+        ...(await this.validateMedia(
+          block.data,
+          this.dependencies.config.blocks.get(block.type)!.fields,
+          block.key,
+        )),
+      );
     }
-    return normalized;
+    return { ...normalized, mediaReferences: Object.freeze(mediaReferences) };
   }
 
   private async validateMedia(
     values: JsonObject,
     definitions: Readonly<Record<string, FieldDefinition>>,
-  ): Promise<void> {
+    sourceKey: "$fields" | ReturnType<typeof blockKey>,
+  ): Promise<DraftMediaReference[]> {
+    const references: DraftMediaReference[] = [];
     for (const [key, definition] of Object.entries(definitions)) {
       if (definition.type !== "media" || !Object.hasOwn(values, key)) continue;
-      const media = await this.dependencies.media.loadMedia(values[key] as string);
+      const value = values[key] as string;
+      const media = await this.dependencies.media.loadMedia(value);
       if (media === null || media.status !== "active") {
-        throw new DomainError("CONTENT_INVALID_STATE", `Media ${values[key]} is unavailable.`);
+        throw new DomainError("CONTENT_INVALID_STATE", `Media ${value} is unavailable.`);
       }
+      references.push({ fieldPath: key, mediaId: mediaId(value), sourceKey });
     }
+    return references;
   }
 }
