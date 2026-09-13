@@ -10,6 +10,7 @@ import type {
   ContentModelKey,
   ContentModelRoute,
   ContentSnapshotId,
+  DraftMediaReference,
   MediaMetadata,
   PublishedSnapshot,
   SiteBuildId,
@@ -130,6 +131,7 @@ export interface ContentEntryReadPort {
 
 export interface CreateContentEntryInput {
   readonly entry: ContentEntry;
+  readonly mediaReferences: readonly DraftMediaReference[];
 }
 
 export interface SaveCompleteDraftInput {
@@ -200,6 +202,8 @@ export interface BuildContentExport {
 
 export interface PublicContentReadPort {
   exportBuildContent(): Promise<BuildContentExport>;
+  loadPublic(path: string): Promise<PublicContentEntry | null>;
+  loadPublicMedia(id: string): Promise<MediaMetadata | null>;
   listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>>;
 }
 

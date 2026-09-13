@@ -6,6 +6,8 @@ import Database from "better-sqlite3";
 
 export const packageName = "@lacecms/platform-node";
 
+export * from "./content-repository.js";
+
 export interface NodeDatabase {
   readonly connection: Database.Database;
   readonly drizzle: ReturnType<typeof drizzle>;

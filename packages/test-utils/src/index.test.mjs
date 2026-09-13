@@ -205,6 +205,8 @@ test("enforces singleton, revision, route, and immutable-publication boundaries 
     publishedBy: admin,
     publishedSnapshotId: contentSnapshotId("post-a-published"),
   });
+  expect(await store.loadPublic("/blog/first")).toMatchObject({ entry: { id: "post-a" } });
+  expect(await store.loadPublic("/blog/missing")).toBeNull();
   await expect(
     store.saveCompleteDraft({
       entryId: contentEntryId("post-a"),
@@ -297,6 +299,12 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
     ],
   });
   const store = new InMemoryContentStore();
+  const receivedCreateInputs = [];
+  const create = store.create.bind(store);
+  store.create = async (input) => {
+    receivedCreateInputs.push(input);
+    return create(input);
+  };
   const trigger = new InMemorySiteBuildTrigger({ accepted: true });
   const useCases = new ContentUseCases({
     clock: new DeterministicClock(unixMilliseconds(10)),
@@ -350,6 +358,9 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
 
   const created = await useCases.create({ actor: editor, modelKey: "home", ...draft });
   expect(created.draft.fields).toEqual({ label: "Home" });
+  expect(receivedCreateInputs[0].mediaReferences).toEqual([
+    { fieldPath: "image", mediaId: "media-1", sourceKey: "hero" },
+  ]);
   const viewer = { id: actorId("viewer"), role: "viewer" };
   expect((await useCases.list({ actor: viewer, limit: 1, modelKey: "home" })).items).toHaveLength(
     1,

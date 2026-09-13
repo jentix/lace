@@ -58,6 +58,8 @@ import {
 } from "@lacecms/domain";
 import type {
   ContentEntry,
+  DraftMediaReference,
+  MediaMetadata,
   PublishedRoute,
   PublishedSnapshot,
   UnixMilliseconds,
@@ -339,7 +341,9 @@ export class InMemoryContentStore
 {
   private readonly entries = new Map<string, ContentEntry>();
   private readonly models = new Map<string, ModelSyncRecord>();
+  private readonly media = new Map<string, MediaMetadata>();
   private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
+  private readonly references = new Map<string, readonly DraftMediaReference[]>();
   private readonly routes = new Map<string, PublishedRoute>();
   private publicVersion = 0;
 
@@ -391,6 +395,7 @@ export class InMemoryContentStore
     ).length;
     assertEntryCreationAllowed(entry.model.kind, existingEntryCount);
     this.entries.set(entry.id, entry);
+    this.references.set(entry.draft.id, clone(input.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(entry), status: "created" });
   }
 
@@ -402,6 +407,8 @@ export class InMemoryContentStore
     for (const [path, route] of nextRoutes)
       if (route.entryId === input.entryId) nextRoutes.delete(path);
     this.entries.delete(input.entryId);
+    this.references.delete(entry.draft.id);
+    if (entry.published !== undefined) this.references.delete(entry.published.id);
     this.routes.clear();
     for (const [path, route] of nextRoutes) this.routes.set(path, route);
     if (entry.published !== undefined) this.publicVersion += 1;
@@ -436,6 +443,7 @@ export class InMemoryContentStore
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
     const saved = saveCompleteDraft(entry, input.mutation);
     this.entries.set(saved.id, saved);
+    this.references.set(saved.draft.id, clone(input.mutation.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(saved), status: "saved" });
   }
 
@@ -474,6 +482,7 @@ export class InMemoryContentStore
       updatedAt: input.publishedAt,
     });
     this.entries.set(published.id, published);
+    this.references.set(published.published!.id, clone(this.references.get(entry.draft.id) ?? []));
     this.routes.clear();
     for (const [routePath, route] of nextRoutes) this.routes.set(routePath, route);
     this.publicVersion += 1;
@@ -497,6 +506,25 @@ export class InMemoryContentStore
       .filter(({ entry }) => entry.published !== undefined)
       .map(({ entry, path }) => Object.freeze({ entry: copyEntry(entry), path }));
     return this.page(entries, input.after, input.limit, "public");
+  }
+
+  public async loadPublic(path: string): Promise<PublicContentEntry | null> {
+    const route = this.routes.get(path);
+    if (route === undefined) return null;
+    const entry = this.entries.get(route.entryId);
+    return entry?.published === undefined ? null : Object.freeze({ entry: copyEntry(entry), path });
+  }
+
+  public async loadPublicMedia(id: string): Promise<MediaMetadata | null> {
+    const isPublished = [...this.routes.values()].some((route) =>
+      (this.references.get(route.snapshotId) ?? []).some((reference) => reference.mediaId === id),
+    );
+    const value = this.media.get(id);
+    return isPublished && value !== undefined ? clone(value) : null;
+  }
+
+  public registerMedia(value: MediaMetadata): void {
+    this.media.set(value.id, clone(value));
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {

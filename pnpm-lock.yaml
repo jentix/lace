@@ -354,9 +354,18 @@ importers:
 
   packages/platform-node:
     dependencies:
+      '@lacecms/application':
+        specifier: workspace:*
+        version: link:../application
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:../content
       '@lacecms/db':
         specifier: workspace:*
         version: link:../db
+      '@lacecms/domain':
+        specifier: workspace:*
+        version: link:../domain
       better-sqlite3:
         specifier: 'catalog:'
         version: 13.0.3

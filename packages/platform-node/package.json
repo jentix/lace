@@ -18,7 +18,10 @@
     "test": "vitest run src/index.test.mjs"
   },
   "dependencies": {
+    "@lacecms/application": "workspace:*",
+    "@lacecms/content": "workspace:*",
     "@lacecms/db": "workspace:*",
+    "@lacecms/domain": "workspace:*",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:"
   },
