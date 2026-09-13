@@ -236,7 +236,11 @@ export class ContentUseCases {
     requirePermission(input.actor, "content:write");
     const entry = await this.entry(input.entryId);
     if (entry.published !== undefined) requirePermission(input.actor, "content:publish");
-    await this.dependencies.content.delete({ entryId: entry.id });
+    await this.dependencies.content.delete({
+      deletedAt: this.dependencies.clock.now(),
+      deletedBy: input.actor,
+      entryId: entry.id,
+    });
   }
 
   private async dispatchBuild(

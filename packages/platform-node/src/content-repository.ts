@@ -2,6 +2,7 @@ import { opaqueCursor } from "@lacecms/application";
 import type {
   BuildContentExport,
   ContentCommandResult,
+  ContentEntryCommandPort,
   ContentEntryReadPort,
   ContentEntrySummary,
   CreateContentEntryInput,
@@ -9,7 +10,12 @@ import type {
   ListContentEntriesInput,
   ListPublicContentInput,
   LoadContentEntryInput,
+  MarkMediaForDeletionInput,
+  MarkMediaForDeletionResult,
+  MediaCommandPort,
   MediaReadPort,
+  PublishContentEntryCommand,
+  PublishContentEntryResult,
   PublicContentEntry,
   PublicContentReadPort,
   SaveCompleteDraftInput,
@@ -21,6 +27,7 @@ import {
   contentEntryId,
   contentModelKey,
   contentSnapshotId,
+  resolveContentPublicPath,
   unixMilliseconds,
 } from "@lacecms/domain";
 import type {
@@ -35,6 +42,7 @@ import type {
 } from "@lacecms/domain";
 import type { JsonObject } from "@lacecms/content";
 import type Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
 import type { NodeDatabase } from "./index.js";
 
 const CURSOR_VERSION = 1;
@@ -196,16 +204,27 @@ function chunks<Value>(values: readonly Value[]): readonly (readonly Value[])[] 
 /** Maps the current runtime configuration to a persisted content-model identity. */
 export type ContentModelResolver = (key: string) => ContentModelRoute | undefined;
 
+export interface NodeRepositoryOptions {
+  readonly beforeMutation?: (checkpoint: string) => void;
+  readonly nextId?: () => string;
+}
+
 /**
  * Node SQLite implementation of bounded content reads plus draft creation and
  * replacement. Guarded publication and deletion intentionally belong to 5C.
  */
 export class NodeContentRepository
-  implements ContentEntryReadPort, PublicContentReadPort, MediaReadPort
+  implements
+    ContentEntryCommandPort,
+    ContentEntryReadPort,
+    MediaCommandPort,
+    PublicContentReadPort,
+    MediaReadPort
 {
   public constructor(
     private readonly connection: Database.Database,
     private readonly resolveModel: ContentModelResolver,
+    private readonly options: NodeRepositoryOptions = {},
   ) {}
 
   public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {
@@ -292,6 +311,163 @@ export class NodeContentRepository
     const entry = this.loadEntry(input.entryId);
     if (entry === null) failure("Saved content entry could not be reloaded.");
     return { entry, status: "saved" };
+  }
+
+  public async publish(input: PublishContentEntryCommand): Promise<PublishContentEntryResult> {
+    const entry = this.loadEntry(input.entryId);
+    if (entry === null) failure("Content entry does not exist.");
+    const path = resolveContentPublicPath(entry.model, entry.draft.slug);
+    const scope =
+      input.idempotency === undefined
+        ? undefined
+        : `publication:${input.entryId}:${input.idempotency.actorId}`;
+    try {
+      const result = this.connection.transaction(() => {
+        if (input.idempotency !== undefined) {
+          if (input.idempotency.actorId !== input.publishedBy.id)
+            failure("Publication idempotency actor must match publisher.");
+          const prior = this.connection
+            .prepare(
+              "select request_hash, response_json from idempotency_records where scope = ? and key = ?",
+            )
+            .get(scope, input.idempotency.key) as
+            | { request_hash: string; response_json: string }
+            | undefined;
+          if (prior !== undefined) {
+            if (prior.request_hash !== input.idempotency.fingerprint)
+              failure("Publication idempotency key was reused with different input.");
+            return {
+              entry: JSON.parse(prior.response_json) as ContentEntry,
+              outcome: "replayed" as const,
+              status: "published" as const,
+            };
+          }
+        }
+        this.checkpoint("publish.snapshot");
+        const copied = this.connection
+          .prepare(
+            "insert into content_snapshots (id, entry_id, revision, slug, title, fields_json, schema_version, created_at, updated_at, updated_by) select ?, s.entry_id, s.revision, s.slug, s.title, s.fields_json, s.schema_version, ?, ?, ? from content_snapshots s join content_entries e on e.draft_snapshot_id = s.id where e.id = ? and s.revision = ?",
+          )
+          .run(
+            input.publishedSnapshotId,
+            input.publishedAt,
+            input.publishedAt,
+            input.publishedBy.id,
+            input.entryId,
+            input.expectedRevision,
+          );
+        if (copied.changes !== 1)
+          throw new DomainError(
+            "CONTENT_REVISION_CONFLICT",
+            "The draft revision no longer matches the expected revision.",
+          );
+        this.checkpoint("publish.blocks");
+        this.connection
+          .prepare(
+            "insert into content_blocks (snapshot_id, block_key, block_type, position, schema_version, data_json, created_at, updated_at) select ?, block_key, block_type, position, schema_version, data_json, created_at, updated_at from content_blocks where snapshot_id = ?",
+          )
+          .run(input.publishedSnapshotId, entry.draft.id);
+        this.checkpoint("publish.references");
+        this.connection
+          .prepare(
+            "insert into content_media_references (snapshot_id, source_key, field_path, media_id, created_at) select ?, source_key, field_path, media_id, created_at from content_media_references where snapshot_id = ?",
+          )
+          .run(input.publishedSnapshotId, entry.draft.id);
+        this.checkpoint("publish.route");
+        this.connection
+          .prepare("delete from published_routes where entry_id = ?")
+          .run(input.entryId);
+        this.connection
+          .prepare(
+            "insert into published_routes (path, entry_id, snapshot_id, updated_at) values (?, ?, ?, ?)",
+          )
+          .run(path, input.entryId, input.publishedSnapshotId, input.publishedAt);
+        this.connection
+          .prepare(
+            "update content_entries set published_snapshot_id = ?, updated_at = ? where id = ?",
+          )
+          .run(input.publishedSnapshotId, input.publishedAt, input.entryId);
+        this.bumpPublicState(input.publishedAt, input.publishedBy.id, input.publishedSnapshotId);
+        const committed = this.loadEntry(input.entryId);
+        if (committed === null) failure("Published content entry could not be reloaded.");
+        if (input.idempotency !== undefined)
+          this.connection
+            .prepare(
+              "insert into idempotency_records (scope, key, request_hash, response_json, created_at, expires_at) values (?, ?, ?, ?, ?, ?)",
+            )
+            .run(
+              scope,
+              input.idempotency.key,
+              input.idempotency.fingerprint,
+              JSON.stringify(committed),
+              input.publishedAt,
+              input.publishedAt + 86_400_000,
+            );
+        if (entry.published !== undefined)
+          this.connection
+            .prepare("delete from content_snapshots where id = ?")
+            .run(entry.published.id);
+        return { entry: committed, outcome: "published" as const, status: "published" as const };
+      })();
+      return result;
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async delete(
+    input: import("@lacecms/application").DeleteContentEntryInput,
+  ): Promise<ContentCommandResult> {
+    const entry = this.entryRow(input.entryId);
+    if (entry === undefined) failure("Content entry does not exist.");
+    try {
+      this.connection.transaction(() => {
+        if (entry.published_snapshot_id !== null) {
+          this.checkpoint("delete.route");
+          this.connection
+            .prepare("delete from published_routes where entry_id = ?")
+            .run(input.entryId);
+          this.bumpPublicState(input.deletedAt, input.deletedBy.id, entry.published_snapshot_id);
+        }
+        this.checkpoint("delete.entry");
+        this.connection.prepare("delete from content_entries where id = ?").run(input.entryId);
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+    return { status: "deleted" };
+  }
+
+  public async markForDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    try {
+      this.connection.transaction(() => {
+        this.checkpoint("media.mark");
+        const changed = this.connection
+          .prepare(
+            "update media set status = 'deleting', updated_at = ? where id = ? and status = 'active' and not exists (select 1 from content_media_references where media_id = ?)",
+          )
+          .run(input.requestedAt, input.mediaId, input.mediaId);
+        if (changed.changes !== 1) failure("Media is not eligible for deletion.");
+        this.checkpoint("media.outbox");
+        this.connection
+          .prepare(
+            "insert into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'media.delete.requested', ?, 0, ?, ?)",
+          )
+          .run(
+            this.nextId(),
+            JSON.stringify({ mediaId: input.mediaId, requestedBy: input.requestedBy.id }),
+            input.requestedAt,
+            input.requestedAt,
+          );
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+    const media = await this.loadMedia(input.mediaId);
+    if (media === null) failure("Media deletion mark could not be reloaded.");
+    return { media, status: "deleting" };
   }
 
   public async load(input: LoadContentEntryInput): Promise<ContentEntry | null> {
@@ -634,6 +810,43 @@ export class NodeContentRepository
     }
   }
 
+  private checkpoint(name: string): void {
+    this.options.beforeMutation?.(name);
+  }
+
+  private nextId(): string {
+    if (this.options.nextId !== undefined) return this.options.nextId();
+    return randomUUID();
+  }
+
+  private bumpPublicState(timestamp: number, requestedBy: string, snapshotId: string | null): void {
+    this.checkpoint("public-state");
+    this.connection
+      .prepare(
+        "insert into published_state (singleton_key, version, updated_at) values (1, 1, ?) on conflict(singleton_key) do update set version = version + 1, updated_at = excluded.updated_at",
+      )
+      .run(timestamp);
+    const state = this.connection
+      .prepare("select version from published_state where singleton_key = 1")
+      .get() as { readonly version: number };
+    this.checkpoint("build-outbox");
+    const payload = JSON.stringify({
+      publishedSnapshotId: snapshotId,
+      targetVersion: state.version,
+    });
+    this.connection
+      .prepare(
+        "insert or ignore into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'site.build.requested', ?, 0, ?, ?)",
+      )
+      .run(this.nextId(), payload, timestamp + 5_000, timestamp);
+    this.connection
+      .prepare(
+        "update outbox_events set payload_json = ?, available_at = ? where type = 'site.build.requested' and processed_at is null and locked_at is null",
+      )
+      .run(payload, timestamp + 5_000);
+    void requestedBy;
+  }
+
   private mapMedia(row: Record<string, unknown>): MediaMetadata {
     const string = (name: string): string =>
       typeof row[name] === "string" ? row[name] : failure(`Media ${name} is invalid.`);
@@ -682,6 +895,7 @@ export class NodeContentRepository
 export function nodeContentRepository(
   database: NodeDatabase,
   resolveModel: ContentModelResolver,
+  options?: NodeRepositoryOptions,
 ): NodeContentRepository {
-  return new NodeContentRepository(database.connection, resolveModel);
+  return new NodeContentRepository(database.connection, resolveModel, options);
 }

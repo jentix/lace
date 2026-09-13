@@ -89,3 +89,14 @@ reference.
 - **WHEN** a build export contains multiple published entries and ordered blocks
 - **THEN** the adapter returns the complete aggregates through a bounded
   set-based query plan rather than issuing a separate query for each aggregate
+
+### Requirement: Node public mutations are atomic
+The Node persistence adapter SHALL atomically publish guarded drafts, replace routes, advance public state, coalesce build work, retain idempotent responses, delete entries, and mark only unreferenced active media for asynchronous deletion.
+
+#### Scenario: Route collision rolls back publication
+- **WHEN** a publication path is owned by another entry
+- **THEN** routes and public projections remain unchanged
+
+#### Scenario: Media deletion is asynchronous
+- **WHEN** eligible media is marked for deletion
+- **THEN** it becomes deleting with an independent event and no binary object deletion

@@ -24,6 +24,9 @@ import type {
   ListContentEntriesInput,
   ListPublicContentInput,
   LoadContentEntryInput,
+  MarkMediaForDeletionInput,
+  MarkMediaForDeletionResult,
+  MediaCommandPort,
   ModelSyncInspection,
   ModelSyncPort,
   ModelSyncRecord,
@@ -66,6 +69,24 @@ import type {
 } from "@lacecms/domain";
 
 export const packageName = "@lacecms/test-utils";
+
+/** Reusable assertion primitive for persistence adapters with injectable write checkpoints. */
+export async function assertAtomicCheckpoints(input: {
+  readonly checkpoints: readonly string[];
+  readonly run: (checkpoint: string) => Promise<void>;
+}): Promise<void> {
+  for (const checkpoint of input.checkpoints) await input.run(checkpoint);
+}
+
+/** Makes index-plan fixtures insensitive to SQLite's non-semantic planner wording. */
+export function assertQueryPlanUsesIndex(
+  rows: readonly { readonly detail: string }[],
+  index: string,
+): void {
+  if (!rows.some((row) => row.detail.includes(index))) {
+    throw new Error(`Expected query plan to use index ${index}.`);
+  }
+}
 
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -337,8 +358,14 @@ function summarize(entry: ContentEntry): ContentEntrySummary {
  * It validates every guard before replacing its private indexes.
  */
 export class InMemoryContentStore
-  implements ModelSyncPort, ContentEntryReadPort, ContentEntryCommandPort, PublicContentReadPort
+  implements
+    ModelSyncPort,
+    ContentEntryReadPort,
+    ContentEntryCommandPort,
+    MediaCommandPort,
+    PublicContentReadPort
 {
+  public readonly mediaDeletionRequests: string[] = [];
   private readonly entries = new Map<string, ContentEntry>();
   private readonly models = new Map<string, ModelSyncRecord>();
   private readonly media = new Map<string, MediaMetadata>();
@@ -525,6 +552,25 @@ export class InMemoryContentStore
 
   public registerMedia(value: MediaMetadata): void {
     this.media.set(value.id, clone(value));
+  }
+
+  public async markForDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    const media = this.media.get(input.mediaId);
+    if (media === undefined || media.status !== "active") {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is not eligible for deletion.");
+    }
+    const referenced = [...this.references.values()].some((references) =>
+      references.some((reference) => reference.mediaId === input.mediaId),
+    );
+    if (referenced) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    }
+    const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
+    this.media.set(input.mediaId, clone(deleting));
+    this.mediaDeletionRequests.push(input.mediaId);
+    return Object.freeze({ media: clone(deleting), status: "deleting" });
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {

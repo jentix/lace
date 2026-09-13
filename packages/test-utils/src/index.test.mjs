@@ -8,6 +8,8 @@ import {
   InMemoryDispatcherLeasePort,
   InMemoryObjectStorage,
   InMemorySiteBuildTrigger,
+  assertAtomicCheckpoints,
+  assertQueryPlanUsesIndex,
   packageName,
 } from "../dist/index.js";
 import {
@@ -17,6 +19,7 @@ import {
   contentModelKey,
   contentSnapshotId,
   createContentEntry,
+  mediaId,
   unixMilliseconds,
 } from "@lacecms/domain";
 import {
@@ -29,6 +32,19 @@ import { ContentUseCases } from "@lacecms/application";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { defineBlock, field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/test-utils"));
+
+test("provides reusable atomic-checkpoint and query-plan contract helpers", async () => {
+  const visited = [];
+  await assertAtomicCheckpoints({
+    checkpoints: ["first", "second"],
+    run: async (checkpoint) => visited.push(checkpoint),
+  });
+  expect(visited).toEqual(["first", "second"]);
+  expect(() =>
+    assertQueryPlanUsesIndex([{ detail: "USING INDEX expected_idx" }], "expected_idx"),
+  ).not.toThrow();
+  expect(() => assertQueryPlanUsesIndex([{ detail: "SCAN table" }], "expected_idx")).toThrow();
+});
 
 const admin = { id: actorId("admin"), role: "admin" };
 const editor = { id: actorId("editor"), role: "editor" };
@@ -235,6 +251,32 @@ test("enforces singleton, revision, route, and immutable-publication boundaries 
   ).rejects.toMatchObject({ code: "CONTENT_ROUTE_CONFLICT" });
   expect(await store.loadPublished({ entryId: contentEntryId("post-b") })).toBeNull();
   expect((await store.exportBuildContent()).entries).toHaveLength(1);
+});
+
+test("marks only unreferenced active media for independent deletion", async () => {
+  const store = new InMemoryContentStore();
+  store.registerMedia({
+    createdAt: unixMilliseconds(1),
+    createdBy: admin.id,
+    filename: "unused.png",
+    id: mediaId("unused-media"),
+    mimeType: "image/png",
+    size: 1,
+    status: "active",
+    storageKey: "media/unused",
+    updatedAt: unixMilliseconds(1),
+  });
+  await expect(
+    store.markForDeletion({
+      mediaId: mediaId("unused-media"),
+      requestedAt: unixMilliseconds(2),
+      requestedBy: admin,
+    }),
+  ).resolves.toMatchObject({
+    media: { status: "deleting", updatedAt: 2 },
+    status: "deleting",
+  });
+  expect(store.mediaDeletionRequests).toEqual(["unused-media"]);
 });
 
 test("replays matching idempotent publications without changing public content", async () => {

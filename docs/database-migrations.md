@@ -22,7 +22,8 @@ ship a reviewed later forward migration; do not edit an already-applied
 migration file.
 
 Node content repositories require this migration before they are constructed.
-They currently provide bounded reads plus atomic creation and complete-draft
-saves. Guarded publication and entry deletion are intentionally deferred to
-Session 5C, so runtimes must not expose those mutations until that session is
-deployed.
+They provide bounded reads, draft lifecycle writes, guarded publication, and
+entry deletion. Public-projection mutations atomically enqueue durable build
+work; build dispatch occurs later. Media deletion only marks unreferenced media
+for asynchronous cleanup, never deleting an object in the database transaction.
+Repository contract tests run against both file-backed and in-memory SQLite.

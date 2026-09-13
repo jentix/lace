@@ -14,8 +14,9 @@ of REST DTOs and database rows, for inspecting and applying normalized model
 synchronization; creating an entry; loading an entry's draft or published
 aggregate; listing model entries with an opaque cursor; atomically replacing a
 complete draft at an expected revision; atomically publishing a guarded draft
-with an optional idempotency key; deleting an entry; listing and resolving public
-content; loading media that is publicly reachable; and exporting build content.
+with an optional idempotency key; deleting an entry with caller actor/time;
+marking unreferenced media for asynchronous deletion; listing and resolving
+public content; loading media that is publicly reachable; and exporting build content.
 A complete-draft command SHALL carry the validated media-reference projection,
 including its stable source key, field path, and media identity, rather than
 requiring an adapter to infer references from arbitrary JSON. Read operations
@@ -54,6 +55,10 @@ the publication again.
 - **THEN** the command returns the original complete result without replacing the
   publication, changing the public export version, or requiring a second
   downstream build dispatch
+
+#### Scenario: Published deletion persists supplied audit values
+- **WHEN** an application caller deletes current published content
+- **THEN** persistence receives the caller actor and application-clock time
 
 ### Requirement: Portable infrastructure capability boundaries
 

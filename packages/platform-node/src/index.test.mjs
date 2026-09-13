@@ -61,6 +61,46 @@ test("migrates an empty file, reopens with SQLite invariants, and enforces const
           "site_builds_history_idx",
         ]),
       );
+      const queryPlan = (sql, ...bindings) =>
+        database.connection.prepare(`explain query plan ${sql}`).all(...bindings);
+      expect(
+        queryPlan("select * from content_blocks where snapshot_id = ? order by position", "x"),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            detail: expect.stringContaining("content_blocks_snapshot_position_idx"),
+          }),
+        ]),
+      );
+      expect(queryPlan("select * from content_media_references where media_id = ?", "x")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            detail: expect.stringContaining("content_media_references_media_idx"),
+          }),
+        ]),
+      );
+      expect(
+        queryPlan(
+          "select * from content_entries where model_key = ? order by updated_at desc, id desc",
+          "home",
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ detail: expect.stringContaining("content_entries_list_idx") }),
+        ]),
+      );
+      expect(
+        queryPlan(
+          "select * from outbox_events where processed_at is null and locked_at is null and available_at <= ?",
+          1,
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            detail: expect.stringContaining("outbox_events_available_idx"),
+          }),
+        ]),
+      );
 
       const insertModel = database.connection.prepare(
         "insert into content_models values (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -357,29 +397,13 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
       ).rejects.toMatchObject({ code: "CONTENT_MODEL_CARDINALITY_CONFLICT" });
       expect(await repository.load({ entryId: contentEntryId("home-b") })).toBeNull();
 
-      database.connection
-        .prepare(
-          "insert into content_snapshots (id, entry_id, revision, slug, title, fields_json, schema_version, created_at, updated_at, updated_by) select ?, entry_id, revision, slug, title, fields_json, schema_version, ?, ?, updated_by from content_snapshots where id = ?",
-        )
-        .run("post-a-published", 40, 40, "post-a-draft");
-      database.connection
-        .prepare(
-          "insert into content_blocks (snapshot_id, block_key, block_type, position, schema_version, data_json, created_at, updated_at) select ?, block_key, block_type, position, schema_version, data_json, created_at, updated_at from content_blocks where snapshot_id = ?",
-        )
-        .run("post-a-published", "post-a-draft");
-      database.connection
-        .prepare(
-          "insert into content_media_references (snapshot_id, source_key, field_path, media_id, created_at) select ?, source_key, field_path, media_id, created_at from content_media_references where snapshot_id = ?",
-        )
-        .run("post-a-published", "post-a-draft");
-      database.connection
-        .prepare("update content_entries set published_snapshot_id = ? where id = ?")
-        .run("post-a-published", "post-a");
-      database.connection
-        .prepare(
-          "insert into published_routes (path, entry_id, snapshot_id, updated_at) values (?, ?, ?, ?)",
-        )
-        .run("/blog/post-a", "post-a", "post-a-published", 40);
+      await repository.publish({
+        entryId: first.id,
+        expectedRevision: 2,
+        publishedAt: unixMilliseconds(40),
+        publishedBy: editor,
+        publishedSnapshotId: contentSnapshotId("post-a-published"),
+      });
       database.connection
         .prepare(
           "insert into content_snapshots (id, entry_id, revision, slug, title, fields_json, schema_version, created_at, updated_at, updated_by) select ?, entry_id, revision, slug, title, fields_json, schema_version, ?, ?, updated_by from content_snapshots where id = ?",
@@ -398,7 +422,6 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
           "insert into published_routes (path, entry_id, snapshot_id, updated_at) values (?, ?, ?, ?)",
         )
         .run("/blog/post-b", "post-b", "post-b-published", 41);
-      database.connection.prepare("insert into published_state values (1, 7, 40)").run();
       expect(await repository.loadPublic("/blog/post-a")).toMatchObject({
         entry: { id: "post-a", published: { id: "post-a-published" } },
       });
@@ -410,12 +433,10 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
         return prepare(...arguments_);
       };
       expect(await repository.exportBuildContent()).toMatchObject({
-        version: 7,
+        version: 1,
         entries: [{ path: "/blog/post-a" }, { path: "/blog/post-b" }],
       });
       expect(queryCount).toBeLessThanOrEqual(4);
-      expect(repository).not.toHaveProperty("publish");
-      expect(repository).not.toHaveProperty("delete");
       expect(await repository.loadPublic("/missing")).toBeNull();
       database.connection
         .prepare("update content_snapshots set fields_json = ? where id = ?")
