@@ -462,8 +462,9 @@ function omitDisplayMetadata(value: JsonValue): MutableJsonValue {
 }
 
 function modelForHash(model: ContentModelDefinition, registry: BlockRegistry): JsonValue {
+  const { renamedFrom: _renamedFrom, ...identityModel } = model;
   return asJsonValue({
-    ...model,
+    ...identityModel,
     blockDefinitions: model.blocks.map((type) => toBlockMetadata(registry.get(type)!)),
   });
 }
@@ -471,10 +472,16 @@ function modelForHash(model: ContentModelDefinition, registry: BlockRegistry): J
 function normalizedModelForHash(model: NormalizedContentModel): JsonValue {
   const {
     projectionHash: _projectionHash,
+    renamedFrom: _renamedFrom,
     structureHash: _structureHash,
     ...serializableModel
   } = model;
   return asJsonValue(serializableModel);
+}
+
+function publicModel(model: NormalizedContentModel): NormalizedContentModel {
+  const { renamedFrom: _renamedFrom, ...projection } = model;
+  return deepFreeze(projection) as NormalizedContentModel;
 }
 
 /**
@@ -516,20 +523,21 @@ export async function defineConfig<const Models extends readonly ContentModelDef
   );
 
   const blocks = toBlockRegistryMetadata(registry);
+  const publicModels = normalizedModels.map(publicModel);
   const projection = {
     blocks,
-    content: normalizedModels.map(normalizedModelForHash),
+    content: publicModels.map(normalizedModelForHash),
   } as unknown as JsonValue;
   const publicProjection: PublicConfigProjection = {
     blocks,
-    content: deepFreeze(normalizedModels),
+    content: deepFreeze(publicModels),
     projectionHash: await sha256CanonicalJson(projection),
     structureHash: await sha256CanonicalJson(omitDisplayMetadata(projection)),
   };
   const normalized: NormalizedConfig<Models> = {
     ...publicProjection,
     public: deepFreeze({ ...publicProjection }),
-    runtime: deepFreeze({ blocks: registry, content: publicProjection.content }),
+    runtime: deepFreeze({ blocks: registry, content: deepFreeze(normalizedModels) }),
   };
   return deepFreeze(normalized);
 }

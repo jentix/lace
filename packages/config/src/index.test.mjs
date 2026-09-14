@@ -187,6 +187,10 @@ test("produces stable per-model and whole-config hashes", async () => {
     blocks,
     content: [homeModel({ version: 2 }), postModel()],
   });
+  const renamed = await defineConfig({
+    blocks,
+    content: [homeModel(), postModel({ renamedFrom: "articles" })],
+  });
 
   expect(first.structureHash).toBe(second.structureHash);
   expect(first.projectionHash).toBe(second.projectionHash);
@@ -194,6 +198,13 @@ test("produces stable per-model and whole-config hashes", async () => {
   expect(first.content[0].structureHash).toBe(displayChanged.content[0].structureHash);
   expect(first.content[0].projectionHash).not.toBe(displayChanged.content[0].projectionHash);
   expect(first.structureHash).not.toBe(structuralChanged.structureHash);
+  expect(first.projectionHash).toBe(renamed.projectionHash);
+  expect(first.structureHash).toBe(renamed.structureHash);
+  expect(first.content[1].projectionHash).toBe(renamed.content[1].projectionHash);
+  expect(first.content[1].structureHash).toBe(renamed.content[1].structureHash);
+  expect(renamed.content[1]).not.toHaveProperty("renamedFrom");
+  expect(renamed.public.content[1]).not.toHaveProperty("renamedFrom");
+  expect(renamed.runtime.content[1]).toMatchObject({ renamedFrom: "articles" });
   expect(Object.isFrozen(first)).toBe(true);
   expect(Object.isFrozen(first.content)).toBe(true);
 });
