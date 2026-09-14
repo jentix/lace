@@ -82,14 +82,21 @@ contains only serializable configuration and block metadata. The public
 projection SHALL provide deterministic structural and projection hashes for
 every model and for the complete configuration using canonical JSON and the
 portable SHA-256 contract. Structural hashes SHALL exclude model, field, and
-block display metadata; projection hashes SHALL include the complete serializable
-normalized definition. Equal semantic configurations SHALL produce equal hashes
+block display metadata and the temporary `renamedFrom` synchronization hint;
+projection hashes SHALL include the complete serializable normalized definition
+except `renamedFrom`. Equal semantic configurations SHALL produce equal hashes
 regardless of object insertion order.
 
 #### Scenario: Ignore display-only changes in structural identity
 - **WHEN** two otherwise identical model definitions differ only in model,
   field, or block label and description
 - **THEN** their structural hashes match and their projection hashes differ
+
+#### Scenario: Ignore temporary rename metadata in configuration identity
+- **WHEN** two otherwise identical model definitions differ only by a valid
+  `renamedFrom` hint
+- **THEN** their model and complete-configuration structural and projection
+  hashes match while the runtime model retains the hint for synchronization
 
 #### Scenario: Detect a structural model change
 - **WHEN** otherwise identical definitions differ in kind, version, fields,

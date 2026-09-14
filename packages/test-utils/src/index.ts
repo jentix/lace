@@ -1,7 +1,5 @@
 import { dispatcherLeaseId, opaqueCursor, opaqueTokenVerifier } from "@lacecms/application";
 import type {
-  ApplyModelSyncInput,
-  ApplyModelSyncResult,
   BuildContentExport,
   BuildTriggerResult,
   ByteStream,
@@ -20,16 +18,13 @@ import type {
   DispatcherLease,
   DispatcherLeasePort,
   IdGenerator,
-  InspectModelSyncInput,
   ListContentEntriesInput,
   ListPublicContentInput,
   LoadContentEntryInput,
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
   MediaCommandPort,
-  ModelSyncInspection,
-  ModelSyncPort,
-  ModelSyncRecord,
+  StoredContentModelState,
   ObjectStorage,
   OpaqueCursor,
   OpaqueTokenHasher,
@@ -46,12 +41,10 @@ import type {
   SiteBuildTrigger,
   StoredObject,
 } from "@lacecms/application";
-import type { NormalizedContentModel } from "@lacecms/config";
 import {
   DomainError,
   assertEntryCreationAllowed,
   assertPublicPathAvailable,
-  contentModelKey,
   contentSnapshotId,
   createContentEntry,
   publishContentEntry,
@@ -332,16 +325,6 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
   }
 }
 
-function modelRecord(model: NormalizedContentModel): ModelSyncRecord {
-  return Object.freeze({
-    key: contentModelKey(model.key),
-    kind: model.kind,
-    projectionHash: model.projectionHash,
-    structureHash: model.structureHash,
-    version: model.version,
-  });
-}
-
 function summarize(entry: ContentEntry): ContentEntrySummary {
   return Object.freeze({
     draftRevision: entry.draft.revision,
@@ -358,58 +341,40 @@ function summarize(entry: ContentEntry): ContentEntrySummary {
  * It validates every guard before replacing its private indexes.
  */
 export class InMemoryContentStore
-  implements
-    ModelSyncPort,
-    ContentEntryReadPort,
-    ContentEntryCommandPort,
-    MediaCommandPort,
-    PublicContentReadPort
+  implements ContentEntryReadPort, ContentEntryCommandPort, MediaCommandPort, PublicContentReadPort
 {
   public readonly mediaDeletionRequests: string[] = [];
   private readonly entries = new Map<string, ContentEntry>();
-  private readonly models = new Map<string, ModelSyncRecord>();
+  private readonly modelStates = new Map<string, StoredContentModelState>();
   private readonly media = new Map<string, MediaMetadata>();
   private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
   private readonly references = new Map<string, readonly DraftMediaReference[]>();
   private readonly routes = new Map<string, PublishedRoute>();
   private publicVersion = 0;
 
-  public async inspect(input: InspectModelSyncInput): Promise<ModelSyncInspection> {
-    const incoming = new Map(input.models.map((model) => [model.key, modelRecord(model)]));
-    const added = [...incoming.keys()].filter((key) => !this.models.has(key)).map(contentModelKey);
-    const removed = [...this.models.keys()]
-      .filter((key) => !incoming.has(key))
-      .map(contentModelKey);
-    const changed = [...incoming.entries()]
-      .filter(([key, record]) => this.models.get(key)?.structureHash !== record.structureHash)
-      .filter(([key]) => this.models.has(key))
-      .map(([key]) => contentModelKey(key));
-    return Object.freeze({
-      added: Object.freeze(added),
-      changed: Object.freeze(changed),
-      removed: Object.freeze(removed),
-    });
+  /** Seeds portable stored model identities for configuration-sync planner tests. */
+  public setStoredModelStates(models: readonly StoredContentModelState[]): void {
+    this.modelStates.clear();
+    for (const model of models) this.modelStates.set(model.key, clone(model));
   }
 
-  public async apply(input: ApplyModelSyncInput): Promise<ApplyModelSyncResult> {
-    const inspection = await this.inspect(input);
-    const incoming = input.models.map(modelRecord);
-    const structureHash = incoming
-      .map((model) => model.structureHash)
-      .sort()
-      .join(":");
-    if (
-      input.expectedStructureHash !== undefined &&
-      input.expectedStructureHash !== structureHash
-    ) {
-      throw new DomainError(
-        "CONTENT_REVISION_CONFLICT",
-        "Configuration structure hash no longer matches.",
-      );
-    }
-    this.models.clear();
-    for (const model of incoming) this.models.set(model.key, clone(model));
-    return Object.freeze({ inspection, models: Object.freeze(incoming.map(clone)) });
+  /** Reports detached stored identities plus the entries and snapshots currently held in memory. */
+  public storedModelStates(): readonly StoredContentModelState[] {
+    return Object.freeze(
+      [...this.modelStates.values()]
+        .map((model) => {
+          const entries = [...this.entries.values()].filter(
+            (entry) => entry.model.key === model.key,
+          );
+          return Object.freeze({
+            ...clone(model),
+            draftSnapshotCount: entries.length,
+            entryCount: entries.length,
+            publishedSnapshotCount: entries.filter((entry) => entry.published !== undefined).length,
+          });
+        })
+        .sort((left, right) => left.key.localeCompare(right.key)),
+    );
   }
 
   public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {

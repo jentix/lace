@@ -9,14 +9,18 @@ later use cases and both runtime adapters one consistent atomic content boundary
 
 ### Requirement: Focused portable content commands and reads
 
-The system SHALL expose application-level input and output contracts, independent
-of REST DTOs and database rows, for inspecting and applying normalized model
-synchronization; creating an entry; loading an entry's draft or published
+The system SHALL expose application-level input and output contracts,
+independent of REST DTOs and database rows, for planning normalized model
+synchronization against portable stored-model identity and snapshot summaries;
+creating an entry; loading an entry's draft or published
 aggregate; listing model entries with an opaque cursor; atomically replacing a
 complete draft at an expected revision; atomically publishing a guarded draft
 with an optional idempotency key; deleting an entry with caller actor/time;
 marking unreferenced media for asynchronous deletion; listing and resolving
 public content; loading media that is publicly reachable; and exporting build content.
+The model-sync planning contract SHALL expose ordered portable operations,
+diagnostics, and whether persistence work is required without exposing a
+database or generic transaction callback.
 A complete-draft command SHALL carry the validated media-reference projection,
 including its stable source key, field path, and media identity, rather than
 requiring an adapter to infer references from arbitrary JSON. Read operations
@@ -34,9 +38,18 @@ the publication again.
 - **THEN** the returned contract contains portable domain/configuration values
   and no HTTP, framework, or database-row type
 
+#### Scenario: Model synchronization is planned without a persistence callback
+- **WHEN** an application caller compares normalized configuration to portable
+  stored-model and snapshot summaries
+- **THEN** it receives the deterministic plan, diagnostics, and no-op/apply
+  status without a database-row type or general transaction callback
+
 #### Scenario: A guarded content operation crosses runtimes
-- **WHEN** a caller requests entry creation, full-draft save, publication, deletion, or model-sync application
-- **THEN** the command declares the guard and complete state change needed for one atomic persistence operation without exposing a general transaction callback
+- **WHEN** a caller requests entry creation, full-draft save, publication,
+  deletion, or later model-sync application
+- **THEN** the command declares the guard and complete state change needed for
+  one atomic persistence operation without exposing a general transaction
+  callback
 
 #### Scenario: Complete draft inputs identify media references
 - **WHEN** application validation accepts media fields in snapshot fields or

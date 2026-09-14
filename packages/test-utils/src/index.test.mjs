@@ -169,29 +169,30 @@ test("leases one dispatcher event exclusively until it is completed", async () =
   ).resolves.toEqual([]);
 });
 
-test("syncs models and lists entry summaries through opaque cursors", async () => {
+test("provides detached stored model state and lists entry summaries through opaque cursors", async () => {
   const store = new InMemoryContentStore();
   const firstModel = {
+    draftSnapshotCount: 0,
+    entryCount: 0,
     key: "posts",
     kind: "collection",
     projectionHash: "projection-a",
+    publishedSnapshotCount: 0,
     structureHash: "structure-a",
     version: 1,
   };
-  expect(await store.inspect({ models: [firstModel] })).toEqual({
-    added: ["posts"],
-    changed: [],
-    removed: [],
-  });
-  await store.apply({ models: [firstModel] });
-  expect(
-    (await store.apply({ models: [{ ...firstModel, structureHash: "structure-b", version: 2 }] }))
-      .inspection.changed,
-  ).toEqual(["posts"]);
+  store.setStoredModelStates([firstModel]);
+  firstModel.projectionHash = "caller-mutated";
+  const initialStates = store.storedModelStates();
+  expect(initialStates).toMatchObject([{ key: "posts", projectionHash: "projection-a" }]);
 
   const model = { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" };
   await store.create({ entry: entry({ id: "entry-a", model }) });
   await store.create({ entry: entry({ id: "entry-b", model }) });
+  expect(store.storedModelStates()).toMatchObject([
+    { draftSnapshotCount: 2, entryCount: 2, key: "posts", publishedSnapshotCount: 0 },
+  ]);
+  expect(store.storedModelStates()[0]).not.toBe(initialStates[0]);
   const firstPage = await store.list({ limit: 1, modelKey: model.key });
   expect(firstPage.items.map((item) => item.id)).toEqual(["entry-a"]);
   expect(firstPage.nextCursor).toBeDefined();

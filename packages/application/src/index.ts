@@ -1,4 +1,3 @@
-import type { NormalizedContentModel } from "@lacecms/config";
 import type { JsonObject } from "@lacecms/content";
 import type {
   Actor,
@@ -8,7 +7,6 @@ import type {
   ContentEntry,
   ContentEntryId,
   ContentModelKey,
-  ContentModelRoute,
   ContentSnapshotId,
   DraftMediaReference,
   MediaId,
@@ -19,6 +17,8 @@ import type {
 } from "@lacecms/domain";
 
 export const packageName = "@lacecms/application";
+
+export * from "./configuration-sync.js";
 
 export type OpaqueCursor = Brand<string, "OpaqueCursor">;
 export type OpaqueTokenSecret = Brand<string, "OpaqueTokenSecret">;
@@ -69,39 +69,6 @@ export function publicationRequestFingerprint(value: string): PublicationRequest
 export interface CursorPage<Value> {
   readonly items: readonly Value[];
   readonly nextCursor?: OpaqueCursor;
-}
-
-/** A configuration-model projection retained by synchronization adapters. */
-export interface ModelSyncRecord {
-  readonly key: ContentModelKey;
-  readonly kind: ContentModelRoute["kind"];
-  readonly projectionHash: string;
-  readonly structureHash: string;
-  readonly version: number;
-}
-
-export interface ModelSyncInspection {
-  readonly added: readonly ContentModelKey[];
-  readonly changed: readonly ContentModelKey[];
-  readonly removed: readonly ContentModelKey[];
-}
-
-export interface InspectModelSyncInput {
-  readonly models: readonly NormalizedContentModel[];
-}
-
-export interface ApplyModelSyncInput extends InspectModelSyncInput {
-  readonly expectedStructureHash?: string;
-}
-
-export interface ApplyModelSyncResult {
-  readonly inspection: ModelSyncInspection;
-  readonly models: readonly ModelSyncRecord[];
-}
-
-export interface ModelSyncPort {
-  apply(input: ApplyModelSyncInput): Promise<ApplyModelSyncResult>;
-  inspect(input: InspectModelSyncInput): Promise<ModelSyncInspection>;
 }
 
 export interface ContentEntrySummary {
