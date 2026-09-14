@@ -745,3 +745,64 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
     await rm(directory, { force: true, recursive: true });
   }
 });
+
+test("guards Node deletions by draft revision and publication identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-delete-guard-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      database.connection
+        .prepare("insert into content_models values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("posts", "collection", "Posts", 1, "structure", "projection", 1, 1);
+      const repository = new NodeContentRepository(database.connection, (key) => routes.get(key));
+      const post = draftEntry("guarded-post", "posts", 20, "Guarded");
+      await repository.create({ entry: post, mediaReferences: [] });
+
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(21),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedRevision: 0,
+        }),
+      ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+      expect(await repository.load({ entryId: post.id })).not.toBeNull();
+
+      await repository.publish({
+        entryId: post.id,
+        expectedRevision: 1,
+        publishedAt: unixMilliseconds(22),
+        publishedBy: editor,
+        publishedSnapshotId: contentSnapshotId("guarded-post-published"),
+      });
+      const version = (await repository.exportBuildContent()).version;
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(23),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedRevision: 1,
+        }),
+      ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+      expect((await repository.exportBuildContent()).version).toBe(version);
+      expect(await repository.loadPublic("/blog/guarded-post")).not.toBeNull();
+
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(24),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedPublishedSnapshotId: contentSnapshotId("guarded-post-published"),
+          expectedRevision: 1,
+        }),
+      ).resolves.toMatchObject({ status: "deleted" });
+      expect(await repository.load({ entryId: post.id })).toBeNull();
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});

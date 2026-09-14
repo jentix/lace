@@ -297,6 +297,16 @@ importers:
         version: 5.0.0(@types/node@22.20.2)(vite@8.2.2(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   packages/contracts:
+    dependencies:
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:../content
+      '@lacecms/domain':
+        specifier: workspace:*
+        version: link:../domain
+      valibot:
+        specifier: 'catalog:'
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       oxlint:
         specifier: 'catalog:'

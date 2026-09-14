@@ -600,10 +600,17 @@ export class NodeContentRepository
   public async delete(
     input: import("@lacecms/application").DeleteContentEntryInput,
   ): Promise<ContentCommandResult> {
-    const entry = this.entryRow(input.entryId);
-    if (entry === undefined) failure("Content entry does not exist.");
     try {
       this.connection.transaction(() => {
+        const entry = this.entryRow(input.entryId);
+        if (entry === undefined) failure("Content entry does not exist.");
+        const expectedPublishedSnapshotId = input.expectedPublishedSnapshotId ?? null;
+        if (entry.published_snapshot_id !== expectedPublishedSnapshotId) {
+          throw new DomainError(
+            "CONTENT_REVISION_CONFLICT",
+            "The publication state no longer matches the deletion guard.",
+          );
+        }
         if (entry.published_snapshot_id !== null) {
           this.checkpoint("delete.route");
           this.connection
@@ -612,7 +619,17 @@ export class NodeContentRepository
           this.bumpPublicState(input.deletedAt, input.deletedBy.id, entry.published_snapshot_id);
         }
         this.checkpoint("delete.entry");
-        this.connection.prepare("delete from content_entries where id = ?").run(input.entryId);
+        const deleted = this.connection
+          .prepare(
+            "delete from content_entries where id = ? and published_snapshot_id is ? and exists (select 1 from content_snapshots where id = content_entries.draft_snapshot_id and revision = ?)",
+          )
+          .run(input.entryId, expectedPublishedSnapshotId, input.expectedRevision);
+        if (deleted.changes !== 1) {
+          throw new DomainError(
+            "CONTENT_REVISION_CONFLICT",
+            "The draft revision no longer matches the deletion guard.",
+          );
+        }
       })();
     } catch (error) {
       this.throwWriteError(error, false);

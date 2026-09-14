@@ -127,6 +127,8 @@ export interface DeleteContentEntryInput {
   readonly deletedAt: UnixMilliseconds;
   readonly deletedBy: Actor;
   readonly entryId: ContentEntryId;
+  readonly expectedPublishedSnapshotId?: ContentSnapshotId;
+  readonly expectedRevision: number;
 }
 
 export type ContentCommandStatus = "created" | "deleted" | "published" | "saved";

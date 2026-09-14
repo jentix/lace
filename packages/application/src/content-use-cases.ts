@@ -90,6 +90,7 @@ export interface PublishContentEntryUseCaseInput {
 export interface DeleteContentEntryUseCaseInput {
   readonly actor: Actor;
   readonly entryId: ContentEntryId;
+  readonly expectedRevision: number;
 }
 
 export type BuildDispatchOutcome =
@@ -240,6 +241,8 @@ export class ContentUseCases {
       deletedAt: this.dependencies.clock.now(),
       deletedBy: input.actor,
       entryId: entry.id,
+      ...(entry.published === undefined ? {} : { expectedPublishedSnapshotId: entry.published.id }),
+      expectedRevision: input.expectedRevision,
     });
   }
 
