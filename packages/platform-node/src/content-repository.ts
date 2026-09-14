@@ -1,10 +1,18 @@
-import { opaqueCursor } from "@lacecms/application";
+import {
+  opaqueCursor,
+  planConfigurationSynchronization,
+  renderConfigurationSyncPlanJson,
+} from "@lacecms/application";
 import type {
+  ApplyConfigurationSynchronizationInput,
+  ApplyConfigurationSynchronizationResult,
   BuildContentExport,
   ContentCommandResult,
   ContentEntryCommandPort,
   ContentEntryReadPort,
   ContentEntrySummary,
+  ConfigurationSyncApplyPort,
+  ConfigurationSyncStateReadPort,
   CreateContentEntryInput,
   CursorPage,
   ListContentEntriesInput,
@@ -19,6 +27,7 @@ import type {
   PublicContentEntry,
   PublicContentReadPort,
   SaveCompleteDraftInput,
+  StoredContentModelState,
 } from "@lacecms/application";
 import {
   DomainError,
@@ -113,6 +122,38 @@ interface SummaryRow {
 interface PublicRow extends EntryRow {
   readonly path: string;
   readonly published_created_at: number;
+}
+
+interface StoredModelStateRow {
+  readonly draft_snapshot_count: number;
+  readonly entry_count: number;
+  readonly key: string;
+  readonly kind: string;
+  readonly projection_hash: string;
+  readonly published_snapshot_count: number;
+  readonly structure_hash: string;
+  readonly version: number;
+}
+
+function sameStoredModelStates(
+  expected: readonly StoredContentModelState[],
+  actual: readonly StoredContentModelState[],
+): boolean {
+  if (expected.length !== actual.length) return false;
+  return expected.every((value, index) => {
+    const candidate = actual[index];
+    return (
+      candidate !== undefined &&
+      value.key === candidate.key &&
+      value.kind === candidate.kind &&
+      value.version === candidate.version &&
+      value.structureHash === candidate.structureHash &&
+      value.projectionHash === candidate.projectionHash &&
+      value.entryCount === candidate.entryCount &&
+      value.draftSnapshotCount === candidate.draftSnapshotCount &&
+      value.publishedSnapshotCount === candidate.publishedSnapshotCount
+    );
+  });
 }
 
 function failure(message: string): never {
@@ -217,6 +258,8 @@ export class NodeContentRepository
   implements
     ContentEntryCommandPort,
     ContentEntryReadPort,
+    ConfigurationSyncApplyPort,
+    ConfigurationSyncStateReadPort,
     MediaCommandPort,
     PublicContentReadPort,
     MediaReadPort
@@ -226,6 +269,145 @@ export class NodeContentRepository
     private readonly resolveModel: ContentModelResolver,
     private readonly options: NodeRepositoryOptions = {},
   ) {}
+
+  public async readConfigurationSyncState(): Promise<readonly StoredContentModelState[]> {
+    return this.readConfigurationSyncStateNow();
+  }
+
+  public async applyConfigurationSynchronization(
+    input: ApplyConfigurationSynchronizationInput,
+  ): Promise<ApplyConfigurationSynchronizationResult> {
+    try {
+      return this.connection.transaction(() => {
+        const current = this.readConfigurationSyncStateNow();
+        const actualPlan = planConfigurationSynchronization({
+          models: input.models,
+          storedModels: current,
+        });
+        if (
+          !input.plan.isValid ||
+          !sameStoredModelStates(input.expectedStoredModels, current) ||
+          renderConfigurationSyncPlanJson(input.plan) !==
+            renderConfigurationSyncPlanJson(actualPlan)
+        ) {
+          failure("Configuration synchronization plan is stale.");
+        }
+        if (!actualPlan.requiresApply) {
+          return Object.freeze({ operations: Object.freeze([]), status: "noop" as const });
+        }
+
+        const expectedByKey = new Map(
+          input.expectedStoredModels.map((model) => [model.key, model]),
+        );
+        const configurationByKey = new Map(input.models.map((model) => [model.key, model]));
+        const pageEntries = new Map(input.pageEntries.map((page) => [page.modelKey, page]));
+        for (const operation of actualPlan.operations) {
+          if (operation.action === "create") {
+            const configuration = configurationByKey.get(operation.model.key);
+            if (configuration === undefined) failure("Synchronization model is unavailable.");
+            this.checkpoint("sync.model.create");
+            this.connection
+              .prepare(
+                "insert into content_models (key, kind, label, config_version, structure_hash, projection_hash, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+              )
+              .run(
+                operation.model.key,
+                operation.model.kind,
+                configuration.label ?? configuration.key,
+                operation.model.version,
+                operation.model.structureHash,
+                operation.model.projectionHash,
+                input.appliedAt,
+                input.appliedAt,
+              );
+            if (configuration.kind === "page") {
+              const page = pageEntries.get(operation.model.key);
+              if (page === undefined || page.entry.model.key !== operation.model.key) {
+                failure("Page synchronization entry is missing or invalid.");
+              }
+              this.checkpoint("sync.page.entry");
+              this.connection
+                .prepare(
+                  "insert into content_entries (id, model_key, singleton_key, created_by, created_at, updated_at) values (?, ?, 1, ?, ?, ?)",
+                )
+                .run(
+                  page.entry.id,
+                  operation.model.key,
+                  page.entry.draft.updatedBy.id,
+                  page.entry.draft.createdAt,
+                  page.entry.draft.updatedAt,
+                );
+              this.checkpoint("sync.page.snapshot");
+              this.insertSnapshot(page.entry.draft, operation.model.version);
+              this.insertBlocks(page.entry.draft);
+              this.connection
+                .prepare("update content_entries set draft_snapshot_id = ? where id = ?")
+                .run(page.entry.draft.id, page.entry.id);
+            }
+            continue;
+          }
+          if (operation.action === "remove") {
+            const expected = expectedByKey.get(operation.model.key);
+            if (expected === undefined) failure("Synchronization removal guard is missing.");
+            this.checkpoint("sync.model.remove");
+            const removed = this.connection
+              .prepare(
+                "delete from content_models where key = ? and kind = ? and config_version = ? and structure_hash = ? and projection_hash = ?",
+              )
+              .run(
+                expected.key,
+                expected.kind,
+                expected.version,
+                expected.structureHash,
+                expected.projectionHash,
+              );
+            if (removed.changes !== 1) failure("Configuration synchronization plan is stale.");
+            continue;
+          }
+          if (
+            operation.action === "blocked-removal" ||
+            operation.action === "incompatible-change"
+          ) {
+            failure("Configuration synchronization plan contains an unsafe operation.");
+          }
+          const configuration = configurationByKey.get(operation.model.key);
+          if (configuration === undefined) failure("Synchronization model is unavailable.");
+          const previousKey =
+            operation.action === "rename" ? operation.renamedFrom : operation.model.key;
+          const expected = expectedByKey.get(previousKey);
+          if (expected === undefined) failure("Synchronization update guard is missing.");
+          this.checkpoint(`sync.model.${operation.action}`);
+          const updated = this.connection
+            .prepare(
+              "update content_models set key = ?, kind = ?, label = ?, config_version = ?, structure_hash = ?, projection_hash = ?, updated_at = ? where key = ? and kind = ? and config_version = ? and structure_hash = ? and projection_hash = ?",
+            )
+            .run(
+              operation.model.key,
+              operation.model.kind,
+              configuration.label ?? configuration.key,
+              operation.model.version,
+              operation.model.structureHash,
+              operation.model.projectionHash,
+              input.appliedAt,
+              expected.key,
+              expected.kind,
+              expected.version,
+              expected.structureHash,
+              expected.projectionHash,
+            );
+          if (updated.changes !== 1) failure("Configuration synchronization plan is stale.");
+        }
+        const targetVersion = this.bumpPublicState(input.appliedAt, "system:content-sync", null);
+        return Object.freeze({
+          operations: actualPlan.operations,
+          status: "applied" as const,
+          targetVersion,
+        });
+      })();
+    } catch (error) {
+      this.throwWriteError(error, true);
+    }
+  }
 
   public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {
     const { draft, id, model } = input.entry;
@@ -630,6 +812,37 @@ export class NodeContentRepository
       .get(id) as EntryRow | undefined;
   }
 
+  private readConfigurationSyncStateNow(): readonly StoredContentModelState[] {
+    const rows = this.connection
+      .prepare(
+        `select m.key, m.kind, m.config_version as version, m.structure_hash, m.projection_hash,
+                count(e.id) as entry_count,
+                sum(case when e.draft_snapshot_id is null then 0 else 1 end) as draft_snapshot_count,
+                sum(case when e.published_snapshot_id is null then 0 else 1 end) as published_snapshot_count
+           from content_models m
+           left join content_entries e on e.model_key = m.key
+          group by m.key, m.kind, m.config_version, m.structure_hash, m.projection_hash
+          order by m.key asc`,
+      )
+      .all() as readonly StoredModelStateRow[];
+    return Object.freeze(
+      rows.map((row) => {
+        if (row.kind !== "collection" && row.kind !== "page")
+          failure("Stored model kind is invalid.");
+        return Object.freeze({
+          draftSnapshotCount: row.draft_snapshot_count,
+          entryCount: row.entry_count,
+          key: contentModelKey(row.key),
+          kind: row.kind,
+          projectionHash: row.projection_hash,
+          publishedSnapshotCount: row.published_snapshot_count,
+          structureHash: row.structure_hash,
+          version: row.version,
+        });
+      }),
+    );
+  }
+
   private loadEntry(id: string): ContentEntry | null {
     const row = this.entryRow(id);
     if (row === undefined) return null;
@@ -819,7 +1032,11 @@ export class NodeContentRepository
     return randomUUID();
   }
 
-  private bumpPublicState(timestamp: number, requestedBy: string, snapshotId: string | null): void {
+  private bumpPublicState(
+    timestamp: number,
+    requestedBy: string,
+    snapshotId: string | null,
+  ): number {
     this.checkpoint("public-state");
     this.connection
       .prepare(
@@ -845,6 +1062,7 @@ export class NodeContentRepository
       )
       .run(payload, timestamp + 5_000);
     void requestedBy;
+    return state.version;
   }
 
   private mapMedia(row: Record<string, unknown>): MediaMetadata {

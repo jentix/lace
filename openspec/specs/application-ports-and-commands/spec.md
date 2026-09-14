@@ -12,15 +12,16 @@ later use cases and both runtime adapters one consistent atomic content boundary
 The system SHALL expose application-level input and output contracts,
 independent of REST DTOs and database rows, for planning normalized model
 synchronization against portable stored-model identity and snapshot summaries;
+dry-running and atomically applying a guarded approved synchronization plan;
 creating an entry; loading an entry's draft or published
 aggregate; listing model entries with an opaque cursor; atomically replacing a
 complete draft at an expected revision; atomically publishing a guarded draft
 with an optional idempotency key; deleting an entry with caller actor/time;
 marking unreferenced media for asynchronous deletion; listing and resolving
 public content; loading media that is publicly reachable; and exporting build content.
-The model-sync planning contract SHALL expose ordered portable operations,
-diagnostics, and whether persistence work is required without exposing a
-database or generic transaction callback.
+The model-sync planning and apply contracts SHALL expose ordered portable
+operations, diagnostics, fresh-state guards, and complete outcomes without
+exposing a database or generic transaction callback.
 A complete-draft command SHALL carry the validated media-reference projection,
 including its stable source key, field path, and media identity, rather than
 requiring an adapter to infer references from arbitrary JSON. Read operations
@@ -43,6 +44,13 @@ the publication again.
   stored-model and snapshot summaries
 - **THEN** it receives the deterministic plan, diagnostics, and no-op/apply
   status without a database-row type or general transaction callback
+
+#### Scenario: A guarded synchronization apply crosses runtimes
+- **WHEN** an application caller supplies a valid synchronization plan and its
+  fresh-state guard to a runtime adapter
+- **THEN** the adapter returns a portable complete outcome or rejects the stale
+  or invalid plan without exposing a database row or generic transaction
+  callback
 
 #### Scenario: A guarded content operation crosses runtimes
 - **WHEN** a caller requests entry creation, full-draft save, publication,

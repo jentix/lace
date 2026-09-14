@@ -1,6 +1,24 @@
 import type { NormalizedContentModel } from "@lacecms/config";
-import { contentModelKey } from "@lacecms/domain";
-import type { ContentModelKey, ContentModelRoute } from "@lacecms/domain";
+import { validateModelFields } from "@lacecms/content";
+import type { JsonObject } from "@lacecms/content";
+import {
+  DomainError,
+  actorId,
+  contentEntryId,
+  contentModelKey,
+  contentSnapshotId,
+  createContentEntry,
+} from "@lacecms/domain";
+import type {
+  Actor,
+  ContentEntry,
+  ContentEntryId,
+  ContentModelKey,
+  ContentModelRoute,
+  ContentSnapshotId,
+  UnixMilliseconds,
+} from "@lacecms/domain";
+import type { Clock, IdGenerator } from "./index.js";
 
 export interface StoredContentModelState {
   readonly draftSnapshotCount: number;
@@ -84,6 +102,52 @@ export interface ConfigurationSyncReport {
   readonly json: string;
   readonly text: string;
 }
+
+/** Read-only persistence boundary used by dry-run and guarded apply coordination. */
+export interface ConfigurationSyncStateReadPort {
+  readConfigurationSyncState(): Promise<readonly StoredContentModelState[]>;
+}
+
+/** One pre-materialized singleton draft required by a page-model create operation. */
+export interface ConfigurationSyncPageEntry {
+  readonly entry: ContentEntry;
+  readonly modelKey: ContentModelKey;
+}
+
+/** Complete guarded input for one atomic synchronization mutation. */
+export interface ApplyConfigurationSynchronizationInput {
+  readonly appliedAt: UnixMilliseconds;
+  readonly expectedStoredModels: readonly StoredContentModelState[];
+  readonly models: readonly NormalizedContentModel[];
+  readonly pageEntries: readonly ConfigurationSyncPageEntry[];
+  readonly plan: ConfigurationSyncPlan;
+}
+
+/** Portable result that distinguishes a committed apply from an unchanged no-op. */
+export interface ApplyConfigurationSynchronizationResult {
+  readonly operations: readonly ConfigurationSyncOperation[];
+  readonly status: "applied" | "noop";
+  readonly targetVersion?: number;
+}
+
+/** Specialized mutation boundary; it intentionally does not expose a transaction callback. */
+export interface ConfigurationSyncApplyPort {
+  applyConfigurationSynchronization(
+    input: ApplyConfigurationSynchronizationInput,
+  ): Promise<ApplyConfigurationSynchronizationResult>;
+}
+
+/** A dry-run result that preserves the exact persisted snapshot later guarded by apply. */
+export interface PreparedConfigurationSynchronization {
+  readonly plan: ConfigurationSyncPlan;
+  readonly report: ConfigurationSyncReport;
+  readonly storedModels: readonly StoredContentModelState[];
+}
+
+export const contentSyncActor: Actor = Object.freeze({
+  id: actorId("system:content-sync"),
+  role: "admin",
+});
 
 function copyModel(model: NormalizedContentModel): ConfigurationSyncModel {
   return Object.freeze({
@@ -391,5 +455,95 @@ export function reportConfigurationSynchronization(
     check: checkConfigurationSynchronization(plan),
     json: renderConfigurationSyncPlanJson(plan),
     text: renderConfigurationSyncPlanText(plan),
+  });
+}
+
+/** Reads persistence once and produces the canonical non-mutating synchronization decision. */
+export async function prepareConfigurationSynchronization(input: {
+  readonly models: readonly NormalizedContentModel[];
+  readonly state: ConfigurationSyncStateReadPort;
+}): Promise<PreparedConfigurationSynchronization> {
+  const storedModels = Object.freeze(
+    (await input.state.readConfigurationSyncState()).map(copyStoredModel).sort(compareByKey),
+  );
+  const plan = planConfigurationSynchronization({ models: input.models, storedModels });
+  return Object.freeze({ plan, report: reportConfigurationSynchronization(plan), storedModels });
+}
+
+/** Creates the one incomplete draft that a newly synchronized page must own. */
+export function createConfigurationSyncPageEntry(input: {
+  readonly appliedAt: UnixMilliseconds;
+  readonly entryId: ContentEntryId | string;
+  readonly model: NormalizedContentModel;
+  readonly snapshotId: ContentSnapshotId | string;
+}): ConfigurationSyncPageEntry {
+  if (input.model.kind !== "page") {
+    throw new DomainError(
+      "CONTENT_INVALID_STATE",
+      "Only page models receive synchronized entries.",
+    );
+  }
+  const entryId = contentEntryId(input.entryId);
+  const snapshotId = contentSnapshotId(input.snapshotId);
+  const model: ContentModelRoute = Object.freeze({
+    key: contentModelKey(input.model.key),
+    kind: "page",
+    path: input.model.path,
+  });
+  const entry = createContentEntry({
+    id: entryId,
+    model,
+    draft: {
+      blocks: [],
+      createdAt: input.appliedAt,
+      entryId,
+      fields: validateModelFields(input.model.fields, {}, "draft") as JsonObject,
+      id: snapshotId,
+      revision: 1,
+      state: "draft",
+      title: input.model.label ?? input.model.key,
+      updatedAt: input.appliedAt,
+      updatedBy: contentSyncActor,
+    },
+  });
+  return Object.freeze({ entry, modelKey: model.key });
+}
+
+/** Applies a freshly prepared valid plan and allocates identities only for page creates. */
+export async function applyPreparedConfigurationSynchronization(input: {
+  readonly clock: Clock;
+  readonly ids: IdGenerator;
+  readonly models: readonly NormalizedContentModel[];
+  readonly prepared: PreparedConfigurationSynchronization;
+  readonly target: ConfigurationSyncApplyPort;
+}): Promise<ApplyConfigurationSynchronizationResult> {
+  if (!input.prepared.plan.isValid) {
+    throw new DomainError(
+      "CONTENT_INVALID_STATE",
+      "Configuration synchronization plan is invalid.",
+    );
+  }
+  const models = new Map(input.models.map((model) => [model.key, model]));
+  const appliedAt = input.clock.now();
+  const pageEntries: ConfigurationSyncPageEntry[] = [];
+  for (const operation of input.prepared.plan.operations) {
+    if (operation.action !== "create") continue;
+    const model = models.get(operation.model.key);
+    if (model?.kind !== "page") continue;
+    pageEntries.push(
+      createConfigurationSyncPageEntry({
+        appliedAt,
+        entryId: input.ids.next(),
+        model,
+        snapshotId: input.ids.next(),
+      }),
+    );
+  }
+  return input.target.applyConfigurationSynchronization({
+    appliedAt,
+    expectedStoredModels: input.prepared.storedModels,
+    models: input.models,
+    pageEntries,
+    plan: input.prepared.plan,
   });
 }

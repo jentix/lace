@@ -10,6 +10,10 @@ import {
   packageName,
 } from "../dist/index.js";
 import {
+  applyPreparedConfigurationSynchronization,
+  prepareConfigurationSynchronization,
+} from "@lacecms/application";
+import {
   actorId,
   blockKey,
   contentEntryId,
@@ -21,6 +25,296 @@ import {
 } from "@lacecms/domain";
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+function syncClock(value) {
+  return { now: () => unixMilliseconds(value) };
+}
+
+function syncIds(prefix) {
+  let value = 0;
+  return { next: () => `${prefix}-${++value}` };
+}
+
+function syncPage(overrides = {}) {
+  return {
+    fields: {},
+    key: "home",
+    kind: "page",
+    path: "/",
+    projectionHash: "projection-home",
+    structureHash: "structure-home",
+    version: 1,
+    ...overrides,
+  };
+}
+
+function syncCollection(overrides = {}) {
+  return {
+    fields: {},
+    key: "posts",
+    kind: "collection",
+    projectionHash: "projection-posts",
+    route: "/blog/:slug",
+    structureHash: "structure-posts",
+    version: 1,
+    ...overrides,
+  };
+}
+
+function syncResolver(models) {
+  const values = new Map(models.map((model) => [model.key, model]));
+  return (key) => {
+    const model = values.get(key);
+    if (model === undefined) return undefined;
+    return model.kind === "page"
+      ? { key: contentModelKey(model.key), kind: "page", path: model.path }
+      : { key: contentModelKey(model.key), kind: "collection", route: model.route };
+  };
+}
+
+test("applies guarded configuration sync atomically, coalesces build work, and rejects stale plans", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-sync-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const models = [syncPage(), syncCollection()];
+    const repository = new NodeContentRepository(database.connection, syncResolver(models), {
+      nextId: syncIds("outbox").next,
+    });
+    const prepared = await prepareConfigurationSynchronization({ models, state: repository });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(10),
+        ids: syncIds("sync"),
+        models,
+        prepared,
+        target: repository,
+      }),
+    ).resolves.toMatchObject({ status: "applied", targetVersion: 1 });
+    expect(await repository.readConfigurationSyncState()).toMatchObject([
+      { entryCount: 1, key: "home" },
+      { entryCount: 0, key: "posts" },
+    ]);
+    await expect(
+      repository.list({ limit: 1, modelKey: contentModelKey("home") }),
+    ).resolves.toMatchObject({
+      items: [{ title: "home" }],
+    });
+    expect(database.connection.prepare("select version from published_state").get()).toEqual({
+      version: 1,
+    });
+    expect(
+      database.connection.prepare("select count(*) as count from outbox_events").get(),
+    ).toEqual({ count: 1 });
+
+    const repeated = await prepareConfigurationSynchronization({ models, state: repository });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(11),
+        ids: syncIds("repeat"),
+        models,
+        prepared: repeated,
+        target: repository,
+      }),
+    ).resolves.toMatchObject({ status: "noop" });
+    expect(database.connection.prepare("select version from published_state").get()).toEqual({
+      version: 1,
+    });
+
+    const projectionUpdate = [syncPage(), syncCollection({ projectionHash: "projection-posts-2" })];
+    const updated = await prepareConfigurationSynchronization({
+      models: projectionUpdate,
+      state: repository,
+    });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(12),
+        ids: syncIds("update"),
+        models: projectionUpdate,
+        prepared: updated,
+        target: repository,
+      }),
+    ).resolves.toMatchObject({ status: "applied", targetVersion: 2 });
+    expect(database.connection.prepare("select version from published_state").get()).toEqual({
+      version: 2,
+    });
+    expect(
+      database.connection.prepare("select count(*) as count from outbox_events").get(),
+    ).toEqual({ count: 1 });
+
+    const stale = await prepareConfigurationSynchronization({
+      models: projectionUpdate,
+      state: repository,
+    });
+    database.connection
+      .prepare("update content_models set projection_hash = ? where key = ?")
+      .run("changed-concurrently", "posts");
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(13),
+        ids: syncIds("stale"),
+        models: projectionUpdate,
+        prepared: stale,
+        target: repository,
+      }),
+    ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+    expect(database.connection.prepare("select version from published_state").get()).toEqual({
+      version: 2,
+    });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("rolls back a failed synchronized page singleton", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-sync-rollback-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const models = [syncPage({ label: "Home" })];
+    const repository = new NodeContentRepository(database.connection, syncResolver(models), {
+      beforeMutation: (checkpoint) => {
+        if (checkpoint === "sync.page.snapshot") throw new Error("injected failure");
+      },
+    });
+    const prepared = await prepareConfigurationSynchronization({ models, state: repository });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(10),
+        ids: syncIds("rollback"),
+        models,
+        prepared,
+        target: repository,
+      }),
+    ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+    expect(await repository.readConfigurationSyncState()).toEqual([]);
+    expect(
+      database.connection.prepare("select count(*) as count from published_state").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      database.connection.prepare("select count(*) as count from outbox_events").get(),
+    ).toEqual({ count: 0 });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("renames a populated model through the key cascade without inferring a replacement", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-sync-rename-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const posts = syncCollection();
+    const repository = new NodeContentRepository(database.connection, syncResolver([posts]));
+    const initial = await prepareConfigurationSynchronization({
+      models: [posts],
+      state: repository,
+    });
+    await applyPreparedConfigurationSynchronization({
+      clock: syncClock(10),
+      ids: syncIds("initial"),
+      models: [posts],
+      prepared: initial,
+      target: repository,
+    });
+    await repository.create({
+      entry: createContentEntry({
+        id: contentEntryId("post-entry"),
+        model: { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" },
+        draft: {
+          blocks: [],
+          createdAt: unixMilliseconds(11),
+          entryId: contentEntryId("post-entry"),
+          fields: {},
+          id: contentSnapshotId("post-draft"),
+          revision: 1,
+          state: "draft",
+          title: "Post",
+          updatedAt: unixMilliseconds(11),
+          updatedBy: { id: actorId("editor"), role: "editor" },
+        },
+      }),
+      mediaReferences: [],
+    });
+    const articles = syncCollection({ key: "articles", renamedFrom: "posts" });
+    const rename = await prepareConfigurationSynchronization({
+      models: [articles],
+      state: repository,
+    });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(12),
+        ids: syncIds("rename"),
+        models: [articles],
+        prepared: rename,
+        target: repository,
+      }),
+    ).resolves.toMatchObject({ status: "applied" });
+    expect(database.connection.prepare("select key from content_models").get()).toEqual({
+      key: "articles",
+    });
+    expect(database.connection.prepare("select model_key from content_entries").get()).toEqual({
+      model_key: "articles",
+    });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("allows only one independently prepared SQLite sync apply to commit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-sync-concurrent-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const firstDatabase = openNodeDatabase(databasePath);
+    const secondDatabase = openNodeDatabase(databasePath);
+    const models = [syncCollection()];
+    const first = new NodeContentRepository(firstDatabase.connection, syncResolver(models));
+    const second = new NodeContentRepository(secondDatabase.connection, syncResolver(models));
+    const [firstPrepared, secondPrepared] = await Promise.all([
+      prepareConfigurationSynchronization({ models, state: first }),
+      prepareConfigurationSynchronization({ models, state: second }),
+    ]);
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(10),
+        ids: syncIds("first"),
+        models,
+        prepared: firstPrepared,
+        target: first,
+      }),
+    ).resolves.toMatchObject({ status: "applied" });
+    await expect(
+      applyPreparedConfigurationSynchronization({
+        clock: syncClock(11),
+        ids: syncIds("second"),
+        models,
+        prepared: secondPrepared,
+        target: second,
+      }),
+    ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+    expect(
+      firstDatabase.connection.prepare("select count(*) as count from content_models").get(),
+    ).toEqual({
+      count: 1,
+    });
+    expect(
+      firstDatabase.connection.prepare("select count(*) as count from outbox_events").get(),
+    ).toEqual({
+      count: 1,
+    });
+    firstDatabase.connection.close();
+    secondDatabase.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 test("migrates an empty file, reopens with SQLite invariants, and enforces constraints", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-schema-"));

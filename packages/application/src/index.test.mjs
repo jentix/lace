@@ -3,6 +3,9 @@ import {
   dispatcherEventId,
   dispatcherLeaseId,
   checkConfigurationSynchronization,
+  contentSyncActor,
+  createConfigurationSyncPageEntry,
+  applyPreparedConfigurationSynchronization,
   opaqueCursor,
   opaqueTokenSecret,
   opaqueTokenVerifier,
@@ -13,7 +16,10 @@ import {
   renderConfigurationSyncPlanJson,
   renderConfigurationSyncPlanText,
   reportConfigurationSynchronization,
+  prepareConfigurationSynchronization,
 } from "../dist/index.js";
+import { definePage } from "@lacecms/config";
+import { field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/application"));
 
 test("brands portable opaque values without exposing runtime dependencies", () => {
@@ -185,4 +191,60 @@ test("renders canonical deterministic reports and check outcomes", () => {
 
   const pending = planConfigurationSynchronization({ models: [model()], storedModels: [] });
   expect(checkConfigurationSynchronization(pending).exitCode).toBe(1);
+});
+
+test("prepares a detached dry run and materializes page defaults only for apply", async () => {
+  const page = {
+    ...definePage({
+      fields: {
+        greeting: field.text({ defaultValue: "Hello" }),
+        required: field.text({ required: true }),
+      },
+      key: "home",
+      path: "/",
+      version: 1,
+    }),
+    projectionHash: "projection-home",
+    structureHash: "structure-home",
+  };
+  const state = {
+    async readConfigurationSyncState() {
+      return [];
+    },
+  };
+  const prepared = await prepareConfigurationSynchronization({ models: [page], state });
+  expect(prepared.report.check.exitCode).toBe(1);
+  expect(prepared.storedModels).toEqual([]);
+  const pageEntry = createConfigurationSyncPageEntry({
+    appliedAt: 1,
+    entryId: "entry-home",
+    model: page,
+    snapshotId: "snapshot-home",
+  });
+  expect(pageEntry.entry.draft).toMatchObject({
+    blocks: [],
+    fields: { greeting: "Hello" },
+    title: "home",
+    updatedBy: contentSyncActor,
+  });
+
+  let received;
+  await applyPreparedConfigurationSynchronization({
+    clock: { now: () => 1 },
+    ids: {
+      next: (() => {
+        let id = 0;
+        return () => `id-${++id}`;
+      })(),
+    },
+    models: [page],
+    prepared,
+    target: {
+      async applyConfigurationSynchronization(input) {
+        received = input;
+        return { operations: input.plan.operations, status: "applied", targetVersion: 1 };
+      },
+    },
+  });
+  expect(received.pageEntries[0].entry.draft.fields).toEqual({ greeting: "Hello" });
 });

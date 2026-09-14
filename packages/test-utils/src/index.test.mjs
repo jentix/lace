@@ -23,8 +23,10 @@ import {
   unixMilliseconds,
 } from "@lacecms/domain";
 import {
+  applyPreparedConfigurationSynchronization,
   dispatcherEventId,
   opaqueTokenSecret,
+  prepareConfigurationSynchronization,
   publicationIdempotencyKey,
   publicationRequestFingerprint,
 } from "@lacecms/application";
@@ -199,6 +201,135 @@ test("provides detached stored model state and lists entry summaries through opa
   await expect(
     store.list({ after: firstPage.nextCursor, limit: 1, modelKey: model.key }),
   ).resolves.toMatchObject({ items: [{ id: "entry-b" }] });
+});
+
+test("applies prepared configuration sync plans atomically and treats repeats as no-ops", async () => {
+  const store = new InMemoryContentStore();
+  const config = await defineConfig({
+    content: [
+      definePage({
+        fields: {
+          greeting: field.text({ defaultValue: "Hello" }),
+          required: field.text({ required: true }),
+        },
+        key: "home",
+        path: "/",
+        version: 1,
+      }),
+      defineCollection({ key: "posts", route: "/blog/:slug", version: 1 }),
+    ],
+  });
+  const clock = new DeterministicClock(unixMilliseconds(10));
+  const ids = new DeterministicIdGenerator("sync");
+  const prepared = await prepareConfigurationSynchronization({
+    models: config.content,
+    state: store,
+  });
+  await expect(
+    applyPreparedConfigurationSynchronization({
+      clock,
+      ids,
+      models: config.content,
+      prepared,
+      target: store,
+    }),
+  ).resolves.toMatchObject({ status: "applied", targetVersion: 1 });
+  expect(store.storedModelStates()).toMatchObject([
+    { entryCount: 1, key: "home" },
+    { entryCount: 0, key: "posts" },
+  ]);
+  expect(
+    (await store.list({ limit: 1, modelKey: contentModelKey("home") })).items[0],
+  ).toMatchObject({
+    title: "home",
+  });
+  expect(store.configurationSyncBuildRequests).toEqual([1]);
+
+  const repeated = await prepareConfigurationSynchronization({
+    models: config.content,
+    state: store,
+  });
+  await expect(
+    applyPreparedConfigurationSynchronization({
+      clock,
+      ids,
+      models: config.content,
+      prepared: repeated,
+      target: store,
+    }),
+  ).resolves.toMatchObject({ status: "noop" });
+  expect(store.configurationSyncBuildRequests).toEqual([1]);
+
+  const stale = await prepareConfigurationSynchronization({ models: config.content, state: store });
+  store.setStoredModelStates([
+    ...store.storedModelStates(),
+    {
+      draftSnapshotCount: 0,
+      entryCount: 0,
+      key: "stale",
+      kind: "collection",
+      projectionHash: "projection-stale",
+      publishedSnapshotCount: 0,
+      structureHash: "structure-stale",
+      version: 1,
+    },
+  ]);
+  await expect(
+    applyPreparedConfigurationSynchronization({
+      clock,
+      ids,
+      models: config.content,
+      prepared: stale,
+      target: store,
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+});
+
+test("applies explicit in-memory renames and safe removals without inferring replacements", async () => {
+  const store = new InMemoryContentStore();
+  const posts = {
+    fields: {},
+    key: "posts",
+    kind: "collection",
+    projectionHash: "projection-posts",
+    route: "/blog/:slug",
+    structureHash: "structure-posts",
+    version: 1,
+  };
+  store.setStoredModelStates([
+    {
+      draftSnapshotCount: 0,
+      entryCount: 0,
+      key: "posts",
+      kind: "collection",
+      projectionHash: "projection-posts",
+      publishedSnapshotCount: 0,
+      structureHash: "structure-posts",
+      version: 1,
+    },
+  ]);
+  const articles = { ...posts, key: "articles", renamedFrom: "posts" };
+  const clock = new DeterministicClock(unixMilliseconds(10));
+  const ids = new DeterministicIdGenerator("rename");
+  const rename = await prepareConfigurationSynchronization({ models: [articles], state: store });
+  await applyPreparedConfigurationSynchronization({
+    clock,
+    ids,
+    models: [articles],
+    prepared: rename,
+    target: store,
+  });
+  expect(store.storedModelStates()).toMatchObject([{ key: "articles" }]);
+
+  const removal = await prepareConfigurationSynchronization({ models: [], state: store });
+  await applyPreparedConfigurationSynchronization({
+    clock,
+    ids,
+    models: [],
+    prepared: removal,
+    target: store,
+  });
+  expect(store.storedModelStates()).toEqual([]);
 });
 
 test("enforces singleton, revision, route, and immutable-publication boundaries atomically", async () => {

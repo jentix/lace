@@ -1,5 +1,13 @@
-import { dispatcherLeaseId, opaqueCursor, opaqueTokenVerifier } from "@lacecms/application";
+import {
+  dispatcherLeaseId,
+  opaqueCursor,
+  opaqueTokenVerifier,
+  planConfigurationSynchronization,
+  renderConfigurationSyncPlanJson,
+} from "@lacecms/application";
 import type {
+  ApplyConfigurationSynchronizationInput,
+  ApplyConfigurationSynchronizationResult,
   BuildContentExport,
   BuildTriggerResult,
   ByteStream,
@@ -11,6 +19,9 @@ import type {
   ContentEntryCommandPort,
   ContentEntryReadPort,
   ContentEntrySummary,
+  ConfigurationSyncApplyPort,
+  ConfigurationSyncModel,
+  ConfigurationSyncStateReadPort,
   CreateContentEntryInput,
   CursorPage,
   DeleteContentEntryInput,
@@ -46,6 +57,7 @@ import {
   assertEntryCreationAllowed,
   assertPublicPathAvailable,
   contentSnapshotId,
+  contentModelKey,
   createContentEntry,
   publishContentEntry,
   resolveContentPublicPath,
@@ -60,6 +72,7 @@ import type {
   PublishedSnapshot,
   UnixMilliseconds,
 } from "@lacecms/domain";
+import type { NormalizedContentModel } from "@lacecms/config";
 
 export const packageName = "@lacecms/test-utils";
 
@@ -123,6 +136,48 @@ function copyCursorPage<Value>(page: CursorPage<Value>): CursorPage<Value> {
     items: Object.freeze(page.items.map((item) => clone(item))),
     ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
   });
+}
+
+function sameStoredModelStates(
+  expected: readonly StoredContentModelState[],
+  actual: readonly StoredContentModelState[],
+): boolean {
+  if (expected.length !== actual.length) return false;
+  return expected.every((value, index) => {
+    const candidate = actual[index];
+    return (
+      candidate !== undefined &&
+      value.key === candidate.key &&
+      value.kind === candidate.kind &&
+      value.version === candidate.version &&
+      value.structureHash === candidate.structureHash &&
+      value.projectionHash === candidate.projectionHash &&
+      value.entryCount === candidate.entryCount &&
+      value.draftSnapshotCount === candidate.draftSnapshotCount &&
+      value.publishedSnapshotCount === candidate.publishedSnapshotCount
+    );
+  });
+}
+
+function stateForModel(model: ConfigurationSyncModel): StoredContentModelState {
+  return Object.freeze({
+    draftSnapshotCount: 0,
+    entryCount: 0,
+    key: model.key,
+    kind: model.kind,
+    projectionHash: model.projectionHash,
+    publishedSnapshotCount: 0,
+    structureHash: model.structureHash,
+    version: model.version,
+  });
+}
+
+function routeForModel(model: NormalizedContentModel) {
+  return Object.freeze(
+    model.kind === "page"
+      ? { key: contentModelKey(model.key), kind: "page" as const, path: model.path }
+      : { key: contentModelKey(model.key), kind: "collection" as const, route: model.route },
+  );
 }
 
 async function collectBytes(stream: ByteStream): Promise<Uint8Array> {
@@ -341,11 +396,18 @@ function summarize(entry: ContentEntry): ContentEntrySummary {
  * It validates every guard before replacing its private indexes.
  */
 export class InMemoryContentStore
-  implements ContentEntryReadPort, ContentEntryCommandPort, MediaCommandPort, PublicContentReadPort
+  implements
+    ContentEntryReadPort,
+    ContentEntryCommandPort,
+    ConfigurationSyncApplyPort,
+    ConfigurationSyncStateReadPort,
+    MediaCommandPort,
+    PublicContentReadPort
 {
+  public readonly configurationSyncBuildRequests: number[] = [];
   public readonly mediaDeletionRequests: string[] = [];
-  private readonly entries = new Map<string, ContentEntry>();
-  private readonly modelStates = new Map<string, StoredContentModelState>();
+  private entries = new Map<string, ContentEntry>();
+  private modelStates = new Map<string, StoredContentModelState>();
   private readonly media = new Map<string, MediaMetadata>();
   private readonly publicationIdempotency = new Map<string, StoredPublicationIdempotency>();
   private readonly references = new Map<string, readonly DraftMediaReference[]>();
@@ -375,6 +437,99 @@ export class InMemoryContentStore
         })
         .sort((left, right) => left.key.localeCompare(right.key)),
     );
+  }
+
+  public async readConfigurationSyncState(): Promise<readonly StoredContentModelState[]> {
+    return this.storedModelStates();
+  }
+
+  public async applyConfigurationSynchronization(
+    input: ApplyConfigurationSynchronizationInput,
+  ): Promise<ApplyConfigurationSynchronizationResult> {
+    const current = this.storedModelStates();
+    const actualPlan = planConfigurationSynchronization({
+      models: input.models,
+      storedModels: current,
+    });
+    if (
+      !input.plan.isValid ||
+      !sameStoredModelStates(input.expectedStoredModels, current) ||
+      renderConfigurationSyncPlanJson(input.plan) !== renderConfigurationSyncPlanJson(actualPlan)
+    ) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        "Configuration synchronization plan is stale.",
+      );
+    }
+    if (!actualPlan.requiresApply) {
+      return Object.freeze({ operations: Object.freeze([]), status: "noop" });
+    }
+
+    const models = new Map(input.models.map((model) => [model.key, model]));
+    const pageEntries = new Map(input.pageEntries.map((page) => [page.modelKey, page.entry]));
+    const nextStates = new Map(this.modelStates);
+    const nextEntries = new Map(this.entries);
+    for (const operation of actualPlan.operations) {
+      if (operation.action === "create") {
+        const currentModel = models.get(operation.model.key);
+        if (currentModel === undefined) {
+          throw new DomainError("CONTENT_INVALID_STATE", "Synchronization model is unavailable.");
+        }
+        nextStates.set(operation.model.key, stateForModel(operation.model));
+        if (currentModel.kind === "page") {
+          const entry = pageEntries.get(operation.model.key);
+          if (
+            entry === undefined ||
+            entry.model.key !== operation.model.key ||
+            nextEntries.has(entry.id)
+          ) {
+            throw new DomainError(
+              "CONTENT_INVALID_STATE",
+              "Page synchronization entry is invalid.",
+            );
+          }
+          nextEntries.set(entry.id, copyEntry(entry));
+        }
+        continue;
+      }
+      if (operation.action === "remove") {
+        nextStates.delete(operation.model.key);
+        continue;
+      }
+      const currentModel = models.get(operation.model.key);
+      if (currentModel === undefined) {
+        throw new DomainError("CONTENT_INVALID_STATE", "Synchronization model is unavailable.");
+      }
+      const previousKey =
+        operation.action === "rename" ? operation.renamedFrom : operation.model.key;
+      const previous = nextStates.get(previousKey);
+      if (previous === undefined) {
+        throw new DomainError(
+          "CONTENT_INVALID_STATE",
+          "Synchronization model is no longer available.",
+        );
+      }
+      nextStates.delete(previousKey);
+      nextStates.set(operation.model.key, stateForModel(operation.model));
+      if (operation.action === "rename") {
+        for (const [entryId, entry] of nextEntries) {
+          if (entry.model.key !== previousKey) continue;
+          nextEntries.set(
+            entryId,
+            Object.freeze({ ...copyEntry(entry), model: routeForModel(currentModel) }),
+          );
+        }
+      }
+    }
+    this.modelStates = nextStates;
+    this.entries = nextEntries;
+    this.publicVersion += 1;
+    this.configurationSyncBuildRequests.push(this.publicVersion);
+    return Object.freeze({
+      operations: actualPlan.operations,
+      status: "applied",
+      targetVersion: this.publicVersion,
+    });
   }
 
   public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {
