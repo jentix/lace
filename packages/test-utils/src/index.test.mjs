@@ -647,6 +647,10 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
   await expect(
     useCases.publish({ actor: admin, entryId: firstPost.id, expectedRevision: 1 }),
   ).resolves.toMatchObject({ publication: "published" });
+  await expect(
+    useCases.delete({ actor: admin, entryId: firstPost.id, expectedRevision: 0 }),
+  ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+  expect(await useCases.load({ actor: admin, entryId: firstPost.id })).not.toBeNull();
   const conflictingPost = await useCases.create({
     actor: editor,
     modelKey: "posts",
@@ -657,6 +661,36 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
     useCases.publish({ actor: admin, entryId: conflictingPost.id, expectedRevision: 1 }),
   ).rejects.toMatchObject({ code: "CONTENT_ROUTE_CONFLICT" });
   expect(await useCases.loadPublished({ actor: admin, entryId: conflictingPost.id })).toBeNull();
+  await expect(
+    useCases.delete({ actor: admin, entryId: firstPost.id, expectedRevision: 1 }),
+  ).resolves.toBeUndefined();
+  expect(await useCases.load({ actor: admin, entryId: firstPost.id })).toBeNull();
+
+  const racedPost = await useCases.create({
+    actor: editor,
+    modelKey: "posts",
+    ...draft,
+    slug: "raced",
+  });
+  const deleteFromStore = store.delete.bind(store);
+  let publishDuringDelete = true;
+  store.delete = async (input) => {
+    if (publishDuringDelete) {
+      publishDuringDelete = false;
+      await store.publish({
+        entryId: racedPost.id,
+        expectedRevision: 1,
+        publishedAt: unixMilliseconds(11),
+        publishedBy: admin,
+        publishedSnapshotId: contentSnapshotId("raced-post-published"),
+      });
+    }
+    return deleteFromStore(input);
+  };
+  await expect(
+    useCases.delete({ actor: editor, entryId: racedPost.id, expectedRevision: 1 }),
+  ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+  expect(await store.loadPublic("/blog/raced")).toMatchObject({ entry: { id: racedPost.id } });
 });
 
 test("reports rejected and unavailable builds without undoing a publication", async () => {

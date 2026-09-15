@@ -13,16 +13,17 @@ The system SHALL expose application-level input and output contracts,
 independent of REST DTOs and database rows, for planning normalized model
 synchronization against portable stored-model identity and snapshot summaries;
 dry-running and atomically applying a guarded approved synchronization plan;
-creating an entry; loading an entry's draft or published
-aggregate; listing model entries with an opaque cursor; atomically replacing a
-complete draft at an expected revision; atomically publishing a guarded draft
-with an optional idempotency key; deleting an entry with caller actor/time;
-marking unreferenced media for asynchronous deletion; listing and resolving
-public content; loading media that is publicly reachable; and exporting build content.
-The model-sync planning and apply contracts SHALL expose ordered portable
-operations, diagnostics, fresh-state guards, and complete outcomes without
-exposing a database or generic transaction callback.
-A complete-draft command SHALL carry the validated media-reference projection,
+creating an entry; loading an entry's draft or published aggregate; listing
+model entries with an opaque cursor; atomically replacing a complete draft at
+an expected revision; atomically publishing a guarded draft with an optional
+idempotency key; deleting an entry with caller actor/time; marking unreferenced
+media for asynchronous deletion; listing published entries for one supplied
+collection model with an opaque cursor, resolving public content, loading media
+that is publicly reachable; reading the current published-state version; and
+exporting build content. The model-sync planning and apply contracts SHALL expose
+ordered portable operations, diagnostics, fresh-state guards, and complete
+outcomes without exposing a database or generic transaction callback. A
+complete-draft command SHALL carry the validated media-reference projection,
 including its stable source key, field path, and media identity, rather than
 requiring an adapter to infer references from arbitrary JSON. Read operations
 SHALL be separate from state-changing operations. State-changing contracts SHALL
@@ -34,8 +35,9 @@ original completed publication result for an identical retry without performing
 the publication again.
 
 #### Scenario: A runtime adapter supplies portable entry data
-- **WHEN** an application caller requests an entry aggregate, a cursor page,
-  public data, public media, or build export
+- **WHEN** an application caller requests an entry aggregate, a cursor page for
+  one collection's published entries, public data, public media, the current
+  published-state version, or build export
 - **THEN** the returned contract contains portable domain/configuration values
   and no HTTP, framework, or database-row type
 
@@ -67,8 +69,16 @@ the publication again.
   serialized values
 
 #### Scenario: Cursor traversal has no transport dependency
-- **WHEN** a caller lists entries for a model after receiving a continuation cursor
-- **THEN** it can pass that opaque cursor back to the application contract and receive the next portable page without importing a REST schema
+- **WHEN** a caller lists entries for a model or published entries for one
+  collection after receiving a continuation cursor
+- **THEN** it can pass that opaque cursor back to the application contract and
+  receive the next portable page without importing a REST schema
+
+#### Scenario: A conditional export checks only its version
+- **WHEN** a caller checks the current published-state version before deciding
+  whether to load build-export content
+- **THEN** it receives the portable non-negative version without loading the
+  complete exported entries
 
 #### Scenario: An identical publish retry is atomic
 - **WHEN** an application caller retries guarded publication with the same entry,

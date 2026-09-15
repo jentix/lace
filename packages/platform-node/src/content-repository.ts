@@ -58,7 +58,7 @@ const CURSOR_VERSION = 1;
 const MAX_PAGE_SIZE = 100;
 const SQLITE_BIND_CHUNK = 200;
 
-type CursorKind = "admin" | "public";
+type CursorKind = string;
 
 interface DecodedCursor {
   readonly id: string;
@@ -600,10 +600,17 @@ export class NodeContentRepository
   public async delete(
     input: import("@lacecms/application").DeleteContentEntryInput,
   ): Promise<ContentCommandResult> {
-    const entry = this.entryRow(input.entryId);
-    if (entry === undefined) failure("Content entry does not exist.");
     try {
       this.connection.transaction(() => {
+        const entry = this.entryRow(input.entryId);
+        if (entry === undefined) failure("Content entry does not exist.");
+        const expectedPublishedSnapshotId = input.expectedPublishedSnapshotId ?? null;
+        if (entry.published_snapshot_id !== expectedPublishedSnapshotId) {
+          throw new DomainError(
+            "CONTENT_REVISION_CONFLICT",
+            "The publication state no longer matches the deletion guard.",
+          );
+        }
         if (entry.published_snapshot_id !== null) {
           this.checkpoint("delete.route");
           this.connection
@@ -612,7 +619,17 @@ export class NodeContentRepository
           this.bumpPublicState(input.deletedAt, input.deletedBy.id, entry.published_snapshot_id);
         }
         this.checkpoint("delete.entry");
-        this.connection.prepare("delete from content_entries where id = ?").run(input.entryId);
+        const deleted = this.connection
+          .prepare(
+            "delete from content_entries where id = ? and published_snapshot_id is ? and exists (select 1 from content_snapshots where id = content_entries.draft_snapshot_id and revision = ?)",
+          )
+          .run(input.entryId, expectedPublishedSnapshotId, input.expectedRevision);
+        if (deleted.changes !== 1) {
+          throw new DomainError(
+            "CONTENT_REVISION_CONFLICT",
+            "The draft revision no longer matches the deletion guard.",
+          );
+        }
       })();
     } catch (error) {
       this.throwWriteError(error, false);
@@ -703,7 +720,8 @@ export class NodeContentRepository
 
   public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
     const limit = assertPageSize(input.limit);
-    const after = input.after === undefined ? undefined : decodeCursor(input.after, "public");
+    const cursorKind = `public:${input.modelKey}`;
+    const after = input.after === undefined ? undefined : decodeCursor(input.after, cursorKind);
     const rows = this.connection
       .prepare(
         `select e.id, e.model_key, e.draft_snapshot_id, e.published_snapshot_id,
@@ -711,29 +729,36 @@ export class NodeContentRepository
            from published_routes r
            join content_entries e on e.id = r.entry_id and e.published_snapshot_id = r.snapshot_id
            join content_snapshots s on s.id = r.snapshot_id
-          where 1 = 1
+          where e.model_key = ?
             ${after === undefined ? "" : "and (s.created_at < ? or (s.created_at = ? and e.id < ?))"}
           order by s.created_at desc, e.id desc limit ?`,
       )
       .all(
         ...(after === undefined
-          ? [limit + 1]
-          : [after.timestamp, after.timestamp, after.id, limit + 1]),
+          ? [input.modelKey, limit + 1]
+          : [input.modelKey, after.timestamp, after.timestamp, after.id, limit + 1]),
       ) as readonly PublicRow[];
     const pageRows = rows.slice(0, limit);
     const entries = this.hydrate(pageRows);
     const items = pageRows.map((row) => {
       const entry = entries.get(row.id);
       if (entry === undefined) failure("Published route references an unreadable entry.");
-      return Object.freeze({ entry, path: row.path });
+      return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
     });
     const last = pageRows.at(-1);
     return Object.freeze({
       items: Object.freeze(items),
       ...(rows.length > limit && last !== undefined
-        ? { nextCursor: encodeCursor("public", last.published_created_at, last.id) }
+        ? { nextCursor: encodeCursor(cursorKind, last.published_created_at, last.id) }
         : {}),
     });
+  }
+
+  public async publishedContentVersion(): Promise<number> {
+    const row = this.connection
+      .prepare("select version from published_state where singleton_key = 1")
+      .get() as { readonly version: number } | undefined;
+    return row?.version ?? 0;
   }
 
   public async loadPublic(path: string): Promise<PublicContentEntry | null> {
@@ -749,7 +774,9 @@ export class NodeContentRepository
       .get(path) as PublicRow | undefined;
     if (row === undefined) return null;
     const entry = this.hydrate([row]).get(row.id);
-    return entry === undefined ? null : Object.freeze({ entry, path: row.path });
+    return entry === undefined
+      ? null
+      : Object.freeze({ entry: this.publicEntry(entry), path: row.path });
   }
 
   public async loadPublicMedia(id: string): Promise<MediaMetadata | null> {
@@ -789,18 +816,15 @@ export class NodeContentRepository
       )
       .all() as readonly PublicRow[];
     const entries = this.hydrate(rows);
-    const versionRow = this.connection
-      .prepare("select version from published_state where singleton_key = 1")
-      .get() as { readonly version: number } | undefined;
     return Object.freeze({
       entries: Object.freeze(
         rows.map((row) => {
           const entry = entries.get(row.id);
           if (entry === undefined) failure("Build export contains an unreadable entry.");
-          return Object.freeze({ entry, path: row.path });
+          return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
         }),
       ),
-      version: versionRow?.version ?? 0,
+      version: await this.publishedContentVersion(),
     });
   }
 
@@ -847,6 +871,17 @@ export class NodeContentRepository
     const row = this.entryRow(id);
     if (row === undefined) return null;
     return this.hydrate([row]).get(row.id) ?? null;
+  }
+
+  /** Public projections cannot disclose the independently mutable draft snapshot. */
+  private publicEntry(entry: ContentEntry): ContentEntry {
+    if (entry.published === undefined) failure("Public entry is missing its published snapshot.");
+    return Object.freeze({
+      draft: Object.freeze({ ...entry.published, state: "draft" as const }),
+      id: entry.id,
+      model: entry.model,
+      published: entry.published,
+    });
   }
 
   private hydrate(rows: readonly EntryRow[]): Map<string, ContentEntry> {

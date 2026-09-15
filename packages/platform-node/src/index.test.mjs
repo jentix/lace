@@ -5,9 +5,16 @@ import { join } from "node:path";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
+  NodeInfrastructureUnavailableError,
   NodeContentRepository,
+  NodePlaceholderObjectStorage,
+  NodeSqliteReadiness,
+  NoopNodeBuildTrigger,
+  NoopNodeCache,
+  nodePublicMediaUrl,
   openNodeDatabase,
   packageName,
+  parseNodeRuntimeSettings,
 } from "../dist/index.js";
 import {
   applyPreparedConfigurationSynchronization,
@@ -25,6 +32,68 @@ import {
 } from "@lacecms/domain";
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("validates named Node settings without disclosing supplied values", () => {
+  const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
+  expect(() =>
+    parseNodeRuntimeSettings({
+      LACE_DATABASE_PATH: "",
+      LACE_PUBLIC_BASE_URL: secret,
+      LACE_PORT: "not-a-port",
+    }),
+  ).toThrow("Invalid Node environment: LACE_DATABASE_PATH, LACE_PUBLIC_BASE_URL, LACE_PORT.");
+  try {
+    parseNodeRuntimeSettings({ LACE_DATABASE_PATH: "", LACE_PUBLIC_BASE_URL: secret });
+  } catch (error) {
+    expect(String(error)).not.toContain("opaque-secret");
+  }
+  expect(
+    parseNodeRuntimeSettings({
+      LACE_ADMIN_DEV_ORIGIN: "http://127.0.0.1:5173",
+      LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+      LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
+      LACE_SITE_DEV_ORIGIN: "http://127.0.0.1:4321",
+    }),
+  ).toMatchObject({
+    host: "127.0.0.1",
+    port: 3000,
+    publicBaseUrl: new URL("https://lace.test/base/"),
+  });
+});
+
+test("uses configured public URLs and fails closed for placeholder infrastructure", async () => {
+  const settings = parseNodeRuntimeSettings({
+    LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
+  });
+  expect(nodePublicMediaUrl(settings, "media/one")).toBe(
+    "https://lace.test/base/api/v1/public/media/media%2Fone",
+  );
+  const storage = new NodePlaceholderObjectStorage(settings.publicBaseUrl);
+  await expect(storage.createReadUrl("media/one")).resolves.toBe(
+    "https://lace.test/base/api/v1/public/media/media%2Fone",
+  );
+  await expect(storage.get("media/one")).rejects.toBeInstanceOf(NodeInfrastructureUnavailableError);
+  const cache = new NoopNodeCache();
+  await cache.set("derived", { value: 1 });
+  await expect(cache.get("derived")).resolves.toBeNull();
+  await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({ accepted: false });
+});
+
+test("reports cheap SQLite readiness failures after the connection closes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-readiness-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const readiness = new NodeSqliteReadiness(database.connection);
+    await expect(readiness.isReady()).resolves.toBe(true);
+    database.connection.close();
+    await expect(readiness.isReady()).resolves.toBe(false);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 function syncClock(value) {
   return { now: () => unixMilliseconds(value) };
@@ -719,6 +788,10 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
       expect(await repository.loadPublic("/blog/post-a")).toMatchObject({
         entry: { id: "post-a", published: { id: "post-a-published" } },
       });
+      expect(
+        await repository.listPublic({ limit: 1, modelKey: contentModelKey("posts") }),
+      ).toMatchObject({ items: [{ path: "/blog/post-b" }] });
+      expect(await repository.publishedContentVersion()).toBe(1);
       expect((await repository.loadPublicMedia("media-1"))?.id).toBe("media-1");
       const prepare = database.connection.prepare.bind(database.connection);
       let queryCount = 0;
@@ -738,6 +811,67 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
       await expect(repository.loadPublic("/blog/post-b")).rejects.toMatchObject({
         code: "CONTENT_INVALID_STATE",
       });
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("guards Node deletions by draft revision and publication identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-delete-guard-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      database.connection
+        .prepare("insert into content_models values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("posts", "collection", "Posts", 1, "structure", "projection", 1, 1);
+      const repository = new NodeContentRepository(database.connection, (key) => routes.get(key));
+      const post = draftEntry("guarded-post", "posts", 20, "Guarded");
+      await repository.create({ entry: post, mediaReferences: [] });
+
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(21),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedRevision: 0,
+        }),
+      ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+      expect(await repository.load({ entryId: post.id })).not.toBeNull();
+
+      await repository.publish({
+        entryId: post.id,
+        expectedRevision: 1,
+        publishedAt: unixMilliseconds(22),
+        publishedBy: editor,
+        publishedSnapshotId: contentSnapshotId("guarded-post-published"),
+      });
+      const version = (await repository.exportBuildContent()).version;
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(23),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedRevision: 1,
+        }),
+      ).rejects.toMatchObject({ code: "CONTENT_REVISION_CONFLICT" });
+      expect((await repository.exportBuildContent()).version).toBe(version);
+      expect(await repository.loadPublic("/blog/guarded-post")).not.toBeNull();
+
+      await expect(
+        repository.delete({
+          deletedAt: unixMilliseconds(24),
+          deletedBy: editor,
+          entryId: post.id,
+          expectedPublishedSnapshotId: contentSnapshotId("guarded-post-published"),
+          expectedRevision: 1,
+        }),
+      ).resolves.toMatchObject({ status: "deleted" });
+      expect(await repository.load({ entryId: post.id })).toBeNull();
     } finally {
       database.connection.close();
     }

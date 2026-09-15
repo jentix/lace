@@ -550,6 +550,15 @@ export class InMemoryContentStore
     const entry = this.entries.get(input.entryId);
     if (entry === undefined)
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    if (
+      entry.draft.revision !== input.expectedRevision ||
+      entry.published?.id !== input.expectedPublishedSnapshotId
+    ) {
+      throw new DomainError(
+        "CONTENT_REVISION_CONFLICT",
+        "The draft revision or publication state no longer matches the deletion guard.",
+      );
+    }
     const nextRoutes = new Map(this.routes);
     for (const [path, route] of nextRoutes)
       if (route.entryId === input.entryId) nextRoutes.delete(path);
@@ -647,12 +656,21 @@ export class InMemoryContentStore
   }
 
   public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
-    const entries = [...this.routes.entries()]
+    const entries = this.publicEntries()
+      .filter(({ entry }) => entry.model.key === input.modelKey)
+      .map(({ entry, path }) => Object.freeze({ entry: copyEntry(entry), path }));
+    return this.page(entries, input.after, input.limit, `public:${input.modelKey}`);
+  }
+
+  public async publishedContentVersion(): Promise<number> {
+    return this.publicVersion;
+  }
+
+  private publicEntries(): readonly { readonly entry: ContentEntry; readonly path: string }[] {
+    return [...this.routes.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([path, route]) => ({ entry: this.entries.get(route.entryId)!, path }))
-      .filter(({ entry }) => entry.published !== undefined)
-      .map(({ entry, path }) => Object.freeze({ entry: copyEntry(entry), path }));
-    return this.page(entries, input.after, input.limit, "public");
+      .filter(({ entry }) => entry.published !== undefined);
   }
 
   public async loadPublic(path: string): Promise<PublicContentEntry | null> {
@@ -694,8 +712,14 @@ export class InMemoryContentStore
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {
-    const page = await this.listPublic({ limit: Number.MAX_SAFE_INTEGER });
-    return Object.freeze({ entries: page.items, version: this.publicVersion });
+    return Object.freeze({
+      entries: Object.freeze(
+        this.publicEntries().map(({ entry, path }) =>
+          Object.freeze({ entry: copyEntry(entry), path }),
+        ),
+      ),
+      version: this.publicVersion,
+    });
   }
 
   private page<Value>(

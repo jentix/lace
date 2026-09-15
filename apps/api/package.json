@@ -12,11 +12,20 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "dev": "pnpm run build && node dist/dev.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
-    "test": "vitest run src/index.test.mjs"
+    "test": "vitest run src/*.test.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "catalog:",
+    "@lacecms/platform-node": "workspace:*",
+    "@lacecms/server": "workspace:*"
   },
   "devDependencies": {
+    "@lacecms/application": "workspace:*",
+    "@lacecms/domain": "workspace:*",
+    "@types/node": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
