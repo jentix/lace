@@ -719,6 +719,10 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
       expect(await repository.loadPublic("/blog/post-a")).toMatchObject({
         entry: { id: "post-a", published: { id: "post-a-published" } },
       });
+      expect(
+        await repository.listPublic({ limit: 1, modelKey: contentModelKey("posts") }),
+      ).toMatchObject({ items: [{ path: "/blog/post-b" }] });
+      expect(await repository.publishedContentVersion()).toBe(1);
       expect((await repository.loadPublicMedia("media-1"))?.id).toBe("media-1");
       const prepare = database.connection.prepare.bind(database.connection);
       let queryCount = 0;

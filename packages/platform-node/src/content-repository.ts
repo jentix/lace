@@ -58,7 +58,7 @@ const CURSOR_VERSION = 1;
 const MAX_PAGE_SIZE = 100;
 const SQLITE_BIND_CHUNK = 200;
 
-type CursorKind = "admin" | "public";
+type CursorKind = string;
 
 interface DecodedCursor {
   readonly id: string;
@@ -720,7 +720,8 @@ export class NodeContentRepository
 
   public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
     const limit = assertPageSize(input.limit);
-    const after = input.after === undefined ? undefined : decodeCursor(input.after, "public");
+    const cursorKind = `public:${input.modelKey}`;
+    const after = input.after === undefined ? undefined : decodeCursor(input.after, cursorKind);
     const rows = this.connection
       .prepare(
         `select e.id, e.model_key, e.draft_snapshot_id, e.published_snapshot_id,
@@ -728,14 +729,14 @@ export class NodeContentRepository
            from published_routes r
            join content_entries e on e.id = r.entry_id and e.published_snapshot_id = r.snapshot_id
            join content_snapshots s on s.id = r.snapshot_id
-          where 1 = 1
+          where e.model_key = ?
             ${after === undefined ? "" : "and (s.created_at < ? or (s.created_at = ? and e.id < ?))"}
           order by s.created_at desc, e.id desc limit ?`,
       )
       .all(
         ...(after === undefined
-          ? [limit + 1]
-          : [after.timestamp, after.timestamp, after.id, limit + 1]),
+          ? [input.modelKey, limit + 1]
+          : [input.modelKey, after.timestamp, after.timestamp, after.id, limit + 1]),
       ) as readonly PublicRow[];
     const pageRows = rows.slice(0, limit);
     const entries = this.hydrate(pageRows);
@@ -748,9 +749,16 @@ export class NodeContentRepository
     return Object.freeze({
       items: Object.freeze(items),
       ...(rows.length > limit && last !== undefined
-        ? { nextCursor: encodeCursor("public", last.published_created_at, last.id) }
+        ? { nextCursor: encodeCursor(cursorKind, last.published_created_at, last.id) }
         : {}),
     });
+  }
+
+  public async publishedContentVersion(): Promise<number> {
+    const row = this.connection
+      .prepare("select version from published_state where singleton_key = 1")
+      .get() as { readonly version: number } | undefined;
+    return row?.version ?? 0;
   }
 
   public async loadPublic(path: string): Promise<PublicContentEntry | null> {
@@ -806,9 +814,6 @@ export class NodeContentRepository
       )
       .all() as readonly PublicRow[];
     const entries = this.hydrate(rows);
-    const versionRow = this.connection
-      .prepare("select version from published_state where singleton_key = 1")
-      .get() as { readonly version: number } | undefined;
     return Object.freeze({
       entries: Object.freeze(
         rows.map((row) => {
@@ -817,7 +822,7 @@ export class NodeContentRepository
           return Object.freeze({ entry, path: row.path });
         }),
       ),
-      version: versionRow?.version ?? 0,
+      version: await this.publishedContentVersion(),
     });
   }
 

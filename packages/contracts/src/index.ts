@@ -246,6 +246,9 @@ export const errorCodeSchema = v.picklist([
   "CONTENT_REVISION_CONFLICT",
   "CONTENT_ROUTE_CONFLICT",
   "INTERNAL_ERROR",
+  "NOT_FOUND",
+  "PAYLOAD_TOO_LARGE",
+  "RATE_LIMITED",
   "VALIDATION_FAILED",
 ]);
 
@@ -429,7 +432,35 @@ const domainErrorMessage: Readonly<Record<DomainErrorCode, string>> = {
 
 export interface ClassifiedError {
   readonly body: ErrorEnvelope;
-  readonly status: 403 | 409 | 422 | 500;
+  readonly status: 403 | 404 | 409 | 413 | 422 | 429 | 500;
+}
+
+export type TransportErrorCode =
+  | "AUTHORIZATION_DENIED"
+  | "NOT_FOUND"
+  | "PAYLOAD_TOO_LARGE"
+  | "RATE_LIMITED";
+
+const transportErrorStatus: Readonly<Record<TransportErrorCode, 403 | 404 | 413 | 429>> = {
+  AUTHORIZATION_DENIED: 403,
+  NOT_FOUND: 404,
+  PAYLOAD_TOO_LARGE: 413,
+  RATE_LIMITED: 429,
+};
+
+const transportErrorMessage: Readonly<Record<TransportErrorCode, string>> = {
+  AUTHORIZATION_DENIED: "The actor is not permitted to perform this operation.",
+  NOT_FOUND: "The requested resource was not found.",
+  PAYLOAD_TOO_LARGE: "The request body is too large.",
+  RATE_LIMITED: "Too many requests were received.",
+};
+
+/** Creates one of the stable sanitized envelopes for HTTP boundary failures. */
+export function transportError(code: TransportErrorCode): ClassifiedError {
+  return {
+    body: { error: { code, message: transportErrorMessage[code] } },
+    status: transportErrorStatus[code],
+  };
 }
 
 /** Converts known domain failures to documented safe transport responses. */

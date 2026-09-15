@@ -165,6 +165,7 @@ export interface PublicContentEntry {
 export interface ListPublicContentInput {
   readonly after?: OpaqueCursor;
   readonly limit: number;
+  readonly modelKey: ContentModelKey;
 }
 
 export interface BuildContentExport {
@@ -177,6 +178,7 @@ export interface PublicContentReadPort {
   loadPublic(path: string): Promise<PublicContentEntry | null>;
   loadPublicMedia(id: string): Promise<MediaMetadata | null>;
   listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>>;
+  publishedContentVersion(): Promise<number>;
 }
 
 export interface PutObjectInput {

@@ -37,6 +37,7 @@ import {
   toIsoTimestamp,
   toMediaMetadataDto,
   toSiteBuildDto,
+  transportError,
   validationError,
   versionFromEntityTag,
 } from "../dist/index.js";
@@ -220,6 +221,21 @@ describe("shared REST transport conventions", () => {
         },
       },
       status: 422,
+    });
+  });
+
+  test("renders stable sanitized HTTP boundary errors", () => {
+    expect(transportError("NOT_FOUND")).toEqual({
+      body: { error: { code: "NOT_FOUND", message: "The requested resource was not found." } },
+      status: 404,
+    });
+    expect(transportError("RATE_LIMITED")).toEqual({
+      body: { error: { code: "RATE_LIMITED", message: "Too many requests were received." } },
+      status: 429,
+    });
+    expect(transportError("PAYLOAD_TOO_LARGE")).toEqual({
+      body: { error: { code: "PAYLOAD_TOO_LARGE", message: "The request body is too large." } },
+      status: 413,
     });
   });
 });
