@@ -743,7 +743,7 @@ export class NodeContentRepository
     const items = pageRows.map((row) => {
       const entry = entries.get(row.id);
       if (entry === undefined) failure("Published route references an unreadable entry.");
-      return Object.freeze({ entry, path: row.path });
+      return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
     });
     const last = pageRows.at(-1);
     return Object.freeze({
@@ -774,7 +774,9 @@ export class NodeContentRepository
       .get(path) as PublicRow | undefined;
     if (row === undefined) return null;
     const entry = this.hydrate([row]).get(row.id);
-    return entry === undefined ? null : Object.freeze({ entry, path: row.path });
+    return entry === undefined
+      ? null
+      : Object.freeze({ entry: this.publicEntry(entry), path: row.path });
   }
 
   public async loadPublicMedia(id: string): Promise<MediaMetadata | null> {
@@ -819,7 +821,7 @@ export class NodeContentRepository
         rows.map((row) => {
           const entry = entries.get(row.id);
           if (entry === undefined) failure("Build export contains an unreadable entry.");
-          return Object.freeze({ entry, path: row.path });
+          return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
         }),
       ),
       version: await this.publishedContentVersion(),
@@ -869,6 +871,17 @@ export class NodeContentRepository
     const row = this.entryRow(id);
     if (row === undefined) return null;
     return this.hydrate([row]).get(row.id) ?? null;
+  }
+
+  /** Public projections cannot disclose the independently mutable draft snapshot. */
+  private publicEntry(entry: ContentEntry): ContentEntry {
+    if (entry.published === undefined) failure("Public entry is missing its published snapshot.");
+    return Object.freeze({
+      draft: Object.freeze({ ...entry.published, state: "draft" as const }),
+      id: entry.id,
+      model: entry.model,
+      published: entry.published,
+    });
   }
 
   private hydrate(rows: readonly EntryRow[]): Map<string, ContentEntry> {

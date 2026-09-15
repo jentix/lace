@@ -110,6 +110,9 @@ catalogs:
     '@fission-ai/openspec':
       specifier: 1.12.0
       version: 1.12.0
+    '@hono/node-server':
+      specifier: 2.1.1
+      version: 2.1.1
     '@hono/standard-validator':
       specifier: 0.4.0
       version: 0.4.0
@@ -149,6 +152,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    ulid:
+      specifier: 3.0.2
+      version: 3.0.2
     valibot:
       specifier: 1.4.2
       version: 1.4.2
@@ -195,7 +201,26 @@ importers:
         version: 5.0.0(@types/node@22.20.2)(vite@8.2.2(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   apps/api:
+    dependencies:
+      '@hono/node-server':
+        specifier: 'catalog:'
+        version: 2.1.1(hono@4.13.7)
+      '@lacecms/platform-node':
+        specifier: workspace:*
+        version: link:../../packages/platform-node
+      '@lacecms/server':
+        specifier: workspace:*
+        version: link:../../packages/server
     devDependencies:
+      '@lacecms/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@lacecms/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.10.1
       oxlint:
         specifier: 'catalog:'
         version: 1.81.0
@@ -204,7 +229,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 5.0.0(@types/node@22.20.2)(vite@8.2.2(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        version: 5.0.0(@types/node@24.10.1)(vite@8.2.2(@types/node@24.10.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   apps/builder:
     devDependencies:
@@ -379,6 +404,9 @@ importers:
       '@lacecms/application':
         specifier: workspace:*
         version: link:../application
+      '@lacecms/config':
+        specifier: workspace:*
+        version: link:../config
       '@lacecms/content':
         specifier: workspace:*
         version: link:../content
@@ -388,12 +416,18 @@ importers:
       '@lacecms/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lacecms/server':
+        specifier: workspace:*
+        version: link:../server
       better-sqlite3:
         specifier: 'catalog:'
         version: 13.0.3
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
+      ulid:
+        specifier: 'catalog:'
+        version: 3.0.2
     devDependencies:
       '@types/better-sqlite3':
         specifier: 'catalog:'
@@ -952,6 +986,12 @@ packages:
     resolution: {integrity: sha512-oFE2Lj7WVSc87nSibk6qe9HjHIOlxhcPAXbPey44DlLvJzBl5+9BZVrNiozOwv++CQhW+MG0kuP1XLZ/uQrrWw==}
     engines: {node: '>=20.19.0'}
     hasBin: true
+
+  '@hono/node-server@2.1.1':
+    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4
 
   '@hono/standard-validator@0.4.0':
     resolution: {integrity: sha512-MxOm1asDh9j7c1D0KiWwppSbFgAQxTRO4YEhjMrJn3lF1BIcXenPdgjSGKDRfQmZdaTaMA8slQLETgVOKyJxFw==}
@@ -2255,6 +2295,10 @@ packages:
     engines: {node: '>=16.20.0'}
     hasBin: true
 
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
+
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
@@ -2625,6 +2669,10 @@ snapshots:
       zod: 4.5.4
     transitivePeerDependencies:
       - '@types/node'
+
+  '@hono/node-server@2.1.1(hono@4.13.7)':
+    dependencies:
+      hono: 4.13.7
 
   '@hono/standard-validator@0.4.0(@standard-schema/spec@1.1.0)(hono@4.13.7)':
     dependencies:
@@ -3597,6 +3645,8 @@ snapshots:
       '@typescript/typescript-sunos-x64': 7.0.2
       '@typescript/typescript-win32-arm64': 7.0.2
       '@typescript/typescript-win32-x64': 7.0.2
+
+  ulid@3.0.2: {}
 
   undici-types@6.21.0:
     optional: true

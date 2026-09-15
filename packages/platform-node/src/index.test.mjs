@@ -5,9 +5,16 @@ import { join } from "node:path";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
+  NodeInfrastructureUnavailableError,
   NodeContentRepository,
+  NodePlaceholderObjectStorage,
+  NodeSqliteReadiness,
+  NoopNodeBuildTrigger,
+  NoopNodeCache,
+  nodePublicMediaUrl,
   openNodeDatabase,
   packageName,
+  parseNodeRuntimeSettings,
 } from "../dist/index.js";
 import {
   applyPreparedConfigurationSynchronization,
@@ -25,6 +32,68 @@ import {
 } from "@lacecms/domain";
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("validates named Node settings without disclosing supplied values", () => {
+  const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
+  expect(() =>
+    parseNodeRuntimeSettings({
+      LACE_DATABASE_PATH: "",
+      LACE_PUBLIC_BASE_URL: secret,
+      LACE_PORT: "not-a-port",
+    }),
+  ).toThrow("Invalid Node environment: LACE_DATABASE_PATH, LACE_PUBLIC_BASE_URL, LACE_PORT.");
+  try {
+    parseNodeRuntimeSettings({ LACE_DATABASE_PATH: "", LACE_PUBLIC_BASE_URL: secret });
+  } catch (error) {
+    expect(String(error)).not.toContain("opaque-secret");
+  }
+  expect(
+    parseNodeRuntimeSettings({
+      LACE_ADMIN_DEV_ORIGIN: "http://127.0.0.1:5173",
+      LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+      LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
+      LACE_SITE_DEV_ORIGIN: "http://127.0.0.1:4321",
+    }),
+  ).toMatchObject({
+    host: "127.0.0.1",
+    port: 3000,
+    publicBaseUrl: new URL("https://lace.test/base/"),
+  });
+});
+
+test("uses configured public URLs and fails closed for placeholder infrastructure", async () => {
+  const settings = parseNodeRuntimeSettings({
+    LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
+  });
+  expect(nodePublicMediaUrl(settings, "media/one")).toBe(
+    "https://lace.test/base/api/v1/public/media/media%2Fone",
+  );
+  const storage = new NodePlaceholderObjectStorage(settings.publicBaseUrl);
+  await expect(storage.createReadUrl("media/one")).resolves.toBe(
+    "https://lace.test/base/api/v1/public/media/media%2Fone",
+  );
+  await expect(storage.get("media/one")).rejects.toBeInstanceOf(NodeInfrastructureUnavailableError);
+  const cache = new NoopNodeCache();
+  await cache.set("derived", { value: 1 });
+  await expect(cache.get("derived")).resolves.toBeNull();
+  await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({ accepted: false });
+});
+
+test("reports cheap SQLite readiness failures after the connection closes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-readiness-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const readiness = new NodeSqliteReadiness(database.connection);
+    await expect(readiness.isReady()).resolves.toBe(true);
+    database.connection.close();
+    await expect(readiness.isReady()).resolves.toBe(false);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 function syncClock(value) {
   return { now: () => unixMilliseconds(value) };

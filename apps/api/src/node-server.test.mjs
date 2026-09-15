@@ -1,0 +1,211 @@
+import { expect, test } from "vitest";
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  applyPreparedConfigurationSynchronization,
+  prepareConfigurationSynchronization,
+} from "@lacecms/application";
+import { actorId, unixMilliseconds } from "@lacecms/domain";
+import {
+  anonymousActorResolver,
+  createNodeDevelopmentConfig,
+  createNodeRuntime,
+  migrateNodeDatabase,
+  parseNodeRuntimeSettings,
+} from "@lacecms/platform-node";
+import { createTestActorResolver } from "@lacecms/platform-node/test";
+import { createNodeDevelopmentGateway, startNodeServer } from "../dist/index.js";
+
+const admin = { id: actorId("integration-admin"), role: "admin" };
+
+async function fixture({ actors = createTestActorResolver(admin) } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "lace-node-api-"));
+  const databasePath = join(directory, "lace.sqlite");
+  migrateNodeDatabase(databasePath);
+  const config = await createNodeDevelopmentConfig();
+  const settings = {
+    ...parseNodeRuntimeSettings({
+      LACE_DATABASE_PATH: databasePath,
+      LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
+    }),
+    port: 0,
+  };
+  const runtime = createNodeRuntime({ actors, config, settings });
+  const prepared = await prepareConfigurationSynchronization({
+    models: config.runtime.content,
+    state: runtime.repository,
+  });
+  let value = 1;
+  await applyPreparedConfigurationSynchronization({
+    clock: { now: () => unixMilliseconds(100) },
+    ids: { next: () => `sync-${++value}` },
+    models: config.runtime.content,
+    prepared,
+    target: runtime.repository,
+  });
+  const server = await startNodeServer({ runtime, settings });
+  return {
+    close: async () => {
+      await server.close();
+      runtime.close();
+      await rm(directory, { force: true, recursive: true });
+    },
+    runtime,
+    server,
+  };
+}
+
+async function json(server, path, init) {
+  const response = await fetch(new URL(path, server.url), init);
+  return {
+    body: response.status === 204 || response.status === 304 ? undefined : await response.json(),
+    response,
+  };
+}
+
+test("serves the seeded lifecycle through an actual Node listener", async () => {
+  const value = await fixture();
+  try {
+    const created = await json(value.server, "/api/v1/admin/models/posts/entries", {
+      body: JSON.stringify({ blocks: [], fields: {}, slug: "first", title: "Initial" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    expect(created.response.status).toBe(201);
+    const entryId = created.body.id;
+    const saved = await json(value.server, `/api/v1/admin/entries/${entryId}/draft`, {
+      body: JSON.stringify({
+        blocks: [],
+        expectedRevision: 1,
+        fields: {},
+        slug: "first",
+        title: "Published title",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "PUT",
+    });
+    expect(saved.body.draft.revision).toBe(2);
+    expect(
+      (
+        await json(value.server, `/api/v1/admin/entries/${entryId}/publish`, {
+          body: JSON.stringify({ expectedRevision: 2 }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        })
+      ).response.status,
+    ).toBe(200);
+    const publicBeforeDraftChange = await json(
+      value.server,
+      "/api/v1/public/collections/posts/first",
+    );
+    expect(publicBeforeDraftChange).toMatchObject({
+      body: { entry: { draft: { title: "Published title" } } },
+      response: { status: 200 },
+    });
+    await json(value.server, `/api/v1/admin/entries/${entryId}/draft`, {
+      body: JSON.stringify({
+        blocks: [],
+        expectedRevision: 2,
+        fields: {},
+        slug: "first",
+        title: "Draft-only title",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "PUT",
+    });
+    expect(
+      (await json(value.server, "/api/v1/public/collections/posts/first")).body.entry.draft.title,
+    ).toBe("Published title");
+    const buildExport = await json(value.server, "/api/v1/public/build-export");
+    const etag = buildExport.response.headers.get("etag");
+    expect(etag).not.toBeNull();
+    expect(
+      (
+        await json(value.server, "/api/v1/public/build-export", {
+          headers: { "if-none-match": etag },
+        })
+      ).response.status,
+    ).toBe(304);
+    expect((await json(value.server, "/health/ready")).response.status).toBe(200);
+  } finally {
+    await value.close();
+  }
+});
+
+test("keeps production composition anonymous even when a request asks for a test actor", async () => {
+  const value = await fixture({ actors: anonymousActorResolver });
+  try {
+    expect(
+      await json(value.server, "/api/v1/admin/content-models", {
+        headers: { "x-lace-test-actor": "admin" },
+      }),
+    ).toMatchObject({
+      body: { error: { code: "AUTHORIZATION_DENIED" } },
+      response: { status: 403 },
+    });
+  } finally {
+    await value.close();
+  }
+});
+
+test("refuses to construct the test actor resolver outside Vitest", () => {
+  const original = [...process.argv];
+  process.argv.splice(0, process.argv.length, "node", "production.js");
+  try {
+    expect(() => createTestActorResolver(admin)).toThrow("available only in the Vitest runtime");
+  } finally {
+    process.argv.splice(0, process.argv.length, ...original);
+  }
+});
+
+test("routes frontend requests to same-origin development upstreams without proxying API paths", async () => {
+  const requests = [];
+  const upstream = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({ body: Buffer.concat(chunks).toString("utf8"), path: request.url });
+      response.end("upstream");
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const address = upstream.address();
+  const origin = `http://127.0.0.1:${address.port}`;
+  const settings = parseNodeRuntimeSettings({
+    LACE_ADMIN_DEV_ORIGIN: origin,
+    LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
+    LACE_SITE_DEV_ORIGIN: origin,
+  });
+  const gateway = createNodeDevelopmentGateway(async () => new Response("local"), settings);
+  try {
+    expect(await (await gateway(new Request("http://lace.test/api/v1/openapi.json"))).text()).toBe(
+      "local",
+    );
+    expect(
+      await (await gateway(new Request("http://lace.test/admin/content?view=list"))).text(),
+    ).toBe("upstream");
+    expect(
+      await (
+        await gateway(
+          new Request("http://lace.test/admin/draft", { body: "draft", method: "POST" }),
+        )
+      ).text(),
+    ).toBe("upstream");
+    expect(requests).toEqual([
+      { body: "", path: "/admin/content?view=list" },
+      { body: "draft", path: "/admin/draft" },
+    ]);
+    const unavailable = createNodeDevelopmentGateway(async () => new Response("local"), {
+      ...settings,
+      siteDevOrigin: new URL("http://127.0.0.1:1"),
+    });
+    expect((await unavailable(new Request("http://lace.test/"))).status).toBe(502);
+  } finally {
+    await new Promise((resolve, reject) =>
+      upstream.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
