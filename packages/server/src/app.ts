@@ -66,6 +66,10 @@ export interface ActorResolver {
   resolve(request: Request): Promise<Actor | null>;
 }
 
+export interface AuthRouteHandler {
+  fetch(request: Request): Promise<Response>;
+}
+
 export interface RequestIdGenerator {
   next(): string;
 }
@@ -99,6 +103,7 @@ export interface BuiltAdminResponder {
 }
 
 export interface LaceAppInput {
+  readonly auth?: AuthRouteHandler;
   readonly actors: ActorResolver;
   readonly adminAssets?: BuiltAdminResponder;
   readonly config: ServerConfig;
@@ -325,6 +330,11 @@ export function createLaceApp(input: LaceAppInput): Hono {
       });
     }
   });
+
+  if (input.auth !== undefined) {
+    const auth = input.auth;
+    app.all("/api/auth/*", (context) => auth.fetch(context.req.raw));
+  }
 
   app.use(
     bodyLimit({

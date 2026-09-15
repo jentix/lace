@@ -28,6 +28,7 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
   const settings = {
     ...parseNodeRuntimeSettings({
       LACE_DATABASE_PATH: databasePath,
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
     }),
     port: 0,
@@ -176,6 +177,7 @@ test("routes frontend requests to same-origin development upstreams without prox
   const settings = parseNodeRuntimeSettings({
     LACE_ADMIN_DEV_ORIGIN: origin,
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
     LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
     LACE_SITE_DEV_ORIGIN: origin,
   });

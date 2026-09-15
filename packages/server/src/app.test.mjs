@@ -12,7 +12,7 @@ import {
 const admin = { id: actorId("admin"), role: "admin" };
 const editor = { id: actorId("editor"), role: "editor" };
 
-async function fixture({ actor = admin, ready = true, allowed = true } = {}) {
+async function fixture({ actor = admin, auth, ready = true, allowed = true } = {}) {
   const config = await defineConfig({
     content: [
       definePage({ key: "home", path: "/", version: 1 }),
@@ -30,6 +30,7 @@ async function fixture({ actor = admin, ready = true, allowed = true } = {}) {
   const logs = [];
   let exportLoads = 0;
   const app = createLaceApp({
+    ...(auth === undefined ? {} : { auth }),
     actors: { resolve: async () => actor },
     adminAssets: { fetch: async () => new Response("admin-shell") },
     config,
@@ -53,6 +54,22 @@ async function fixture({ actor = admin, ready = true, allowed = true } = {}) {
   });
   return { app, content, exportLoads: () => exportLoads, logs };
 }
+
+test("mounts authentication before API and admin fallbacks", async () => {
+  const { app } = await fixture({
+    auth: { fetch: async () => new Response("auth-route", { status: 202 }) },
+  });
+  expect(
+    await (await app.fetch(new Request("https://lace.test/api/auth/sign-in/email"))).text(),
+  ).toBe("auth-route");
+  expect((await app.fetch(new Request("https://lace.test/api/auth/sign-in/email"))).status).toBe(
+    202,
+  );
+  expect(await (await app.fetch(new Request("https://lace.test/health/live"))).json()).toEqual({
+    status: "live",
+  });
+  expect(await json(app, "/api/unknown")).toMatchObject({ response: { status: 404 } });
+});
 
 async function json(app, path, init) {
   const response = await app.fetch(new Request(`https://lace.test${path}`, init));

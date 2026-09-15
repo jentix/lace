@@ -13,6 +13,8 @@ import {
   type ContentModelDefinition,
   type NormalizedConfig,
 } from "@lacecms/config";
+import { createBetterAuthBoundary } from "@lacecms/auth";
+import { betterAuthSchema } from "@lacecms/db";
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
@@ -43,6 +45,7 @@ export class NodeEnvironmentError extends Error {
 }
 
 export interface NodeRuntimeSettings {
+  readonly authSecret: string;
   readonly adminDevOrigin?: URL;
   readonly databasePath: string;
   readonly host: string;
@@ -98,6 +101,7 @@ function absoluteHttpUrl(
 export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRuntimeSettings {
   const issues: NodeEnvironmentIssue[] = [];
   const databasePath = requiredString(environment, "LACE_DATABASE_PATH", issues);
+  const authSecret = requiredString(environment, "LACE_AUTH_SECRET", issues);
   const publicBaseUrl = absoluteHttpUrl(
     requiredString(environment, "LACE_PUBLIC_BASE_URL", issues),
     "LACE_PUBLIC_BASE_URL",
@@ -124,11 +128,17 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     issues,
     { originOnly: true },
   );
-  if (issues.length > 0 || databasePath === undefined || publicBaseUrl === undefined) {
+  if (
+    issues.length > 0 ||
+    authSecret === undefined ||
+    databasePath === undefined ||
+    publicBaseUrl === undefined
+  ) {
     throw new NodeEnvironmentError(Object.freeze(issues));
   }
   return Object.freeze({
     ...(adminDevOrigin === undefined ? {} : { adminDevOrigin }),
+    authSecret,
     databasePath,
     host,
     port,
@@ -220,6 +230,7 @@ export const defaultNodeLogger: ServerLogger = Object.freeze({
 
 export interface CreateNodeRuntimeInput {
   readonly actors?: ActorResolver;
+  readonly auth?: { readonly actors: ActorResolver; fetch(request: Request): Promise<Response> };
   readonly config: NormalizedConfig<readonly ContentModelDefinition[]>;
   readonly environment?: LaceAppInput["environment"];
   readonly logger?: ServerLogger;
@@ -278,8 +289,18 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     media: repository,
     siteBuildTrigger: buildTrigger,
   });
+  const auth =
+    input.auth ??
+    createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: input.settings.publicBaseUrl,
+      production: process.env.NODE_ENV === "production",
+      schema: betterAuthSchema,
+      secret: input.settings.authSecret,
+    });
   const app = createLaceApp({
-    actors: input.actors ?? anonymousActorResolver,
+    actors: input.actors ?? auth.actors,
+    auth,
     config: input.config,
     content,
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },
