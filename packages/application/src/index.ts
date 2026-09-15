@@ -15,6 +15,7 @@ import type {
   SiteBuildId,
   UnixMilliseconds,
 } from "@lacecms/domain";
+import { requirePermission } from "@lacecms/domain";
 
 export const packageName = "@lacecms/application";
 
@@ -241,6 +242,86 @@ export interface IdGenerator {
 export interface OpaqueTokenHasher {
   hash(secret: OpaqueTokenSecret): Promise<OpaqueTokenVerifier>;
   verify(secret: OpaqueTokenSecret, verifier: OpaqueTokenVerifier): Promise<boolean>;
+}
+
+export type SecurityRole = "admin" | "editor" | "viewer";
+
+export interface ManagedUser {
+  readonly disabled: boolean;
+  readonly email: string;
+  readonly id: string;
+  readonly role: SecurityRole;
+}
+
+export interface BuildTokenMetadata {
+  readonly capabilities: readonly ["content:build:read"];
+  readonly createdAt: UnixMilliseconds;
+  readonly id: string;
+  readonly lastUsedAt?: UnixMilliseconds;
+  readonly name: string;
+  readonly revokedAt?: UnixMilliseconds;
+  readonly tokenPrefix: string;
+}
+
+export interface IssuedBuildToken extends BuildTokenMetadata {
+  /** Returned exactly once by the creation command; never persisted or logged. */
+  readonly token: OpaqueTokenSecret;
+}
+
+/** Security lifecycle boundary implemented by each runtime's durable adapter. */
+export interface SecurityService {
+  bootstrap(input: {
+    readonly email: string;
+    readonly password: string;
+    readonly token: OpaqueTokenSecret;
+  }): Promise<{ readonly user: ManagedUser }>;
+  createSetupToken(): Promise<{
+    readonly expiresAt: UnixMilliseconds;
+    readonly token: OpaqueTokenSecret;
+  }>;
+  createUser(input: {
+    readonly email: string;
+    readonly password: string;
+    readonly role: SecurityRole;
+  }): Promise<ManagedUser>;
+  createBuildToken(input: {
+    readonly name: string;
+    readonly now: UnixMilliseconds;
+  }): Promise<IssuedBuildToken>;
+  disableUser(input: { readonly userId: string }): Promise<ManagedUser>;
+  listBuildTokens(): Promise<readonly BuildTokenMetadata[]>;
+  listUsers(): Promise<readonly ManagedUser[]>;
+  revokeBuildToken(input: {
+    readonly tokenId: string;
+    readonly now: UnixMilliseconds;
+  }): Promise<BuildTokenMetadata | null>;
+  updateUser(input: {
+    readonly role?: SecurityRole;
+    readonly userId: string;
+    readonly disabled?: boolean;
+  }): Promise<ManagedUser | null>;
+  verifyBuildToken(input: {
+    readonly token: OpaqueTokenSecret;
+    readonly now: UnixMilliseconds;
+  }): Promise<boolean>;
+}
+
+export interface RateLimitDecision {
+  readonly allowed: boolean;
+  readonly retryAfterSeconds: number;
+}
+
+export interface SensitiveRateLimiter {
+  check(input: {
+    readonly operation: "auth" | "setup" | "token" | "upload";
+    readonly subject: string;
+    readonly now: UnixMilliseconds;
+  }): Promise<RateLimitDecision>;
+}
+
+/** Keeps the role matrix in the domain policy rather than HTTP handlers. */
+export function requireUsersManager(actor: Actor): void {
+  requirePermission(actor, "users:manage");
 }
 
 export interface DispatcherEvent {

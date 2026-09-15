@@ -294,10 +294,16 @@ export const authUsers = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
     image: text("image"),
     role: text("role").notNull().default("viewer"),
+    disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
     createdAt: authTimestamp("created_at"),
     updatedAt: authTimestamp("updated_at"),
   },
-  (table) => [check("auth_users_role_check", sql`${table.role} in ('admin', 'editor', 'viewer')`)],
+  (table) => [
+    check("auth_users_role_check", sql`${table.role} in ('admin', 'editor', 'viewer')`),
+    index("auth_users_active_admin_idx")
+      .on(table.role)
+      .where(sql`${table.role} = 'admin' and ${table.disabled} = 0`),
+  ],
 );
 
 export const authSessions = sqliteTable(

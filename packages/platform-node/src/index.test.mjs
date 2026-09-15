@@ -8,6 +8,8 @@ import {
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
   NodeContentRepository,
+  NodeFixedWindowRateLimiter,
+  NodeSecurityService,
   NodePlaceholderObjectStorage,
   NodeSqliteReadiness,
   NoopNodeBuildTrigger,
@@ -37,6 +39,76 @@ import {
 } from "@lacecms/domain";
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("security service completes bootstrap once, protects its final admin, and revokes build tokens", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-security-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const now = 1_800_000_000_000;
+    const security = new NodeSecurityService(database.connection, () => unixMilliseconds(now));
+    const setup = await security.createSetupToken();
+    const first = await security.bootstrap({
+      email: "admin@lace.test",
+      password: "correct horse battery staple",
+      token: setup.token,
+    });
+    await expect(
+      security.bootstrap({
+        email: "other@lace.test",
+        password: "correct horse battery staple",
+        token: setup.token,
+      }),
+    ).rejects.toThrow();
+    await expect(security.disableUser({ userId: first.user.id })).rejects.toThrow();
+    const build = await security.createBuildToken({ name: "builder", now: unixMilliseconds(now) });
+    await expect(
+      security.verifyBuildToken({ now: unixMilliseconds(now), token: build.token }),
+    ).resolves.toBe(true);
+    await security.revokeBuildToken({ now: unixMilliseconds(now + 1), tokenId: build.id });
+    await expect(
+      security.verifyBuildToken({ now: unixMilliseconds(now + 2), token: build.token }),
+    ).resolves.toBe(false);
+    expect(
+      database.connection.prepare("select token_hash from api_tokens").get(),
+    ).not.toMatchObject({ token_hash: build.token });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("fixed-window buckets retain only HMAC identities and return a retry duration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-limiter-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const limiter = new NodeFixedWindowRateLimiter(database.connection, "limiter-secret");
+    for (let value = 0; value < 5; value += 1)
+      await expect(
+        limiter.check({
+          now: unixMilliseconds(1_800_000_000_000),
+          operation: "setup",
+          subject: "raw@example.test",
+        }),
+      ).resolves.toMatchObject({ allowed: true });
+    await expect(
+      limiter.check({
+        now: unixMilliseconds(1_800_000_000_000),
+        operation: "setup",
+        subject: "raw@example.test",
+      }),
+    ).resolves.toMatchObject({ allowed: false, retryAfterSeconds: 3600 });
+    expect(
+      database.connection.prepare("select bucket_key from rate_limit_buckets").get(),
+    ).not.toMatchObject({ bucket_key: "raw@example.test" });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 test("validates named Node settings without disclosing supplied values", () => {
   const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
@@ -550,12 +622,12 @@ test("migrates an empty file, reopens with SQLite invariants, and enforces const
   const directory = await mkdtemp(join(tmpdir(), "lace-schema-"));
   const databasePath = join(directory, "lace.sqlite");
   try {
-    expect(migrateNodeDatabase(databasePath)).toHaveLength(1);
+    expect(migrateNodeDatabase(databasePath)).toHaveLength(2);
     const database = openNodeDatabase(databasePath);
     try {
       expect(database.connection.pragma("foreign_keys", { simple: true })).toBe(1);
       expect(database.connection.pragma("journal_mode", { simple: true })).toBe("wal");
-      expect(listAppliedMigrations(database.connection)).toHaveLength(1);
+      expect(listAppliedMigrations(database.connection)).toHaveLength(2);
 
       const tableNames = database.connection
         .prepare("select name from sqlite_master where type = 'table'")

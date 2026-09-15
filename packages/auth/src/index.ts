@@ -55,6 +55,12 @@ export function createBetterAuthBoundary(input: CreateBetterAuthBoundaryInput): 
     trustedOrigins: [origin],
     user: {
       additionalFields: {
+        disabled: {
+          defaultValue: false,
+          input: false,
+          required: false,
+          type: "boolean",
+        },
         role: {
           defaultValue: "viewer",
           input: false,
@@ -70,7 +76,10 @@ export function createBetterAuthBoundary(input: CreateBetterAuthBoundaryInput): 
       resolve: async (request: Request) => {
         const session = await auth.api.getSession({ headers: request.headers });
         const role = laceRole(session?.user.role);
-        return session === null || session === undefined || role === undefined
+        return session === null ||
+          session === undefined ||
+          role === undefined ||
+          session.user.disabled === true
           ? null
           : Object.freeze({ id: actorId(session.user.id), role });
       },
