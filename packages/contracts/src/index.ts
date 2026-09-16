@@ -209,6 +209,48 @@ export const buildExportSchema = v.strictObject({
   version: nonNegativeIntegerSchema,
 });
 
+const roleSchema = v.picklist(["admin", "editor", "viewer"]);
+const emailSchema = v.pipe(v.string(), v.email(), v.maxLength(320));
+const passwordSchema = v.pipe(v.string(), v.minLength(12), v.maxLength(1_024));
+export const setupAdminRequestSchema = v.strictObject({
+  email: emailSchema,
+  password: passwordSchema,
+  token: v.pipe(v.string(), v.minLength(40), v.maxLength(128)),
+});
+export const userCreateRequestSchema = v.strictObject({
+  email: emailSchema,
+  password: passwordSchema,
+  role: roleSchema,
+});
+export const userUpdateRequestSchema = v.strictObject({
+  disabled: v.optional(v.boolean()),
+  role: v.optional(roleSchema),
+});
+export const managedUserSchema = v.strictObject({
+  disabled: v.boolean(),
+  email: emailSchema,
+  id: identifierSchema,
+  role: roleSchema,
+});
+export const managedUserListSchema = v.strictObject({ items: v.array(managedUserSchema) });
+export const buildTokenCreateRequestSchema = v.strictObject({
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+});
+export const buildTokenSchema = v.strictObject({
+  capabilities: v.tuple([v.literal("content:build:read")]),
+  createdAt: isoTimestampSchema,
+  id: identifierSchema,
+  lastUsedAt: v.optional(isoTimestampSchema),
+  name: v.string(),
+  revokedAt: v.optional(isoTimestampSchema),
+  tokenPrefix: v.string(),
+});
+export const buildTokenCreatedSchema = v.strictObject({
+  ...buildTokenSchema.entries,
+  token: v.string(),
+});
+export const buildTokenListSchema = v.strictObject({ items: v.array(buildTokenSchema) });
+
 export const mediaMetadataSchema = v.strictObject({
   createdAt: isoTimestampSchema,
   createdBy: identifierSchema,

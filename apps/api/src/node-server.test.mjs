@@ -28,6 +28,7 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
   const settings = {
     ...parseNodeRuntimeSettings({
       LACE_DATABASE_PATH: databasePath,
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
     }),
     port: 0,
@@ -118,13 +119,19 @@ test("serves the seeded lifecycle through an actual Node listener", async () => 
     expect(
       (await json(value.server, "/api/v1/public/collections/posts/first")).body.entry.draft.title,
     ).toBe("Published title");
-    const buildExport = await json(value.server, "/api/v1/public/build-export");
+    const buildToken = await value.runtime.security.createBuildToken({
+      name: "integration-build",
+      now: unixMilliseconds(Date.now()),
+    });
+    const buildExport = await json(value.server, "/api/v1/public/build-export", {
+      headers: { authorization: `Bearer ${buildToken.token}` },
+    });
     const etag = buildExport.response.headers.get("etag");
     expect(etag).not.toBeNull();
     expect(
       (
         await json(value.server, "/api/v1/public/build-export", {
-          headers: { "if-none-match": etag },
+          headers: { authorization: `Bearer ${buildToken.token}`, "if-none-match": etag },
         })
       ).response.status,
     ).toBe(304);
@@ -176,6 +183,7 @@ test("routes frontend requests to same-origin development upstreams without prox
   const settings = parseNodeRuntimeSettings({
     LACE_ADMIN_DEV_ORIGIN: origin,
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
     LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
     LACE_SITE_DEV_ORIGIN: origin,
   });

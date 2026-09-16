@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 const timestamp = (name: string) => integer(name).notNull();
+const authTimestamp = (name: string) => integer(name, { mode: "timestamp_ms" }).notNull();
 
 export const contentModels = sqliteTable(
   "content_models",
@@ -293,20 +294,26 @@ export const authUsers = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
     image: text("image"),
     role: text("role").notNull().default("viewer"),
-    createdAt: timestamp("created_at"),
-    updatedAt: timestamp("updated_at"),
+    disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
+    createdAt: authTimestamp("created_at"),
+    updatedAt: authTimestamp("updated_at"),
   },
-  (table) => [check("auth_users_role_check", sql`${table.role} in ('admin', 'editor', 'viewer')`)],
+  (table) => [
+    check("auth_users_role_check", sql`${table.role} in ('admin', 'editor', 'viewer')`),
+    index("auth_users_active_admin_idx")
+      .on(table.role)
+      .where(sql`${table.role} = 'admin' and ${table.disabled} = 0`),
+  ],
 );
 
 export const authSessions = sqliteTable(
   "session",
   {
     id: text("id").primaryKey(),
-    expiresAt: timestamp("expires_at"),
+    expiresAt: authTimestamp("expires_at"),
     token: text("token").notNull().unique(),
-    createdAt: timestamp("created_at"),
-    updatedAt: timestamp("updated_at"),
+    createdAt: authTimestamp("created_at"),
+    updatedAt: authTimestamp("updated_at"),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
     userId: text("user_id")
@@ -332,8 +339,8 @@ export const authAccounts = sqliteTable(
     refreshTokenExpiresAt: integer("refresh_token_expires_at"),
     scope: text("scope"),
     password: text("password"),
-    createdAt: timestamp("created_at"),
-    updatedAt: timestamp("updated_at"),
+    createdAt: authTimestamp("created_at"),
+    updatedAt: authTimestamp("updated_at"),
   },
   (table) => [
     uniqueIndex("auth_accounts_provider_account_idx").on(table.providerId, table.accountId),
@@ -345,7 +352,15 @@ export const authVerifications = sqliteTable("verification", {
   id: text("id").primaryKey(),
   identifier: text("identifier").notNull(),
   value: text("value").notNull(),
-  expiresAt: timestamp("expires_at"),
-  createdAt: timestamp("created_at"),
-  updatedAt: timestamp("updated_at"),
+  expiresAt: authTimestamp("expires_at"),
+  createdAt: authTimestamp("created_at"),
+  updatedAt: authTimestamp("updated_at"),
+});
+
+/** Tables supplied to Better Auth's Drizzle adapter under its canonical names. */
+export const betterAuthSchema = Object.freeze({
+  account: authAccounts,
+  session: authSessions,
+  user: authUsers,
+  verification: authVerifications,
 });

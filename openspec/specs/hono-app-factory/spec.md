@@ -124,3 +124,45 @@ those namespaces SHALL retain their API or health failure response.
 - **WHEN** a request under `/api/` does not match a versioned endpoint
 - **THEN** it receives an API failure response and never receives the admin
   application fallback
+
+### Requirement: Authentication routes and protected routes have separate boundaries
+The system SHALL dispatch `/api/auth/*` to the configured authentication
+provider before catch-all API and admin-asset fallback routes. It SHALL resolve
+an actor only for protected routes and SHALL leave health endpoints and
+documented public content routes unauthenticated. Route handlers SHALL pass
+the resolved actor to application use cases, which retain responsibility for
+permission checks; handlers SHALL NOT compare role strings.
+
+#### Scenario: Authentication route is not masked
+- **WHEN** a request targets a known authentication-provider route below
+  `/api/auth/`
+- **THEN** the provider handles it rather than an API catch-all or admin asset
+  responder
+
+#### Scenario: Public route remains anonymous
+- **WHEN** an unauthenticated caller requests a documented public content or
+  health route
+- **THEN** it receives that route's normal response without an actor-resolution
+  attempt
+
+#### Scenario: Protected route delegates authorization
+- **WHEN** a validated editor requests an admin mutation that requires a
+  permission the editor lacks
+- **THEN** the route passes the actor to the application boundary and returns
+  its shared authorization failure without comparing the role in the handler
+
+### Requirement: Setup, security administration, and build export have distinct HTTP boundaries
+The HTTP application SHALL expose setup-admin only while setup remains
+incomplete, resolve an administrator actor for user and build-token
+administration, and accept a build credential only at build export. It SHALL
+run the applicable rate-limit check before setup, authentication, token, or
+upload work; an exhausted result SHALL return the shared `RATE_LIMITED` error
+with `Retry-After`. Route handlers SHALL pass portable commands and actors to
+the supplied boundaries and SHALL NOT query persistence or compare role
+strings.
+
+#### Scenario: A build credential is used at an admin route
+- **WHEN** a caller supplies a valid build credential to an administrative
+user or token-management route
+- **THEN** the route denies the request because build credentials do not
+provide a browser actor

@@ -16,7 +16,14 @@
     "lint": "oxlint src",
     "test": "vitest run src/index.test.mjs"
   },
+  "dependencies": {
+    "@lacecms/domain": "workspace:*",
+    "better-auth": "catalog:",
+    "drizzle-orm": "catalog:"
+  },
   "devDependencies": {
+    "@types/better-sqlite3": "catalog:",
+    "better-sqlite3": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -13,6 +13,8 @@ import {
   type ContentModelDefinition,
   type NormalizedConfig,
 } from "@lacecms/config";
+import { createBetterAuthBoundary } from "@lacecms/auth";
+import { betterAuthSchema } from "@lacecms/db";
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
@@ -25,6 +27,7 @@ import {
 } from "@lacecms/server";
 import { ulid } from "ulid";
 import { NodeContentRepository } from "./content-repository.js";
+import { NodeFixedWindowRateLimiter, NodeSecurityService } from "./security.js";
 import { openNodeDatabase, type NodeDatabase } from "./index.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
@@ -43,6 +46,7 @@ export class NodeEnvironmentError extends Error {
 }
 
 export interface NodeRuntimeSettings {
+  readonly authSecret: string;
   readonly adminDevOrigin?: URL;
   readonly databasePath: string;
   readonly host: string;
@@ -98,6 +102,7 @@ function absoluteHttpUrl(
 export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRuntimeSettings {
   const issues: NodeEnvironmentIssue[] = [];
   const databasePath = requiredString(environment, "LACE_DATABASE_PATH", issues);
+  const authSecret = requiredString(environment, "LACE_AUTH_SECRET", issues);
   const publicBaseUrl = absoluteHttpUrl(
     requiredString(environment, "LACE_PUBLIC_BASE_URL", issues),
     "LACE_PUBLIC_BASE_URL",
@@ -124,11 +129,17 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     issues,
     { originOnly: true },
   );
-  if (issues.length > 0 || databasePath === undefined || publicBaseUrl === undefined) {
+  if (
+    issues.length > 0 ||
+    authSecret === undefined ||
+    databasePath === undefined ||
+    publicBaseUrl === undefined
+  ) {
     throw new NodeEnvironmentError(Object.freeze(issues));
   }
   return Object.freeze({
     ...(adminDevOrigin === undefined ? {} : { adminDevOrigin }),
+    authSecret,
     databasePath,
     host,
     port,
@@ -214,12 +225,38 @@ export const defaultNodeRequestIds: RequestIdGenerator = Object.freeze({ next: (
 export const defaultNodeRateLimiter: RequestRateLimiter = Object.freeze({
   check: async () => true,
 });
+
+class NodeRequestRateLimiter implements RequestRateLimiter {
+  public constructor(
+    private readonly limiter: NodeFixedWindowRateLimiter,
+    private readonly clock: Clock,
+  ) {}
+  public async check(input: {
+    readonly request: Request;
+  }): Promise<boolean | import("@lacecms/application").RateLimitDecision> {
+    const pathname = new URL(input.request.url).pathname;
+    const operation = pathname.startsWith("/api/auth/")
+      ? "auth"
+      : pathname === "/api/v1/setup/admin"
+        ? "setup"
+        : pathname.startsWith("/api/v1/admin/api-tokens")
+          ? "token"
+          : pathname.startsWith("/api/v1/admin/media")
+            ? "upload"
+            : undefined;
+    if (operation === undefined) return true;
+    const subject =
+      input.request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown-client";
+    return this.limiter.check({ now: this.clock.now(), operation, subject });
+  }
+}
 export const defaultNodeLogger: ServerLogger = Object.freeze({
   log: (entry: Parameters<ServerLogger["log"]>[0]) => console.info(JSON.stringify(entry)),
 });
 
 export interface CreateNodeRuntimeInput {
   readonly actors?: ActorResolver;
+  readonly auth?: { readonly actors: ActorResolver; fetch(request: Request): Promise<Response> };
   readonly config: NormalizedConfig<readonly ContentModelDefinition[]>;
   readonly environment?: LaceAppInput["environment"];
   readonly logger?: ServerLogger;
@@ -237,6 +274,7 @@ export interface NodeRuntime {
   readonly database: NodeDatabase;
   readonly readiness: ReadinessProbe;
   readonly repository: NodeContentRepository;
+  readonly security: NodeSecurityService;
   readonly storage: ObjectStorage;
 }
 
@@ -266,6 +304,13 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     { nextId: () => ids.next() },
   );
   const clock = new SystemNodeClock();
+  const security = new NodeSecurityService(database.connection, () => clock.now());
+  const rateLimiter =
+    input.rateLimiter ??
+    new NodeRequestRateLimiter(
+      new NodeFixedWindowRateLimiter(database.connection, input.settings.authSecret),
+      clock,
+    );
   const cache = new NoopNodeCache();
   const storage = new NodePlaceholderObjectStorage(input.settings.publicBaseUrl);
   const buildTrigger = new NoopNodeBuildTrigger();
@@ -278,17 +323,28 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     media: repository,
     siteBuildTrigger: buildTrigger,
   });
+  const auth =
+    input.auth ??
+    createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: input.settings.publicBaseUrl,
+      production: process.env.NODE_ENV === "production",
+      schema: betterAuthSchema,
+      secret: input.settings.authSecret,
+    });
   const app = createLaceApp({
-    actors: input.actors ?? anonymousActorResolver,
+    actors: input.actors ?? auth.actors,
+    auth,
     config: input.config,
     content,
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },
     logger: input.logger ?? defaultNodeLogger,
     maxBodyBytes: input.maxBodyBytes ?? 1_048_576,
     publicContent: repository,
-    rateLimiter: input.rateLimiter ?? defaultNodeRateLimiter,
+    rateLimiter,
     readiness,
     requestIds: input.requestIds ?? defaultNodeRequestIds,
+    security,
   });
   return Object.freeze({
     app,
@@ -298,6 +354,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     database,
     readiness,
     repository,
+    security,
     storage,
   });
 }

@@ -105,3 +105,37 @@ would change the committed contract.
 - **WHEN** a versioned route or shared transport representation changes and the
   committed OpenAPI document is not regenerated
 - **THEN** the contract verification command and continuous integration fail
+
+### Requirement: Node production composition uses configured browser authentication
+The Node composition root SHALL construct the authentication provider from its
+validated public origin, secret, SQLite connection, and production mode, and
+SHALL provide its actor resolver and route handler to the portable HTTP app. It
+SHALL fail before serving traffic when required authentication configuration is
+missing or invalid, without disclosing secret values. It SHALL retain the
+test-only actor source exclusively for test fixtures and SHALL not use the
+anonymous resolver as the default production composition.
+
+#### Scenario: Production runtime resolves a session actor
+- **WHEN** a configured Node production runtime receives a protected request
+  carrying a valid provider session
+- **THEN** it resolves the associated persisted actor and dispatches the
+  protected route with that actor
+
+#### Scenario: Authentication secret is invalid or missing
+- **WHEN** Node startup lacks the required authentication secret or receives an
+  invalid authentication-origin configuration
+- **THEN** startup fails before binding and its diagnostic names only the
+  affected configuration key, never its supplied secret value
+
+### Requirement: Node composes persistent security controls without secret disclosure
+The Node composition root SHALL provide the SQLite-backed implementations of
+setup, user, build-token, and HMAC fixed-window rate-limit capabilities to the
+portable HTTP application. It SHALL require any new cryptographic configuration
+needed for HMAC projections, fail startup without revealing a supplied secret,
+and use the configured UTC clock and ID generator at the security boundary.
+
+#### Scenario: Node receives a configured sensitive operation
+- **WHEN** a Node deployment receives setup, token-management, or
+build-token-authenticated build-export traffic
+- **THEN** it uses its persistent security capability and logs neither
+plaintext token nor raw rate-limit subject

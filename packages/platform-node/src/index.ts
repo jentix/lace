@@ -8,6 +8,7 @@ export const packageName = "@lacecms/platform-node";
 
 export * from "./content-repository.js";
 export * from "./runtime.js";
+export * from "./security.js";
 
 export interface NodeDatabase {
   readonly connection: Database.Database;

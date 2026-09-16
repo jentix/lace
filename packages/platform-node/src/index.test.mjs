@@ -2,11 +2,14 @@ import { expect, test } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hashPassword } from "better-auth/crypto";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
   NodeContentRepository,
+  NodeFixedWindowRateLimiter,
+  NodeSecurityService,
   NodePlaceholderObjectStorage,
   NodeSqliteReadiness,
   NoopNodeBuildTrigger,
@@ -15,11 +18,15 @@ import {
   openNodeDatabase,
   packageName,
   parseNodeRuntimeSettings,
+  createNodeDevelopmentConfig,
+  createNodeRuntime,
 } from "../dist/index.js";
 import {
   applyPreparedConfigurationSynchronization,
   prepareConfigurationSynchronization,
 } from "@lacecms/application";
+import { createBetterAuthBoundary } from "@lacecms/auth";
+import { betterAuthSchema } from "@lacecms/db";
 import {
   actorId,
   blockKey,
@@ -33,23 +40,99 @@ import {
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
 
+test("security service completes bootstrap once, protects its final admin, and revokes build tokens", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-security-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const now = 1_800_000_000_000;
+    const security = new NodeSecurityService(database.connection, () => unixMilliseconds(now));
+    const setup = await security.createSetupToken();
+    const first = await security.bootstrap({
+      email: "admin@lace.test",
+      password: "correct horse battery staple",
+      token: setup.token,
+    });
+    await expect(
+      security.bootstrap({
+        email: "other@lace.test",
+        password: "correct horse battery staple",
+        token: setup.token,
+      }),
+    ).rejects.toThrow();
+    await expect(security.disableUser({ userId: first.user.id })).rejects.toThrow();
+    const build = await security.createBuildToken({ name: "builder", now: unixMilliseconds(now) });
+    await expect(
+      security.verifyBuildToken({ now: unixMilliseconds(now), token: build.token }),
+    ).resolves.toBe(true);
+    await security.revokeBuildToken({ now: unixMilliseconds(now + 1), tokenId: build.id });
+    await expect(
+      security.verifyBuildToken({ now: unixMilliseconds(now + 2), token: build.token }),
+    ).resolves.toBe(false);
+    expect(
+      database.connection.prepare("select token_hash from api_tokens").get(),
+    ).not.toMatchObject({ token_hash: build.token });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("fixed-window buckets retain only HMAC identities and return a retry duration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-limiter-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const limiter = new NodeFixedWindowRateLimiter(database.connection, "limiter-secret");
+    for (let value = 0; value < 5; value += 1)
+      await expect(
+        limiter.check({
+          now: unixMilliseconds(1_800_000_000_000),
+          operation: "setup",
+          subject: "raw@example.test",
+        }),
+      ).resolves.toMatchObject({ allowed: true });
+    await expect(
+      limiter.check({
+        now: unixMilliseconds(1_800_000_000_000),
+        operation: "setup",
+        subject: "raw@example.test",
+      }),
+    ).resolves.toMatchObject({ allowed: false, retryAfterSeconds: 3600 });
+    expect(
+      database.connection.prepare("select bucket_key from rate_limit_buckets").get(),
+    ).not.toMatchObject({ bucket_key: "raw@example.test" });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("validates named Node settings without disclosing supplied values", () => {
   const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
   expect(() =>
     parseNodeRuntimeSettings({
       LACE_DATABASE_PATH: "",
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: secret,
       LACE_PORT: "not-a-port",
     }),
   ).toThrow("Invalid Node environment: LACE_DATABASE_PATH, LACE_PUBLIC_BASE_URL, LACE_PORT.");
   try {
-    parseNodeRuntimeSettings({ LACE_DATABASE_PATH: "", LACE_PUBLIC_BASE_URL: secret });
+    parseNodeRuntimeSettings({
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+      LACE_DATABASE_PATH: "",
+      LACE_PUBLIC_BASE_URL: secret,
+    });
   } catch (error) {
     expect(String(error)).not.toContain("opaque-secret");
   }
   expect(
     parseNodeRuntimeSettings({
       LACE_ADMIN_DEV_ORIGIN: "http://127.0.0.1:5173",
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: "/tmp/lace.sqlite",
       LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
       LACE_SITE_DEV_ORIGIN: "http://127.0.0.1:4321",
@@ -64,6 +147,7 @@ test("validates named Node settings without disclosing supplied values", () => {
 test("uses configured public URLs and fails closed for placeholder infrastructure", async () => {
   const settings = parseNodeRuntimeSettings({
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
     LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
   });
   expect(nodePublicMediaUrl(settings, "media/one")).toBe(
@@ -90,6 +174,155 @@ test("reports cheap SQLite readiness failures after the connection closes", asyn
     await expect(readiness.isReady()).resolves.toBe(true);
     database.connection.close();
     await expect(readiness.isReady()).resolves.toBe(false);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("Node composition maps a Better Auth session into a protected actor", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-node-auth-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const settings = parseNodeRuntimeSettings({
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+      LACE_DATABASE_PATH: databasePath,
+      LACE_PUBLIC_BASE_URL: "https://lace.test/",
+    });
+    const runtime = createNodeRuntime({ config: await createNodeDevelopmentConfig(), settings });
+    const now = Date.now();
+    runtime.database.connection
+      .prepare(
+        "insert into user (id, name, email, email_verified, role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("node-auth-user", "Node Auth", "node-auth@lace.test", 1, "viewer", now, now);
+    runtime.database.connection
+      .prepare(
+        "insert into account (id, account_id, provider_id, user_id, password, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "node-auth-account",
+        "node-auth-user",
+        "credential",
+        "node-auth-user",
+        await hashPassword("correct horse battery staple"),
+        now,
+        now,
+      );
+    const signIn = await runtime.app.fetch(
+      new Request("https://lace.test/api/auth/sign-in/email", {
+        body: JSON.stringify({
+          email: "node-auth@lace.test",
+          password: "correct horse battery staple",
+        }),
+        headers: { "content-type": "application/json", origin: "https://lace.test" },
+        method: "POST",
+      }),
+    );
+    expect(signIn.status).toBe(200);
+    const cookie = signIn.headers.getSetCookie()[0].split(";")[0];
+    expect(
+      (
+        await runtime.app.fetch(
+          new Request("https://lace.test/api/v1/admin/content-models", { headers: { cookie } }),
+        )
+      ).status,
+    ).toBe(200);
+    runtime.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("Better Auth rejects public enrollment and applies same-origin session policy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-auth-policy-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const boundary = createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: new URL("https://lace.test/"),
+      production: true,
+      schema: betterAuthSchema,
+      secret: "test-auth-secret-that-is-long-enough-for-better-auth",
+    });
+    const signUp = await boundary.fetch(
+      new Request("https://lace.test/api/auth/sign-up/email", {
+        body: JSON.stringify({
+          email: "new@lace.test",
+          name: "New",
+          password: "correct horse battery staple",
+        }),
+        headers: { "content-type": "application/json", origin: "https://lace.test" },
+        method: "POST",
+      }),
+    );
+    expect(signUp.status).toBeGreaterThanOrEqual(400);
+    expect(database.connection.prepare("select count(*) as count from user").get()).toEqual({
+      count: 0,
+    });
+    const now = Date.now();
+    database.connection
+      .prepare(
+        "insert into user (id, name, email, email_verified, created_at, updated_at) values (?, ?, ?, ?, ?, ?)",
+      )
+      .run("auth-user", "Auth User", "auth@lace.test", 1, now, now);
+    expect(
+      database.connection.prepare("select role from user where id = ?").get("auth-user"),
+    ).toEqual({
+      role: "viewer",
+    });
+    expect(() =>
+      database.connection
+        .prepare(
+          "insert into user (id, name, email, email_verified, role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("bad-role", "Bad", "bad@lace.test", 0, "owner", now, now),
+    ).toThrow();
+    database.connection
+      .prepare(
+        "insert into account (id, account_id, provider_id, user_id, password, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "auth-account",
+        "auth-user",
+        "credential",
+        "auth-user",
+        await hashPassword("correct horse battery staple"),
+        now,
+        now,
+      );
+    const crossOrigin = await boundary.fetch(
+      new Request("https://lace.test/api/auth/sign-in/email", {
+        body: JSON.stringify({ email: "auth@lace.test", password: "correct horse battery staple" }),
+        headers: { "content-type": "application/json", origin: "https://attacker.test" },
+        method: "POST",
+      }),
+    );
+    expect(crossOrigin.status).toBeGreaterThanOrEqual(400);
+    const signIn = await boundary.fetch(
+      new Request("https://lace.test/api/auth/sign-in/email", {
+        body: JSON.stringify({ email: "auth@lace.test", password: "correct horse battery staple" }),
+        headers: { "content-type": "application/json", origin: "https://lace.test" },
+        method: "POST",
+      }),
+    );
+    const cookie = signIn.headers.getSetCookie()[0].split(";")[0];
+    expect(signIn.status).toBe(200);
+    expect(signIn.headers.get("set-cookie")).toContain("Secure");
+    await expect(
+      boundary.actors.resolve(
+        new Request("https://lace.test/api/v1/admin/content-models", { headers: { cookie } }),
+      ),
+    ).resolves.toEqual({ id: "auth-user", role: "viewer" });
+    database.connection.prepare("update session set expires_at = ?").run(Date.now() - 1);
+    await expect(
+      boundary.actors.resolve(
+        new Request("https://lace.test/api/v1/admin/content-models", { headers: { cookie } }),
+      ),
+    ).resolves.toBeNull();
+    database.connection.close();
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
@@ -389,12 +622,12 @@ test("migrates an empty file, reopens with SQLite invariants, and enforces const
   const directory = await mkdtemp(join(tmpdir(), "lace-schema-"));
   const databasePath = join(directory, "lace.sqlite");
   try {
-    expect(migrateNodeDatabase(databasePath)).toHaveLength(1);
+    expect(migrateNodeDatabase(databasePath)).toHaveLength(2);
     const database = openNodeDatabase(databasePath);
     try {
       expect(database.connection.pragma("foreign_keys", { simple: true })).toBe(1);
       expect(database.connection.pragma("journal_mode", { simple: true })).toBe("wal");
-      expect(listAppliedMigrations(database.connection)).toHaveLength(1);
+      expect(listAppliedMigrations(database.connection)).toHaveLength(2);
 
       const tableNames = database.connection
         .prepare("select name from sqlite_master where type = 'table'")

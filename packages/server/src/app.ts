@@ -1,11 +1,21 @@
-import { ContentUseCases, opaqueCursor } from "@lacecms/application";
-import type { PublicContentReadPort } from "@lacecms/application";
+import { ContentUseCases, opaqueCursor, requireUsersManager } from "@lacecms/application";
+import type {
+  PublicContentReadPort,
+  RateLimitDecision,
+  SecurityService,
+} from "@lacecms/application";
 import {
   buildExportSchema,
+  buildTokenCreateRequestSchema,
+  buildTokenCreatedSchema,
+  buildTokenListSchema,
+  buildTokenSchema,
   classifyError,
   contentEntryListSchema,
   contentEntrySchema,
   contentModelListSchema,
+  managedUserListSchema,
+  managedUserSchema,
   createContentEntryRequestSchema,
   deleteContentEntryRequestSchema,
   entityTagForVersion,
@@ -19,11 +29,14 @@ import {
   publishContentEntryRequestSchema,
   resolveExpectedRevision,
   saveDraftRequestSchema,
+  setupAdminRequestSchema,
   toBuildExportDto,
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
   transportError,
+  userCreateRequestSchema,
+  userUpdateRequestSchema,
   validationError,
   versionFromEntityTag,
 } from "@lacecms/contracts";
@@ -66,12 +79,19 @@ export interface ActorResolver {
   resolve(request: Request): Promise<Actor | null>;
 }
 
+export interface AuthRouteHandler {
+  fetch(request: Request): Promise<Response>;
+}
+
 export interface RequestIdGenerator {
   next(): string;
 }
 
 export interface RequestRateLimiter {
-  check(input: { readonly request: Request; readonly requestId: string }): Promise<boolean>;
+  check(input: {
+    readonly request: Request;
+    readonly requestId: string;
+  }): Promise<boolean | RateLimitDecision>;
 }
 
 export interface ServerLogger {
@@ -99,6 +119,7 @@ export interface BuiltAdminResponder {
 }
 
 export interface LaceAppInput {
+  readonly auth?: AuthRouteHandler;
   readonly actors: ActorResolver;
   readonly adminAssets?: BuiltAdminResponder;
   readonly config: ServerConfig;
@@ -110,6 +131,7 @@ export interface LaceAppInput {
   readonly rateLimiter: RequestRateLimiter;
   readonly readiness: ReadinessProbe;
   readonly requestIds: RequestIdGenerator;
+  readonly security?: SecurityService;
 }
 
 class RequestValidationError extends Error {
@@ -173,8 +195,8 @@ function response<Schema extends ServerSchema>(
   });
 }
 
-function errorResponse(error: ClassifiedError): Response {
-  return response(errorEnvelopeSchema, error.body, error.status);
+function errorResponse(error: ClassifiedError, headers?: HeadersInit): Response {
+  return response(errorEnvelopeSchema, error.body, error.status, headers);
 }
 
 function notFound(): Response {
@@ -278,6 +300,22 @@ function publicPath(value: string): string {
   return value;
 }
 
+function buildTokenDto(
+  value:
+    | Awaited<ReturnType<SecurityService["createBuildToken"]>>
+    | Awaited<ReturnType<SecurityService["listBuildTokens"]>>[number],
+) {
+  return {
+    capabilities: ["content:build:read"] as const,
+    createdAt: toIsoTimestamp(value.createdAt),
+    id: value.id,
+    ...(value.lastUsedAt === undefined ? {} : { lastUsedAt: toIsoTimestamp(value.lastUsedAt) }),
+    name: value.name,
+    ...(value.revokedAt === undefined ? {} : { revokedAt: toIsoTimestamp(value.revokedAt) }),
+    tokenPrefix: value.tokenPrefix,
+  };
+}
+
 const modelKeyParams = v.strictObject({ modelKey: identifierSchemaPublic });
 const entryIdParams = v.strictObject({ entryId: identifierSchemaPublic });
 const collectionItemParams = v.strictObject({
@@ -333,13 +371,24 @@ export function createLaceApp(input: LaceAppInput): Hono {
     }),
   );
   app.use(async (context, next) => {
-    const allowed = await input.rateLimiter.check({
+    const decision = await input.rateLimiter.check({
       request: context.req.raw,
       requestId: context.get("lace.requestId") as string,
     });
-    if (!allowed) return errorResponse(transportError("RATE_LIMITED"));
+    const allowed = typeof decision === "boolean" ? decision : decision.allowed;
+    if (!allowed) {
+      const retryAfterSeconds = typeof decision === "boolean" ? 60 : decision.retryAfterSeconds;
+      return errorResponse(transportError("RATE_LIMITED"), {
+        "retry-after": String(retryAfterSeconds),
+      });
+    }
     await next();
   });
+
+  if (input.auth !== undefined) {
+    const auth = input.auth;
+    app.all("/api/auth/*", (context) => auth.fetch(context.req.raw));
+  }
 
   async function actor(context: {
     readonly req: { readonly raw: Request };
@@ -358,6 +407,96 @@ export function createLaceApp(input: LaceAppInput): Hono {
   app.get("/health/ready", async (context) => {
     const ready = await input.readiness.isReady();
     return context.json({ status: ready ? "ready" : "not_ready" }, ready ? 200 : 503);
+  });
+
+  function security(): SecurityService {
+    if (input.security === undefined) throw new AuthorizationError();
+    return input.security;
+  }
+
+  function usersActor(context: Parameters<typeof actor>[0]): Promise<Actor> {
+    return actor(context).then((value) => {
+      requireUsersManager(value);
+      return value;
+    });
+  }
+
+  app.post(
+    "/api/v1/setup/admin",
+    validator("json", setupAdminRequestSchema, validationHook),
+    async (context) => {
+      try {
+        const body = context.req.valid("json") as v.InferOutput<typeof setupAdminRequestSchema>;
+        const created = await security().bootstrap({
+          email: body.email,
+          password: body.password,
+          token: body.token as never,
+        });
+        return response(managedUserSchema, created.user, 201);
+      } catch (error) {
+        if (error instanceof AuthorizationError) throw error;
+        return notFound();
+      }
+    },
+  );
+
+  app.get("/api/v1/admin/users", async (context) => {
+    await usersActor(context);
+    return response(managedUserListSchema, { items: await security().listUsers() });
+  });
+  app.post(
+    "/api/v1/admin/users",
+    validator("json", userCreateRequestSchema, validationHook),
+    async (context) => {
+      await usersActor(context);
+      const body = context.req.valid("json") as v.InferOutput<typeof userCreateRequestSchema>;
+      return response(managedUserSchema, await security().createUser(body), 201);
+    },
+  );
+  app.patch(
+    "/api/v1/admin/users/:userId",
+    validator("json", userUpdateRequestSchema, validationHook),
+    async (context) => {
+      await usersActor(context);
+      const body = context.req.valid("json") as v.InferOutput<typeof userUpdateRequestSchema>;
+      const updated = await security().updateUser({
+        ...(body.disabled === undefined ? {} : { disabled: body.disabled }),
+        ...(body.role === undefined ? {} : { role: body.role }),
+        userId: context.req.param("userId"),
+      });
+      return updated === null ? notFound() : response(managedUserSchema, updated);
+    },
+  );
+  app.get("/api/v1/admin/api-tokens", async (context) => {
+    await usersActor(context);
+    return response(buildTokenListSchema, {
+      items: (await security().listBuildTokens()).map(buildTokenDto),
+    });
+  });
+  app.post(
+    "/api/v1/admin/api-tokens",
+    validator("json", buildTokenCreateRequestSchema, validationHook),
+    async (context) => {
+      await usersActor(context);
+      const body = context.req.valid("json") as v.InferOutput<typeof buildTokenCreateRequestSchema>;
+      const token = await security().createBuildToken({
+        name: body.name,
+        now: Date.now() as never,
+      });
+      return response(
+        buildTokenCreatedSchema,
+        { ...buildTokenDto(token), token: token.token },
+        201,
+      );
+    },
+  );
+  app.delete("/api/v1/admin/api-tokens/:tokenId", async (context) => {
+    await usersActor(context);
+    const token = await security().revokeBuildToken({
+      now: Date.now() as never,
+      tokenId: context.req.param("tokenId"),
+    });
+    return token === null ? notFound() : response(buildTokenSchema, buildTokenDto(token));
   });
 
   app.get(
@@ -625,6 +764,18 @@ export function createLaceApp(input: LaceAppInput): Hono {
       tags: ["public"],
     }),
     async (context) => {
+      if (input.security !== undefined) {
+        const authorization = context.req.header("authorization");
+        if (
+          authorization === undefined ||
+          !authorization.startsWith("Bearer ") ||
+          !(await input.security.verifyBuildToken({
+            now: Date.now() as never,
+            token: authorization.slice(7) as never,
+          }))
+        )
+          throw new AuthorizationError();
+      }
       const version = await input.publicContent.publishedContentVersion();
       const etag = entityTagForVersion(version);
       const suppliedTag = context.req.header("if-none-match") ?? undefined;

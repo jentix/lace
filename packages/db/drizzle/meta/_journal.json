@@ -8,6 +8,13 @@
       "when": 1789240330790,
       "tag": "0000_exotic_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789240330791,
+      "tag": "0001_security_controls",
+      "breakpoints": true
     }
   ]
 }
