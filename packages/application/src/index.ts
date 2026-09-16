@@ -208,6 +208,31 @@ export interface ObjectStorage {
   put(input: PutObjectInput): Promise<StoredObject>;
 }
 
+export type MediaMimeType = "image/avif" | "image/jpeg" | "image/png" | "image/webp";
+
+/**
+ * A verified image result. Implementations MUST parse the complete byte sequence,
+ * reject malformed or trailing data, and report dimensions from the image itself.
+ */
+export interface ImageInspector {
+  inspect(bytes: Uint8Array, mimeType: MediaMimeType): Promise<ImageDimensions>;
+}
+
+export interface ImageDimensions {
+  readonly height: number;
+  readonly width: number;
+}
+
+/** Operational evidence is deliberately sanitized before it crosses this port. */
+export interface OperationalLogger {
+  error(input: OperationalError): void | Promise<void>;
+}
+
+export interface OperationalError {
+  readonly code: "MEDIA_METADATA_CREATE_FAILED" | "MEDIA_OBJECT_CLEANUP_FAILED";
+  readonly storageKey: string;
+}
+
 /** A derived cache; callers must always remain correct on a miss. */
 export interface Cache {
   delete(key: string): Promise<void>;
@@ -361,6 +386,27 @@ export interface MediaReadPort {
   loadMedia(id: string): Promise<MediaMetadata | null>;
 }
 
+export interface ListMediaInput {
+  readonly after?: OpaqueCursor;
+  readonly limit: number;
+}
+
+export interface MediaListPort {
+  listMedia(input: ListMediaInput): Promise<CursorPage<MediaMetadata>>;
+}
+
+export interface CreateMediaMetadataInput {
+  readonly createdAt: UnixMilliseconds;
+  readonly createdBy: ActorId;
+  readonly filename: string;
+  readonly height: number;
+  readonly id: MediaId;
+  readonly mimeType: MediaMimeType;
+  readonly size: number;
+  readonly storageKey: string;
+  readonly width: number;
+}
+
 /** A durable request to delete binary media asynchronously after reference checks. */
 export interface MarkMediaForDeletionInput {
   readonly mediaId: MediaId;
@@ -375,7 +421,10 @@ export interface MarkMediaForDeletionResult {
 
 /** Mutation remains separate from metadata reads and binary object storage. */
 export interface MediaCommandPort {
+  createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata>;
   markForDeletion(input: MarkMediaForDeletionInput): Promise<MarkMediaForDeletionResult>;
+  retryDeletion(input: MarkMediaForDeletionInput): Promise<MarkMediaForDeletionResult>;
 }
 
 export * from "./content-use-cases.js";
+export * from "./media-use-cases.js";

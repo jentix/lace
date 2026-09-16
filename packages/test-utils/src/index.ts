@@ -19,6 +19,7 @@ import type {
   ContentEntryCommandPort,
   ContentEntryReadPort,
   ContentEntrySummary,
+  CreateMediaMetadataInput,
   ConfigurationSyncApplyPort,
   ConfigurationSyncModel,
   ConfigurationSyncStateReadPort,
@@ -35,6 +36,8 @@ import type {
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
   MediaCommandPort,
+  MediaListPort,
+  MediaReadPort,
   StoredContentModelState,
   ObjectStorage,
   OpaqueCursor,
@@ -402,6 +405,8 @@ export class InMemoryContentStore
     ConfigurationSyncApplyPort,
     ConfigurationSyncStateReadPort,
     MediaCommandPort,
+    MediaListPort,
+    MediaReadPort,
     PublicContentReadPort
 {
   public readonly configurationSyncBuildRequests: number[] = [];
@@ -692,12 +697,81 @@ export class InMemoryContentStore
     this.media.set(value.id, clone(value));
   }
 
+  /** Exposes a detached projection for application-layer contract assertions. */
+  public mediaReferences(snapshotId: string): readonly DraftMediaReference[] {
+    return Object.freeze(clone(this.references.get(snapshotId) ?? []));
+  }
+
+  public async createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata> {
+    if (
+      this.media.has(input.id) ||
+      [...this.media.values()].some((value) => value.storageKey === input.storageKey)
+    ) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        "Media identity or storage key already exists.",
+      );
+    }
+    const media: MediaMetadata = {
+      createdAt: input.createdAt,
+      createdBy: input.createdBy,
+      filename: input.filename,
+      height: input.height,
+      id: input.id,
+      mimeType: input.mimeType,
+      size: input.size,
+      status: "active",
+      storageKey: input.storageKey,
+      updatedAt: input.createdAt,
+      width: input.width,
+    };
+    this.media.set(media.id, clone(media));
+    return clone(media);
+  }
+
+  public async listMedia(
+    input: import("@lacecms/application").ListMediaInput,
+  ): Promise<CursorPage<MediaMetadata>> {
+    const items = [...this.media.values()]
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt - right.createdAt,
+      )
+      .map((value) => clone(value));
+    return this.page(items, input.after, input.limit, "media");
+  }
+
+  public async loadMedia(id: string): Promise<MediaMetadata | null> {
+    const media = this.media.get(id);
+    return media === undefined ? null : clone(media);
+  }
+
   public async markForDeletion(
     input: MarkMediaForDeletionInput,
   ): Promise<MarkMediaForDeletionResult> {
     const media = this.media.get(input.mediaId);
     if (media === undefined || media.status !== "active") {
       throw new DomainError("CONTENT_INVALID_STATE", "Media is not eligible for deletion.");
+    }
+    const referenced = [...this.references.values()].some((references) =>
+      references.some((reference) => reference.mediaId === input.mediaId),
+    );
+    if (referenced) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    }
+    const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
+    this.media.set(input.mediaId, clone(deleting));
+    this.mediaDeletionRequests.push(input.mediaId);
+    return Object.freeze({ media: clone(deleting), status: "deleting" });
+  }
+
+  public async retryDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    const media = this.media.get(input.mediaId);
+    if (media === undefined || media.status !== "delete_failed") {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media deletion cannot be retried.");
     }
     const referenced = [...this.references.values()].some((references) =>
       references.some((reference) => reference.mediaId === input.mediaId),

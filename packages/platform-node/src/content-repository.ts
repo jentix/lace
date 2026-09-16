@@ -14,13 +14,16 @@ import type {
   ConfigurationSyncApplyPort,
   ConfigurationSyncStateReadPort,
   CreateContentEntryInput,
+  CreateMediaMetadataInput,
   CursorPage,
   ListContentEntriesInput,
+  ListMediaInput,
   ListPublicContentInput,
   LoadContentEntryInput,
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
   MediaCommandPort,
+  MediaListPort,
   MediaReadPort,
   PublishContentEntryCommand,
   PublishContentEntryResult,
@@ -261,6 +264,7 @@ export class NodeContentRepository
     ConfigurationSyncApplyPort,
     ConfigurationSyncStateReadPort,
     MediaCommandPort,
+    MediaListPort,
     PublicContentReadPort,
     MediaReadPort
 {
@@ -669,6 +673,64 @@ export class NodeContentRepository
     return { media, status: "deleting" };
   }
 
+  public async retryDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    try {
+      this.connection.transaction(() => {
+        this.checkpoint("media.retry");
+        const changed = this.connection
+          .prepare(
+            "update media set status = 'deleting', last_error = null, updated_at = ? where id = ? and status = 'delete_failed' and not exists (select 1 from content_media_references where media_id = ?)",
+          )
+          .run(input.requestedAt, input.mediaId, input.mediaId);
+        if (changed.changes !== 1) failure("Media deletion cannot be retried.");
+        this.checkpoint("media.outbox");
+        this.connection
+          .prepare(
+            "insert into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'media.delete.requested', ?, 0, ?, ?)",
+          )
+          .run(
+            this.nextId(),
+            JSON.stringify({ mediaId: input.mediaId, requestedBy: input.requestedBy.id }),
+            input.requestedAt,
+            input.requestedAt,
+          );
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+    const media = await this.loadMedia(input.mediaId);
+    if (media === null) failure("Media deletion retry could not be reloaded.");
+    return { media, status: "deleting" };
+  }
+
+  public async createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata> {
+    try {
+      this.connection
+        .prepare(
+          "insert into media (id, storage_key, filename, mime_type, size, width, height, metadata_json, status, created_by, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, ?, ?)",
+        )
+        .run(
+          input.id,
+          input.storageKey,
+          input.filename,
+          input.mimeType,
+          input.size,
+          input.width,
+          input.height,
+          input.createdBy,
+          input.createdAt,
+          input.createdAt,
+        );
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+    const media = await this.loadMedia(input.id);
+    if (media === null) failure("Created media could not be reloaded.");
+    return media;
+  }
+
   public async load(input: LoadContentEntryInput): Promise<ContentEntry | null> {
     return this.loadEntry(input.entryId);
   }
@@ -802,6 +864,39 @@ export class NodeContentRepository
       )
       .get(id) as Record<string, unknown> | undefined;
     return row === undefined ? null : this.mapMedia(row);
+  }
+
+  public async listMedia(input: ListMediaInput): Promise<CursorPage<MediaMetadata>> {
+    const limit = assertPageSize(input.limit);
+    const after = input.after === undefined ? undefined : decodeCursor(input.after, "media");
+    const cursorClause =
+      after === undefined ? "" : "where (created_at > ? or (created_at = ? and id > ?))";
+    const rows = this.connection
+      .prepare(
+        "select id, storage_key, filename, mime_type, size, width, height, status, created_by, created_at, updated_at from media " +
+          cursorClause +
+          " order by created_at asc, id asc limit ?",
+      )
+      .all(
+        ...(after === undefined
+          ? [limit + 1]
+          : [after.timestamp, after.timestamp, after.id, limit + 1]),
+      ) as readonly Record<string, unknown>[];
+    const pageRows = rows.slice(0, limit);
+    const items = pageRows.map((row) => this.mapMedia(row));
+    const last = pageRows.at(-1);
+    return Object.freeze({
+      items: Object.freeze(items),
+      ...(rows.length > limit && last !== undefined
+        ? {
+            nextCursor: encodeCursor(
+              "media",
+              assertTimestamp(last.created_at as number, "Media timestamp"),
+              String(last.id),
+            ),
+          }
+        : {}),
+    });
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {
