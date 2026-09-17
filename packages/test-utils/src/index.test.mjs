@@ -183,6 +183,61 @@ test("cleans up a stored object and logs only its opaque key when metadata creat
   expect(logs).toEqual([{ code: "MEDIA_METADATA_CREATE_FAILED", storageKey: "media/media-1" }]);
 });
 
+test("reads eligible media binaries without exposing storage locations", async () => {
+  const store = new InMemoryContentStore();
+  const storage = new InMemoryObjectStorage();
+  const id = mediaId("published-media");
+  store.registerMedia({
+    createdAt: unixMilliseconds(1),
+    createdBy: editor.id,
+    filename: "cover.png",
+    height: 1,
+    id,
+    mimeType: "image/png",
+    size: 3,
+    status: "active",
+    storageKey: "media/private-published-media",
+    updatedAt: unixMilliseconds(1),
+    width: 1,
+  });
+  await storage.put({
+    body: binaryStream(new Uint8Array([1, 2, 3])),
+    contentType: "image/png",
+    key: "media/private-published-media",
+  });
+  let publiclyEligible = false;
+  const media = new MediaUseCases({
+    clock: new DeterministicClock(unixMilliseconds(1)),
+    idGenerator: new DeterministicIdGenerator("media"),
+    imageInspector: {
+      async inspect() {
+        return { height: 1, width: 1 };
+      },
+    },
+    logger: { error() {} },
+    media: store,
+    publicMedia: {
+      async loadPublicMedia(mediaId_) {
+        return publiclyEligible ? store.loadMedia(mediaId_) : null;
+      },
+    },
+    storage,
+  });
+  const viewer = { id: actorId("viewer"), role: "viewer" };
+  const preview = await media.preview({ actor: viewer, mediaId: id });
+  expect(preview).toMatchObject({ filename: "cover.png", mimeType: "image/png" });
+  expect(preview).not.toHaveProperty("storageKey");
+  expect(await read(preview.body)).toBe("\u0001\u0002\u0003");
+  await expect(media.readPublic({ mediaId: id })).resolves.toBeNull();
+  publiclyEligible = true;
+  const publicBinary = await media.readPublic({ mediaId: id });
+  expect(await read(publicBinary.body)).toBe("\u0001\u0002\u0003");
+  await storage.delete("media/private-published-media");
+  await expect(media.preview({ actor: viewer, mediaId: id })).rejects.toThrow(
+    "Stored media object is unavailable.",
+  );
+});
+
 test("enforces image dimensions and authorized deletion lifecycle operations", async () => {
   const store = new InMemoryContentStore();
   let dimensions = { height: 1, width: MAX_IMAGE_DIMENSION + 1 };

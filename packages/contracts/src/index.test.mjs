@@ -24,7 +24,9 @@ import {
   idempotencyKeySchema,
   isoTimestampSchema,
   jsonPointerSchema,
+  mediaListSchema,
   mediaMetadataSchema,
+  mediaUrl,
   opaqueCursorSchema,
   packageName,
   publishContentEntryRequestSchema,
@@ -122,6 +124,13 @@ describe("shared REST contract DTOs", () => {
     );
     expect(v.parse(mediaMetadataSchema, mediaDto)).toEqual(mediaDto);
     expect(mediaDto).not.toHaveProperty("storageKey");
+    expect(v.parse(mediaListSchema, { items: [mediaDto], nextCursor: "media-page" })).toEqual({
+      items: [mediaDto],
+      nextCursor: "media-page",
+    });
+    expect(mediaUrl("https://lace.example/base/", "media/a?x=y")).toBe(
+      "https://lace.example/base/api/v1/public/media/media%2Fa%3Fx%3Dy",
+    );
 
     const buildDto = toSiteBuildDto({
       id: siteBuildId("build-1"),

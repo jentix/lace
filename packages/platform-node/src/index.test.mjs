@@ -2,11 +2,14 @@ import { expect, test } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { hashPassword } from "better-auth/crypto";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
+  NodeMinioObjectStorage,
+  NodeObjectStorageError,
   NodeContentRepository,
   NodeFixedWindowRateLimiter,
   NodeSecurityService,
@@ -37,6 +40,15 @@ import {
   mediaId,
   unixMilliseconds,
 } from "@lacecms/domain";
+
+const minioEnvironment = Object.freeze({
+  LACE_MINIO_ACCESS_KEY: "test-access-key",
+  LACE_MINIO_BUCKET: "lace-media",
+  LACE_MINIO_ENDPOINT: "http://minio.test:9000",
+  LACE_MINIO_REGION: "us-east-1",
+  LACE_MINIO_SECRET_KEY: "test-secret-key",
+  LACE_MINIO_TIMEOUT_MS: "1000",
+});
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
 
@@ -114,6 +126,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
   expect(() =>
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_DATABASE_PATH: "",
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: secret,
@@ -122,6 +135,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   ).toThrow("Invalid Node environment: LACE_DATABASE_PATH, LACE_PUBLIC_BASE_URL, LACE_PORT.");
   try {
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: "",
       LACE_PUBLIC_BASE_URL: secret,
@@ -131,6 +145,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   }
   expect(
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_ADMIN_DEV_ORIGIN: "http://127.0.0.1:5173",
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: "/tmp/lace.sqlite",
@@ -142,10 +157,23 @@ test("validates named Node settings without disclosing supplied values", () => {
     port: 3000,
     publicBaseUrl: new URL("https://lace.test/base/"),
   });
+  try {
+    parseNodeRuntimeSettings({
+      ...minioEnvironment,
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+      LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+      LACE_MINIO_ENDPOINT: "https://user:opaque-minio-secret@minio.test/",
+      LACE_PUBLIC_BASE_URL: "https://lace.test/",
+    });
+  } catch (error) {
+    expect(String(error)).toContain("LACE_MINIO_ENDPOINT");
+    expect(String(error)).not.toContain("opaque-minio-secret");
+  }
 });
 
 test("uses configured public URLs and fails closed for placeholder infrastructure", async () => {
   const settings = parseNodeRuntimeSettings({
+    ...minioEnvironment,
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
     LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
     LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
@@ -162,6 +190,92 @@ test("uses configured public URLs and fails closed for placeholder infrastructur
   await cache.set("derived", { value: 1 });
   await expect(cache.get("derived")).resolves.toBeNull();
   await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({ accepted: false });
+});
+
+test("MinIO storage streams objects, distinguishes missing keys, and sanitizes failures", async () => {
+  const commands = [];
+  const client = {
+    send: async (command, options) => {
+      commands.push({ command, options });
+      if (command.constructor.name === "GetObjectCommand") {
+        return { Body: Readable.from([Buffer.from("media-bytes")]) };
+      }
+      if (command.constructor.name === "PutObjectCommand") {
+        for await (const _chunk of command.input.Body) {
+          // A real S3 client consumes the request stream before resolving.
+        }
+      }
+      return {};
+    },
+  };
+  const storage = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/base/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    client,
+  );
+  await storage.assertReady();
+  const stored = await storage.put({
+    body: {
+      async *[Symbol.asyncIterator]() {
+        yield new Uint8Array([1, 2]);
+        yield new Uint8Array([3]);
+      },
+    },
+    contentType: "image/png",
+    key: "media/example",
+  });
+  expect(stored).toEqual({ contentType: "image/png", key: "media/example", size: 3 });
+  expect(await storage.createReadUrl("media/example")).toBe(
+    "https://lace.test/base/api/v1/public/media/example",
+  );
+  await expect(
+    (async () => {
+      const output = await storage.get("media/example");
+      return output === null ? undefined : Buffer.concat(await Array.fromAsync(output));
+    })(),
+  ).resolves.toEqual(Buffer.from("media-bytes"));
+  await storage.delete("media/example");
+  expect(commands.map(({ command }) => command.constructor.name)).toEqual([
+    "HeadBucketCommand",
+    "PutObjectCommand",
+    "GetObjectCommand",
+    "DeleteObjectCommand",
+  ]);
+  expect(commands.every(({ options }) => options.abortSignal instanceof AbortSignal)).toBe(true);
+
+  const missing = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    { send: async () => Promise.reject({ name: "NoSuchKey" }) },
+  );
+  await expect(missing.get("missing")).resolves.toBeNull();
+  const unavailable = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    { send: async () => Promise.reject(new Error("opaque infrastructure detail")) },
+  );
+  await expect(unavailable.assertReady()).rejects.toBeInstanceOf(NodeObjectStorageError);
 });
 
 test("reports cheap SQLite readiness failures after the connection closes", async () => {
@@ -185,6 +299,7 @@ test("Node composition maps a Better Auth session into a protected actor", async
   try {
     migrateNodeDatabase(databasePath);
     const settings = parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: databasePath,
       LACE_PUBLIC_BASE_URL: "https://lace.test/",

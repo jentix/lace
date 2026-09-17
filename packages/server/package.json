@@ -20,6 +20,7 @@
     "@hono/standard-validator": "catalog:",
     "@lacecms/application": "workspace:*",
     "@lacecms/contracts": "workspace:*",
+    "@mjackson/multipart-parser": "catalog:",
     "@valibot/to-json-schema": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "catalog:",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@lacecms/config": "workspace:*",
+    "@lacecms/content": "workspace:*",
     "@lacecms/domain": "workspace:*",
     "@lacecms/test-utils": "workspace:*",
     "oxlint": "catalog:",

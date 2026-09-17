@@ -28,6 +28,9 @@ catalog:
   vite: 8.2.2
   vitest: 5.0.0
   wrangler: 4.129.0
+  "@aws-sdk/client-s3": ^3.1133.0
+  sharp: ^0.35.4
+  "@mjackson/multipart-parser": ^0.10.1
 
 allowBuilds:
   better-sqlite3: true

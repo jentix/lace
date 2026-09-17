@@ -13,6 +13,7 @@ import type {
   MediaReadPort,
   ObjectStorage,
   OperationalLogger,
+  PublicContentReadPort,
 } from "./index.js";
 
 export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -55,12 +56,23 @@ export interface GetMediaUseCaseInput {
 
 export interface DeleteMediaUseCaseInput extends GetMediaUseCaseInput {}
 
+export interface PublicMediaBinaryUseCaseInput {
+  readonly mediaId: MediaId;
+}
+
+export interface MediaBinary {
+  readonly body: ByteStream;
+  readonly filename: string;
+  readonly mimeType: MediaMimeType;
+}
+
 export interface MediaUseCaseDependencies {
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly imageInspector: ImageInspector;
   readonly logger: OperationalLogger;
   readonly media: MediaReadPort & MediaListPort & MediaCommandPort;
+  readonly publicMedia?: Pick<PublicContentReadPort, "loadPublicMedia">;
   readonly storage: ObjectStorage;
 }
 
@@ -254,6 +266,33 @@ export class MediaUseCases {
       requestedBy: input.actor,
     });
     return toMediaView(detached(result.media));
+  }
+
+  public async preview(input: GetMediaUseCaseInput): Promise<MediaBinary | null> {
+    requirePermission(input.actor, "content:read");
+    const media = await this.dependencies.media.loadMedia(input.mediaId);
+    return media === null || media.status !== "active" ? null : this.readBinary(media);
+  }
+
+  public async readPublic(input: PublicMediaBinaryUseCaseInput): Promise<MediaBinary | null> {
+    const media = await this.dependencies.publicMedia?.loadPublicMedia(input.mediaId);
+    return media === undefined || media === null || media.status !== "active"
+      ? null
+      : this.readBinary(media);
+  }
+
+  private async readBinary(media: MediaMetadata): Promise<MediaBinary> {
+    const mimeType = media.mimeType;
+    if (!ALLOWED_MEDIA_MIME_TYPES.includes(mimeType as MediaMimeType)) {
+      throw new Error("Stored media has an unsupported MIME type.");
+    }
+    const body = await this.dependencies.storage.get(media.storageKey);
+    if (body === null) throw new Error("Stored media object is unavailable.");
+    return Object.freeze({
+      body,
+      filename: sanitizeMediaFilename(media.filename),
+      mimeType: mimeType as MediaMimeType,
+    });
   }
 
   private async cleanupAfterMetadataFailure(

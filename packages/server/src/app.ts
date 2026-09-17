@@ -1,4 +1,10 @@
-import { ContentUseCases, opaqueCursor, requireUsersManager } from "@lacecms/application";
+import {
+  ContentUseCases,
+  MAX_MEDIA_BYTES,
+  MediaUseCases,
+  opaqueCursor,
+  requireUsersManager,
+} from "@lacecms/application";
 import type {
   PublicContentReadPort,
   RateLimitDecision,
@@ -16,6 +22,9 @@ import {
   contentModelListSchema,
   managedUserListSchema,
   managedUserSchema,
+  mediaListSchema,
+  mediaMetadataSchema,
+  mediaUrl,
   createContentEntryRequestSchema,
   deleteContentEntryRequestSchema,
   entityTagForVersion,
@@ -34,12 +43,18 @@ import {
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
+  toMediaMetadataDto,
   transportError,
   userCreateRequestSchema,
   userUpdateRequestSchema,
   validationError,
   versionFromEntityTag,
 } from "@lacecms/contracts";
+import {
+  MaxFileSizeExceededError,
+  MultipartParseError,
+  parseMultipartRequest,
+} from "@mjackson/multipart-parser";
 import type { ClassifiedError, ContractValidationIssue } from "@lacecms/contracts";
 import { toJsonSchema } from "@valibot/to-json-schema";
 import { bodyLimit } from "hono/body-limit";
@@ -127,6 +142,8 @@ export interface LaceAppInput {
   readonly environment: ServerEnvironmentMetadata;
   readonly logger: ServerLogger;
   readonly maxBodyBytes: number;
+  readonly media?: MediaUseCases;
+  readonly publicBaseUrl?: string;
   readonly publicContent: PublicContentReadPort;
   readonly rateLimiter: RequestRateLimiter;
   readonly readiness: ReadinessProbe;
@@ -318,6 +335,7 @@ function buildTokenDto(
 
 const modelKeyParams = v.strictObject({ modelKey: identifierSchemaPublic });
 const entryIdParams = v.strictObject({ entryId: identifierSchemaPublic });
+const mediaIdParams = v.strictObject({ mediaId: identifierSchemaPublic });
 const collectionItemParams = v.strictObject({
   modelKey: identifierSchemaPublic,
   slug: identifierSchemaPublic,
@@ -329,6 +347,38 @@ const validationHook = ((result: {
 }) => {
   if (!result.success) return validationResponse(standardIssues(result.error ?? []));
 }) as never;
+
+function mediaByteStream(chunks: readonly Uint8Array[]) {
+  return {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+      for (const chunk of chunks) yield chunk.slice();
+    },
+  };
+}
+
+function binaryResponse(
+  value: Awaited<ReturnType<MediaUseCases["preview"]>> extends infer Result
+    ? Exclude<Result, null>
+    : never,
+): Response {
+  const iterator = value.body[Symbol.asyncIterator]();
+  const body = new ReadableStream<Uint8Array>({
+    async cancel() {
+      await iterator.return?.();
+    },
+    async pull(controller) {
+      const next = await iterator.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+  });
+  return new Response(body, {
+    headers: {
+      "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(value.filename)}`,
+      "content-type": value.mimeType,
+    },
+  });
+}
 
 /** Creates a portable Hono API app; runtime adapters supply every infrastructure capability. */
 export function createLaceApp(input: LaceAppInput): Hono {
@@ -364,11 +414,14 @@ export function createLaceApp(input: LaceAppInput): Hono {
     }
   });
 
-  app.use(
-    bodyLimit({
-      maxSize: input.maxBodyBytes,
-      onError: () => errorResponse(transportError("PAYLOAD_TOO_LARGE")),
-    }),
+  const jsonBodyLimit = bodyLimit({
+    maxSize: input.maxBodyBytes,
+    onError: () => errorResponse(transportError("PAYLOAD_TOO_LARGE")),
+  });
+  app.use((context, next) =>
+    context.req.path === "/api/v1/admin/media" && context.req.method === "POST"
+      ? next()
+      : jsonBodyLimit(context, next),
   );
   app.use(async (context, next) => {
     const decision = await input.rateLimiter.check({
@@ -412,6 +465,21 @@ export function createLaceApp(input: LaceAppInput): Hono {
   function security(): SecurityService {
     if (input.security === undefined) throw new AuthorizationError();
     return input.security;
+  }
+
+  function media(): MediaUseCases {
+    if (input.media === undefined || input.publicBaseUrl === undefined) {
+      throw new Error("Media capability is unavailable.");
+    }
+    return input.media;
+  }
+
+  function mediaDto(
+    value: Awaited<ReturnType<MediaUseCases["get"]>> extends infer Result
+      ? Exclude<Result, null>
+      : never,
+  ) {
+    return toMediaMetadataDto(value, mediaUrl(input.publicBaseUrl!, value.id));
   }
 
   function usersActor(context: Parameters<typeof actor>[0]): Promise<Actor> {
@@ -498,6 +566,127 @@ export function createLaceApp(input: LaceAppInput): Hono {
     });
     return token === null ? notFound() : response(buildTokenSchema, buildTokenDto(token));
   });
+
+  app.get(
+    "/api/v1/admin/media",
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(mediaListSchema) } },
+          description: "Media page",
+        },
+      },
+      summary: "List media",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const page = await media().list({
+        actor: await actor(context),
+        ...pagination(context.req.raw),
+      });
+      return response(mediaListSchema, {
+        items: page.items.map(mediaDto),
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/media",
+    describeRoute({
+      responses: {
+        201: {
+          content: { "application/json": { schema: resolver(mediaMetadataSchema) } },
+          description: "Created media",
+        },
+      },
+      summary: "Upload media",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const resolvedActor = await actor(context);
+      try {
+        let upload:
+          | { readonly chunks: readonly Uint8Array[]; readonly filename: string }
+          | undefined;
+        for await (const part of parseMultipartRequest(context.req.raw, {
+          maxFileSize: MAX_MEDIA_BYTES,
+        })) {
+          if (
+            !part.isFile ||
+            part.name !== "file" ||
+            part.filename === undefined ||
+            upload !== undefined
+          ) {
+            invalid("The submitted value is invalid.", "/file");
+          }
+          upload = { chunks: part.content, filename: part.filename };
+        }
+        if (upload === undefined) invalid("The submitted value is invalid.", "/file");
+        const created = await media().create({
+          actor: resolvedActor,
+          body: mediaByteStream(upload.chunks),
+          filename: upload.filename,
+        });
+        return response(mediaMetadataSchema, mediaDto(created), 201);
+      } catch (error) {
+        if (error instanceof MaxFileSizeExceededError) {
+          return errorResponse(transportError("PAYLOAD_TOO_LARGE"));
+        }
+        if (error instanceof MultipartParseError) {
+          return validationResponse([
+            { code: "invalid_value", message: "The submitted value is invalid.", path: "/file" },
+          ]);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.delete(
+    "/api/v1/admin/media/:mediaId",
+    describeRoute({
+      responses: {
+        202: {
+          content: { "application/json": { schema: resolver(mediaMetadataSchema) } },
+          description: "Deletion requested",
+        },
+      },
+      summary: "Request media deletion",
+      tags: ["admin"],
+    }),
+    validator("param", mediaIdParams, validationHook),
+    async (context) => {
+      const deleted = await media().requestDeletion({
+        actor: await actor(context),
+        mediaId: context.req.param("mediaId") as never,
+      });
+      return response(mediaMetadataSchema, mediaDto(deleted), 202);
+    },
+  );
+
+  app.get(
+    "/api/v1/public/media/:mediaId",
+    describeRoute({ summary: "Read published media", tags: ["public"] }),
+    validator("param", mediaIdParams, validationHook),
+    async (context) => {
+      const result = await media().readPublic({ mediaId: context.req.param("mediaId") as never });
+      return result === null ? notFound() : binaryResponse(result);
+    },
+  );
+
+  app.get(
+    "/api/v1/admin/media/:mediaId/preview",
+    describeRoute({ summary: "Preview media", tags: ["admin"] }),
+    validator("param", mediaIdParams, validationHook),
+    async (context) => {
+      const result = await media().preview({
+        actor: await actor(context),
+        mediaId: context.req.param("mediaId") as never,
+      });
+      return result === null ? notFound() : binaryResponse(result);
+    },
+  );
 
   app.get(
     "/api/v1/admin/content-models",
