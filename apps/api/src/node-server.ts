@@ -97,11 +97,25 @@ export async function startNodeServer(input: {
     server.close();
     throw new Error("Node server did not expose a TCP address.");
   }
+  let stopped = false;
+  let scheduled: ReturnType<typeof setTimeout> | undefined;
+  let current = Promise.resolve();
+  const dispatch = () => {
+    current = input.runtime.deletionDispatcher.runOnce().catch(() => undefined);
+    void current.finally(() => {
+      if (!stopped) scheduled = setTimeout(dispatch, 1_000);
+    });
+  };
+  dispatch();
   return Object.freeze({
-    close: () =>
-      new Promise<void>((resolve, reject) =>
+    close: async () => {
+      stopped = true;
+      if (scheduled !== undefined) clearTimeout(scheduled);
+      await current;
+      await new Promise<void>((resolve, reject) =>
         server.close((error) => (error === undefined ? resolve() : reject(error))),
-      ),
+      );
+    },
     server,
     url: new URL(`http://${input.settings.host}:${address.port}`),
   });

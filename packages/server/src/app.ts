@@ -665,6 +665,28 @@ export function createLaceApp(input: LaceAppInput): Hono {
     },
   );
 
+  app.post(
+    "/api/v1/admin/media/:mediaId/retry-deletion",
+    describeRoute({
+      responses: {
+        202: {
+          content: { "application/json": { schema: resolver(mediaMetadataSchema) } },
+          description: "Deletion retry requested",
+        },
+      },
+      summary: "Retry media deletion",
+      tags: ["admin"],
+    }),
+    validator("param", mediaIdParams, validationHook),
+    async (context) => {
+      const retried = await media().retryDeletion({
+        actor: await actor(context),
+        mediaId: context.req.param("mediaId") as never,
+      });
+      return response(mediaMetadataSchema, mediaDto(retried), 202);
+    },
+  );
+
   app.get(
     "/api/v1/public/media/:mediaId",
     describeRoute({ summary: "Read published media", tags: ["public"] }),

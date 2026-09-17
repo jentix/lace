@@ -1,4 +1,7 @@
 import {
+  DISPATCHER_LEASE_DURATION_MS,
+  dispatcherEventId,
+  dispatcherLeaseId,
   opaqueCursor,
   planConfigurationSynchronization,
   renderConfigurationSyncPlanJson,
@@ -7,6 +10,8 @@ import type {
   ApplyConfigurationSynchronizationInput,
   ApplyConfigurationSynchronizationResult,
   BuildContentExport,
+  ClaimDispatcherEventsInput,
+  CompleteDispatcherLeaseInput,
   ContentCommandResult,
   ContentEntryCommandPort,
   ContentEntryReadPort,
@@ -16,6 +21,8 @@ import type {
   CreateContentEntryInput,
   CreateMediaMetadataInput,
   CursorPage,
+  DispatcherLease,
+  DispatcherLeasePort,
   ListContentEntriesInput,
   ListMediaInput,
   ListPublicContentInput,
@@ -23,6 +30,7 @@ import type {
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
   MediaCommandPort,
+  MediaDeletionDispatchPort,
   MediaListPort,
   MediaReadPort,
   PublishContentEntryCommand,
@@ -30,6 +38,7 @@ import type {
   PublicContentEntry,
   PublicContentReadPort,
   SaveCompleteDraftInput,
+  RetryDispatcherLeaseInput,
   StoredContentModelState,
 } from "@lacecms/application";
 import {
@@ -73,6 +82,14 @@ interface EntryRow {
   readonly id: string;
   readonly model_key: string;
   readonly published_snapshot_id: string | null;
+}
+
+interface OutboxRow {
+  readonly attempts: number;
+  readonly available_at: number;
+  readonly id: string;
+  readonly payload_json: string;
+  readonly type: string;
 }
 
 interface SnapshotRow {
@@ -170,6 +187,23 @@ function assertPageSize(value: number): number {
   return value;
 }
 
+function assertNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    failure(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function sanitizeDispatchError(value: string): string {
+  return (
+    value
+      .replace(/[\r\n\t]/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 160) || "storage_unavailable"
+  );
+}
+
 function parseObject(value: string, label: string): JsonObject {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -263,7 +297,9 @@ export class NodeContentRepository
     ContentEntryReadPort,
     ConfigurationSyncApplyPort,
     ConfigurationSyncStateReadPort,
+    DispatcherLeasePort,
     MediaCommandPort,
+    MediaDeletionDispatchPort,
     MediaListPort,
     PublicContentReadPort,
     MediaReadPort
@@ -705,6 +741,178 @@ export class NodeContentRepository
     return { media, status: "deleting" };
   }
 
+  public async claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAX_PAGE_SIZE) {
+      failure("Dispatcher claim limit is invalid.");
+    }
+    if (input.eventTypes.length === 0 || input.eventTypes.some((type) => type.length === 0)) {
+      failure("Dispatcher event types are invalid.");
+    }
+    const placeholders = input.eventTypes.map(() => "?").join(", ");
+    const leases: DispatcherLease[] = [];
+    try {
+      this.connection.transaction(() => {
+        const rows = this.connection
+          .prepare(
+            `select id, type, payload_json, attempts, available_at
+               from outbox_events
+              where processed_at is null
+                and type in (${placeholders})
+                and available_at <= ?
+                and (locked_at is null or locked_at <= ?)
+              order by available_at asc, id asc
+              limit ?`,
+          )
+          .all(
+            ...input.eventTypes,
+            input.now,
+            input.now - DISPATCHER_LEASE_DURATION_MS,
+            input.limit,
+          ) as readonly OutboxRow[];
+        const claim = this.connection.prepare(
+          "update outbox_events set locked_at = ?, locked_by = ? where id = ? and processed_at is null and (locked_at is null or locked_at <= ?)",
+        );
+        for (const row of rows) {
+          const leaseId = dispatcherLeaseId(this.nextId());
+          const claimed = claim.run(
+            input.now,
+            leaseId,
+            row.id,
+            input.now - DISPATCHER_LEASE_DURATION_MS,
+          );
+          if (claimed.changes !== 1) continue;
+          leases.push(
+            Object.freeze({
+              event: Object.freeze({
+                attempts: assertNonNegativeInteger(row.attempts, "Outbox attempts"),
+                availableAt: unixMilliseconds(
+                  assertTimestamp(row.available_at, "Outbox availability"),
+                ),
+                id: dispatcherEventId(row.id),
+                payload: parseObject(row.payload_json, "Outbox payload"),
+                type: row.type,
+              }),
+              expiresAt: unixMilliseconds(input.now + DISPATCHER_LEASE_DURATION_MS),
+              id: leaseId,
+            }),
+          );
+        }
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+    return Object.freeze(leases);
+  }
+
+  public async complete(input: CompleteDispatcherLeaseInput): Promise<void> {
+    try {
+      const changed = this.connection
+        .prepare(
+          "update outbox_events set processed_at = ?, locked_at = null, locked_by = null where locked_by = ? and processed_at is null and locked_at > ?",
+        )
+        .run(input.completedAt, input.leaseId, input.completedAt - DISPATCHER_LEASE_DURATION_MS);
+      if (changed.changes !== 1) failure("Dispatcher lease is missing or expired.");
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async retry(input: RetryDispatcherLeaseInput): Promise<void> {
+    try {
+      const changed = this.connection
+        .prepare(
+          "update outbox_events set attempts = attempts + 1, available_at = ?, locked_at = null, locked_by = null, last_error = ? where locked_by = ? and processed_at is null and locked_at > ?",
+        )
+        .run(
+          input.retryAt ?? input.failedAt,
+          sanitizeDispatchError(input.error),
+          input.leaseId,
+          input.failedAt - DISPATCHER_LEASE_DURATION_MS,
+        );
+      if (changed.changes !== 1) failure("Dispatcher lease is missing or expired.");
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async loadDeletingMedia(id: string): Promise<MediaMetadata | null> {
+    const media = await this.loadMedia(id);
+    return media?.status === "deleting" ? media : null;
+  }
+
+  public async completeMediaDeletion(input: {
+    readonly completedAt: number;
+    readonly leaseId: string;
+    readonly mediaId: string;
+  }): Promise<void> {
+    try {
+      this.connection.transaction(() => {
+        const event = this.requireLeasedMediaDeletionEvent(
+          input.leaseId,
+          input.completedAt,
+          input.mediaId,
+        );
+        const deleted = this.connection
+          .prepare(
+            "delete from media where id = ? and status = 'deleting' and not exists (select 1 from content_media_references where media_id = ?)",
+          )
+          .run(input.mediaId, input.mediaId);
+        if (deleted.changes !== 1) failure("Media deletion can no longer be finalized.");
+        const completed = this.connection
+          .prepare(
+            "update outbox_events set processed_at = ?, locked_at = null, locked_by = null where id = ? and locked_by = ?",
+          )
+          .run(input.completedAt, event.id, input.leaseId);
+        if (completed.changes !== 1) failure("Dispatcher lease is missing or expired.");
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async failMediaDeletion(input: {
+    readonly failedAt: number;
+    readonly leaseId: string;
+    readonly mediaId: string;
+    readonly sanitizedError: string;
+    readonly terminal: boolean;
+    readonly retryAt?: number;
+  }): Promise<void> {
+    const error = sanitizeDispatchError(input.sanitizedError);
+    try {
+      this.connection.transaction(() => {
+        const event = this.requireLeasedMediaDeletionEvent(
+          input.leaseId,
+          input.failedAt,
+          input.mediaId,
+        );
+        if (input.terminal) {
+          const failed = this.connection
+            .prepare(
+              "update media set status = 'delete_failed', last_error = ?, updated_at = ? where id = ? and status = 'deleting'",
+            )
+            .run(error, input.failedAt, input.mediaId);
+          if (failed.changes !== 1) failure("Media deletion can no longer be failed safely.");
+          const completed = this.connection
+            .prepare(
+              "update outbox_events set attempts = attempts + 1, processed_at = ?, locked_at = null, locked_by = null, last_error = ? where id = ? and locked_by = ?",
+            )
+            .run(input.failedAt, error, event.id, input.leaseId);
+          if (completed.changes !== 1) failure("Dispatcher lease is missing or expired.");
+          return;
+        }
+        const retried = this.connection
+          .prepare(
+            "update outbox_events set attempts = attempts + 1, available_at = ?, locked_at = null, locked_by = null, last_error = ? where id = ? and locked_by = ?",
+          )
+          .run(input.retryAt ?? input.failedAt, error, event.id, input.leaseId);
+        if (retried.changes !== 1) failure("Dispatcher lease is missing or expired.");
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
   public async createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata> {
     try {
       this.connection
@@ -1140,17 +1348,36 @@ export class NodeContentRepository
     createdAt: number,
   ): void {
     const statement = this.connection.prepare(
-      "insert into content_media_references (snapshot_id, source_key, field_path, media_id, created_at) values (?, ?, ?, ?, ?)",
+      "insert into content_media_references (snapshot_id, source_key, field_path, media_id, created_at) select ?, ?, ?, id, ? from media where id = ? and status = 'active'",
     );
     for (const reference of references) {
-      statement.run(
+      const inserted = statement.run(
         snapshotId,
         reference.sourceKey,
         reference.fieldPath,
-        reference.mediaId,
         createdAt,
+        reference.mediaId,
       );
+      if (inserted.changes !== 1) failure("Media is unavailable for reference.");
     }
+  }
+
+  private requireLeasedMediaDeletionEvent(
+    leaseId: string,
+    now: number,
+    mediaId: string,
+  ): { readonly id: string } {
+    const event = this.connection
+      .prepare(
+        "select id, payload_json from outbox_events where locked_by = ? and type = 'media.delete.requested' and processed_at is null and locked_at > ?",
+      )
+      .get(leaseId, now - DISPATCHER_LEASE_DURATION_MS) as
+      | { readonly id: string; readonly payload_json: string }
+      | undefined;
+    if (event === undefined) failure("Dispatcher lease is missing or expired.");
+    const payload = parseObject(event.payload_json, "Outbox payload");
+    if (payload.mediaId !== mediaId) failure("Dispatcher event does not match media.");
+    return event;
   }
 
   private checkpoint(name: string): void {

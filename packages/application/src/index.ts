@@ -357,6 +357,46 @@ export interface DispatcherEvent {
   readonly type: string;
 }
 
+/** Fixed dispatcher timing keeps recovery semantics identical across runtimes. */
+export const DISPATCHER_LEASE_DURATION_MS = 60_000;
+
+export interface DispatcherRetryPolicy {
+  readonly baseDelayMs: number;
+  readonly maxAttempts: number;
+  readonly maxDelayMs: number;
+}
+
+export const defaultDispatcherRetryPolicy: DispatcherRetryPolicy = Object.freeze({
+  baseDelayMs: 1_000,
+  maxAttempts: 8,
+  maxDelayMs: 15 * 60_000,
+});
+
+/** Calculates full-jitter exponential retry delay without choosing the random sample. */
+export function dispatcherRetryDelay(
+  policy: DispatcherRetryPolicy,
+  failedAttempt: number,
+  random: number,
+): number {
+  if (
+    !Number.isSafeInteger(policy.baseDelayMs) ||
+    !Number.isSafeInteger(policy.maxDelayMs) ||
+    !Number.isSafeInteger(policy.maxAttempts) ||
+    policy.baseDelayMs < 1 ||
+    policy.maxDelayMs < policy.baseDelayMs ||
+    policy.maxAttempts < 1 ||
+    !Number.isSafeInteger(failedAttempt) ||
+    failedAttempt < 1 ||
+    !Number.isFinite(random) ||
+    random < 0 ||
+    random >= 1
+  ) {
+    throw new TypeError("Dispatcher retry inputs are invalid.");
+  }
+  const ceiling = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** (failedAttempt - 1));
+  return Math.floor(random * (ceiling + 1));
+}
+
 export interface DispatcherLease {
   readonly event: DispatcherEvent;
   readonly expiresAt: UnixMilliseconds;
@@ -364,7 +404,7 @@ export interface DispatcherLease {
 }
 
 export interface ClaimDispatcherEventsInput {
-  readonly leaseDurationMs: number;
+  readonly eventTypes: readonly string[];
   readonly limit: number;
   readonly now: UnixMilliseconds;
 }
@@ -373,12 +413,20 @@ export interface CompleteDispatcherLeaseInput {
   readonly completedAt: UnixMilliseconds;
   readonly error?: string;
   readonly leaseId: DispatcherLeaseId;
-  readonly outcome: "failed" | "succeeded";
+  readonly outcome: "succeeded";
+}
+
+export interface RetryDispatcherLeaseInput {
+  readonly error: string;
+  readonly failedAt: UnixMilliseconds;
+  readonly leaseId: DispatcherLeaseId;
+  readonly retryAt?: UnixMilliseconds;
 }
 
 export interface DispatcherLeasePort {
   claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]>;
   complete(input: CompleteDispatcherLeaseInput): Promise<void>;
+  retry(input: RetryDispatcherLeaseInput): Promise<void>;
 }
 
 /** Metadata-only media reads remain separate from binary object storage. */
@@ -424,6 +472,24 @@ export interface MediaCommandPort {
   createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata>;
   markForDeletion(input: MarkMediaForDeletionInput): Promise<MarkMediaForDeletionResult>;
   retryDeletion(input: MarkMediaForDeletionInput): Promise<MarkMediaForDeletionResult>;
+}
+
+/** Private worker-only boundary: transport never receives the storage key. */
+export interface MediaDeletionDispatchPort {
+  completeMediaDeletion(input: {
+    readonly completedAt: UnixMilliseconds;
+    readonly leaseId: DispatcherLeaseId;
+    readonly mediaId: MediaId;
+  }): Promise<void>;
+  failMediaDeletion(input: {
+    readonly failedAt: UnixMilliseconds;
+    readonly leaseId: DispatcherLeaseId;
+    readonly mediaId: MediaId;
+    readonly sanitizedError: string;
+    readonly terminal: boolean;
+    readonly retryAt?: UnixMilliseconds;
+  }): Promise<void>;
+  loadDeletingMedia(id: MediaId): Promise<MediaMetadata | null>;
 }
 
 export * from "./content-use-cases.js";

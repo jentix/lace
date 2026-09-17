@@ -32,6 +32,7 @@ import { NodeFixedWindowRateLimiter, NodeSecurityService } from "./security.js";
 import { openNodeDatabase, type NodeDatabase } from "./index.js";
 import { NodeSharpImageInspector } from "./image-inspector.js";
 import { NodeMinioObjectStorage, type NodeMinioSettings } from "./minio-storage.js";
+import { NodeMediaDeletionDispatcher } from "./media-deletion-dispatcher.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -332,6 +333,7 @@ export interface NodeRuntime {
   readonly content: ContentUseCases;
   readonly media: MediaUseCases;
   readonly database: NodeDatabase;
+  readonly deletionDispatcher: NodeMediaDeletionDispatcher;
   readonly readiness: ReadinessProbe;
   readonly repository: NodeContentRepository;
   readonly security: NodeSecurityService;
@@ -380,6 +382,14 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     );
   const cache = new NoopNodeCache();
   const storage = input.storage ?? new NodeMinioObjectStorage(input.settings.minio);
+  const deletionDispatcher = new NodeMediaDeletionDispatcher({
+    clock,
+    logger: {
+      error: (entry) => console.error(JSON.stringify({ component: "media-deletion", ...entry })),
+    },
+    storage,
+    work: repository,
+  });
   const buildTrigger = new NoopNodeBuildTrigger();
   const readiness = new NodeSqliteReadiness(database.connection);
   const content = new ContentUseCases({
@@ -432,6 +442,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     close: () => database.connection.close(),
     content,
     database,
+    deletionDispatcher,
     media,
     readiness,
     repository,

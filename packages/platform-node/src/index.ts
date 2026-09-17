@@ -9,6 +9,7 @@ export const packageName = "@lacecms/platform-node";
 export * from "./content-repository.js";
 export * from "./image-inspector.js";
 export * from "./minio-storage.js";
+export * from "./media-deletion-dispatcher.js";
 export * from "./runtime.js";
 export * from "./security.js";
 

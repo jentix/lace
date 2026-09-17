@@ -1,4 +1,5 @@
 import {
+  DISPATCHER_LEASE_DURATION_MS,
   dispatcherLeaseId,
   opaqueCursor,
   opaqueTokenVerifier,
@@ -35,6 +36,7 @@ import type {
   LoadContentEntryInput,
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
+  RetryDispatcherLeaseInput,
   MediaCommandPort,
   MediaListPort,
   MediaReadPort,
@@ -337,7 +339,9 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
 
   public async claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]> {
     assertPositiveInteger(input.limit, "limit");
-    assertPositiveInteger(input.leaseDurationMs, "leaseDurationMs");
+    if (input.eventTypes.length === 0 || input.eventTypes.some((type) => type.length === 0)) {
+      throw new TypeError("eventTypes must contain non-empty strings.");
+    }
     const activelyLeased = new Set(
       [...this.leases.values()]
         .filter((lease) => lease.expiresAt > input.now)
@@ -349,13 +353,14 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
     )) {
       if (
         leases.length === input.limit ||
+        !input.eventTypes.includes(event.type) ||
         event.availableAt > input.now ||
         activelyLeased.has(event.id)
       )
         continue;
       const id = dispatcherLeaseId(`lease-${this.nextLease}`);
       this.nextLease += 1;
-      const expiresAt = unixMilliseconds(input.now + input.leaseDurationMs);
+      const expiresAt = unixMilliseconds(input.now + DISPATCHER_LEASE_DURATION_MS);
       this.leases.set(id, { eventId: event.id, expiresAt });
       leases.push(Object.freeze({ event: clone(event), expiresAt, id }));
     }
@@ -364,20 +369,25 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
 
   public async complete(input: CompleteDispatcherLeaseInput): Promise<void> {
     const lease = this.leases.get(input.leaseId);
-    if (lease === undefined || lease.expiresAt < input.completedAt) {
+    if (lease === undefined || lease.expiresAt <= input.completedAt) {
       throw new Error("Dispatcher lease is missing or expired.");
     }
     this.leases.delete(input.leaseId);
-    if (input.outcome === "succeeded") {
-      this.events.delete(lease.eventId);
-      return;
+    this.events.delete(lease.eventId);
+  }
+
+  public async retry(input: RetryDispatcherLeaseInput): Promise<void> {
+    const lease = this.leases.get(input.leaseId);
+    if (lease === undefined || lease.expiresAt <= input.failedAt) {
+      throw new Error("Dispatcher lease is missing or expired.");
     }
+    this.leases.delete(input.leaseId);
     const event = this.events.get(lease.eventId);
     if (event !== undefined) {
       this.events.set(event.id, {
         ...event,
         attempts: event.attempts + 1,
-        availableAt: input.completedAt,
+        availableAt: input.retryAt ?? input.failedAt,
       });
     }
   }
@@ -546,6 +556,7 @@ export class InMemoryContentStore
       (candidate) => candidate.model.key === entry.model.key,
     ).length;
     assertEntryCreationAllowed(entry.model.kind, existingEntryCount);
+    this.assertActiveReferences(input.mediaReferences ?? []);
     this.entries.set(entry.id, entry);
     this.references.set(entry.draft.id, clone(input.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(entry), status: "created" });
@@ -602,6 +613,7 @@ export class InMemoryContentStore
     const entry = this.entries.get(input.entryId);
     if (entry === undefined)
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    this.assertActiveReferences(input.mutation.mediaReferences ?? []);
     const saved = saveCompleteDraft(entry, input.mutation);
     this.entries.set(saved.id, saved);
     this.references.set(saved.draft.id, clone(input.mutation.mediaReferences ?? []));
@@ -794,6 +806,18 @@ export class InMemoryContentStore
       ),
       version: this.publicVersion,
     });
+  }
+
+  private assertActiveReferences(references: readonly DraftMediaReference[]): void {
+    for (const reference of references) {
+      const media = this.media.get(reference.mediaId);
+      // Some application tests intentionally validate media through a separate
+      // read double; when this store owns the record it still enforces the
+      // persistence-time active-state guard.
+      if (media !== undefined && media.status !== "active") {
+        throw new DomainError("CONTENT_INVALID_STATE", "Media is unavailable for reference.");
+      }
+    }
   }
 
   private page<Value>(

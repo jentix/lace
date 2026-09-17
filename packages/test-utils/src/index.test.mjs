@@ -24,6 +24,8 @@ import {
 } from "@lacecms/domain";
 import {
   applyPreparedConfigurationSynchronization,
+  defaultDispatcherRetryPolicy,
+  dispatcherRetryDelay,
   dispatcherEventId,
   opaqueTokenSecret,
   prepareConfigurationSynchronization,
@@ -395,6 +397,37 @@ function savedMutation(revision, title, slug) {
   };
 }
 
+test("in-memory persistence refuses a new reference after media deletion commits", async () => {
+  const store = new InMemoryContentStore();
+  const id = mediaId("deleting-media");
+  store.registerMedia({
+    createdAt: unixMilliseconds(1),
+    createdBy: editor.id,
+    filename: "image.png",
+    id,
+    mimeType: "image/png",
+    size: 1,
+    status: "active",
+    storageKey: "media/deleting-media",
+    updatedAt: unixMilliseconds(1),
+  });
+  await store.markForDeletion({
+    mediaId: id,
+    requestedAt: unixMilliseconds(2),
+    requestedBy: editor,
+  });
+  await expect(
+    store.create({
+      entry: entry({
+        id: "deleting-reference",
+        model: { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" },
+        slug: "deleting-reference",
+      }),
+      mediaReferences: [{ fieldPath: "image", mediaId: id, sourceKey: "$fields" }],
+    }),
+  ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+});
+
 test("provides deterministic infrastructure fakes with detached values", async () => {
   const clock = new DeterministicClock(unixMilliseconds(10));
   expect(clock.advanceBy(5)).toBe(15);
@@ -437,10 +470,10 @@ test("leases one dispatcher event exclusively until it is completed", async () =
     payload: { target: "site" },
     type: "build",
   });
-  const first = await leases.claim({ leaseDurationMs: 20, limit: 1, now: unixMilliseconds(10) });
+  const first = await leases.claim({ eventTypes: ["build"], limit: 1, now: unixMilliseconds(10) });
   expect(first).toHaveLength(1);
   await expect(
-    leases.claim({ leaseDurationMs: 20, limit: 1, now: unixMilliseconds(11) }),
+    leases.claim({ eventTypes: ["build"], limit: 1, now: unixMilliseconds(11) }),
   ).resolves.toEqual([]);
   await leases.complete({
     completedAt: unixMilliseconds(15),
@@ -448,8 +481,42 @@ test("leases one dispatcher event exclusively until it is completed", async () =
     outcome: "succeeded",
   });
   await expect(
-    leases.claim({ leaseDurationMs: 20, limit: 1, now: unixMilliseconds(16) }),
+    leases.claim({ eventTypes: ["build"], limit: 1, now: unixMilliseconds(16) }),
   ).resolves.toEqual([]);
+});
+
+test("recovers expired leases and calculates bounded full-jitter retries", async () => {
+  const leases = new InMemoryDispatcherLeasePort();
+  leases.enqueue({
+    attempts: 0,
+    availableAt: unixMilliseconds(1),
+    id: dispatcherEventId("event-retry"),
+    payload: {},
+    type: "media.delete.requested",
+  });
+  const first = await leases.claim({
+    eventTypes: ["media.delete.requested"],
+    limit: 1,
+    now: unixMilliseconds(1),
+  });
+  const recovered = await leases.claim({
+    eventTypes: ["media.delete.requested"],
+    limit: 1,
+    now: unixMilliseconds(60_001),
+  });
+  expect(recovered).toHaveLength(1);
+  await expect(
+    leases.complete({
+      completedAt: unixMilliseconds(60_001),
+      leaseId: first[0].id,
+      outcome: "succeeded",
+    }),
+  ).rejects.toThrow("expired");
+  expect(dispatcherRetryDelay(defaultDispatcherRetryPolicy, 1, 0)).toBe(0);
+  expect(dispatcherRetryDelay(defaultDispatcherRetryPolicy, 1, 0.999)).toBeLessThanOrEqual(1_000);
+  expect(dispatcherRetryDelay(defaultDispatcherRetryPolicy, 99, 0.999)).toBeLessThanOrEqual(
+    defaultDispatcherRetryPolicy.maxDelayMs,
+  );
 });
 
 test("provides detached stored model state and lists entry summaries through opaque cursors", async () => {

@@ -42,20 +42,24 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
     }),
     port: 0,
   };
+  const deletedKeys = [];
+  const storage = {
+    createReadUrl: async () => "memory-object://media",
+    delete: async (key) => {
+      deletedKeys.push(key);
+    },
+    get: async () => null,
+    put: async (input) => ({
+      contentType: input.contentType,
+      key: input.key,
+      size: 0,
+    }),
+  };
   const runtime = createNodeRuntime({
     actors,
     config,
     settings,
-    storage: {
-      createReadUrl: async () => "memory-object://media",
-      delete: async () => {},
-      get: async () => null,
-      put: async (input) => ({
-        contentType: input.contentType,
-        key: input.key,
-        size: 0,
-      }),
-    },
+    storage,
   });
   const prepared = await prepareConfigurationSynchronization({
     models: config.runtime.content,
@@ -78,6 +82,7 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
     },
     runtime,
     server,
+    storage: { deletedKeys },
   };
 }
 
@@ -175,6 +180,33 @@ test("keeps production composition anonymous even when a request asks for a test
       body: { error: { code: "AUTHORIZATION_DENIED" } },
       response: { status: 403 },
     });
+  } finally {
+    await value.close();
+  }
+});
+
+test("processes queued media deletion outside the HTTP request", async () => {
+  const value = await fixture();
+  try {
+    await value.runtime.repository.createMedia({
+      createdAt: unixMilliseconds(1),
+      createdBy: admin.id,
+      filename: "queued.png",
+      height: 1,
+      id: "queued-media",
+      mimeType: "image/png",
+      size: 1,
+      storageKey: "media/queued-media",
+      width: 1,
+    });
+    await value.runtime.repository.markForDeletion({
+      mediaId: "queued-media",
+      requestedAt: unixMilliseconds(2),
+      requestedBy: admin,
+    });
+    await value.runtime.deletionDispatcher.runOnce();
+    expect(value.storage.deletedKeys).toEqual(["media/queued-media"]);
+    expect(await value.runtime.repository.loadMedia("queued-media")).toBeNull();
   } finally {
     await value.close();
   }

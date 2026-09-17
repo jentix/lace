@@ -75,7 +75,7 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
     readiness: { isReady: async () => ready },
     requestIds: { next: () => `request-${logs.length + 1}` },
   });
-  return { app, content, exportLoads: () => exportLoads, logs, media, storage };
+  return { app, content, exportLoads: () => exportLoads, logs, media, storage, store };
 }
 
 test("mounts authentication before API and admin fallbacks", async () => {
@@ -353,4 +353,37 @@ test("allows viewers to list media but not mutate it", async () => {
       )
     ).status,
   ).toBe(403);
+});
+
+test("accepts an authorized retry only for terminal media deletion failures", async () => {
+  const { app, storage, store } = await fixture();
+  store.registerMedia({
+    createdAt: unixMilliseconds(1),
+    createdBy: actorId("admin"),
+    filename: "failed.png",
+    id: "failed-media",
+    mimeType: "image/png",
+    size: 1,
+    status: "delete_failed",
+    storageKey: "media/failed-media",
+    updatedAt: unixMilliseconds(2),
+  });
+  expect(
+    await (
+      await app.fetch(
+        new Request("https://lace.test/api/v1/admin/media/failed-media/retry-deletion", {
+          method: "POST",
+        }),
+      )
+    ).json(),
+  ).toMatchObject({ status: "deleting" });
+  expect(store.mediaDeletionRequests).toEqual(["failed-media"]);
+  await expect(
+    app.fetch(
+      new Request("https://lace.test/api/v1/admin/media/failed-media/retry-deletion", {
+        method: "POST",
+      }),
+    ),
+  ).resolves.toMatchObject({ status: 422 });
+  expect(await storage.get("media/failed-media")).toBeNull();
 });

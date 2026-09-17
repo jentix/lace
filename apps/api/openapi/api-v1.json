@@ -665,6 +665,109 @@
         "tags": ["admin"]
       }
     },
+    "/api/v1/admin/media/{mediaId}/retry-deletion": {
+      "post": {
+        "operationId": "postApiV1AdminMediaByMediaIdRetryDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "createdAt": {},
+                    "createdBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "height": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": ["active", "delete_failed", "deleting"]
+                    },
+                    "updatedAt": {},
+                    "url": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "createdAt",
+                    "createdBy",
+                    "filename",
+                    "id",
+                    "mimeType",
+                    "size",
+                    "status",
+                    "updatedAt",
+                    "url"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Deletion retry requested"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry media deletion",
+        "tags": ["admin"]
+      }
+    },
     "/api/v1/admin/models/{modelKey}/entries": {
       "get": {
         "operationId": "getApiV1AdminModelsByModelKeyEntries",

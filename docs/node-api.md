@@ -71,6 +71,29 @@ development objects across restarts.
 /health/ready` performs one local SQLite `SELECT 1`; bucket reachability is
 checked once before startup, not on every readiness request.
 
+## Recoverable media deletion
+
+`DELETE /api/v1/admin/media/:mediaId` only marks an unreferenced active item as
+`deleting` and returns `202 Accepted`. After the MinIO startup preflight, the
+Node process runs one non-overlapping background pass per second for
+`media.delete.requested` work. Each claim has a 60-second lease; a restart or
+crash leaves unfinished work available for recovery after that lease expires.
+
+Storage failures retry at most eight times with full-jitter exponential backoff
+(one-second base, fifteen-minute cap). The final failure leaves metadata in
+`delete_failed` with an internal sanitized diagnostic; it never exposes bucket
+details, storage keys, credentials, or raw SDK errors in media JSON. An actor
+with `media:write` can request a fresh asynchronous attempt with:
+
+```text
+POST /api/v1/admin/media/:mediaId/retry-deletion
+```
+
+The retry is accepted only for an unreferenced `delete_failed` item. It clears
+the prior internal diagnostic, returns `202 Accepted`, and never performs object
+deletion in the HTTP request. A successful or already-absent object deletion is
+followed by an atomic removal of its still-unreferenced `deleting` metadata.
+
 ## Current boundaries
 
 The cache always misses and the build trigger reports unavailable. The Node

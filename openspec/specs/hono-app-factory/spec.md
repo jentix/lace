@@ -169,10 +169,11 @@ provide a browser actor
 
 ### Requirement: Media HTTP routes separate draft administration from public delivery
 The HTTP application SHALL expose authenticated `GET` and `POST`
-`/api/v1/admin/media`, authenticated `DELETE /api/v1/admin/media/:mediaId`, and
+`/api/v1/admin/media`, authenticated `DELETE /api/v1/admin/media/:mediaId`,
+authenticated `POST /api/v1/admin/media/:mediaId/retry-deletion`, and
 authenticated `GET /api/v1/admin/media/:mediaId/preview` routes. The list and
-preview routes SHALL require the media lifecycle read permission, while upload
-and deletion SHALL retain the media lifecycle write permission. It SHALL expose
+preview routes SHALL require the media lifecycle read permission, while upload,
+deletion, and retry deletion SHALL retain the media lifecycle write permission. It SHALL expose
 anonymous `GET /api/v1/public/media/:mediaId` only when the supplied public-read
 capability finds a reference from a current published snapshot. A non-existent,
 draft-only, deleting, or unreferenced media ID SHALL have the same public
@@ -194,6 +195,12 @@ not-found response and SHALL not be probed through object storage.
 - **WHEN** an authorized writer deletes an eligible active media item
 - **THEN** the API returns its deleting metadata with an accepted status and
   does not synchronously delete its binary object
+
+#### Scenario: An authorized administrator retries terminal deletion failure
+- **WHEN** an actor with media lifecycle write permission posts a retry request
+  for an unreferenced `delete_failed` media item
+- **THEN** the API returns accepted deleting metadata and does not synchronously
+  access or delete the binary object
 
 ### Requirement: Media ingestion has an independent streaming size boundary
 The HTTP application SHALL consume a multipart media upload as a bounded binary

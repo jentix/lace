@@ -9,6 +9,7 @@ import {
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
   NodeMinioObjectStorage,
+  NodeMediaDeletionDispatcher,
   NodeObjectStorageError,
   NodeContentRepository,
   NodeFixedWindowRateLimiter,
@@ -40,6 +41,7 @@ import {
   mediaId,
   unixMilliseconds,
 } from "@lacecms/domain";
+import { dispatcherEventId, dispatcherLeaseId } from "@lacecms/application";
 
 const minioEnvironment = Object.freeze({
   LACE_MINIO_ACCESS_KEY: "test-access-key",
@@ -51,6 +53,149 @@ const minioEnvironment = Object.freeze({
 });
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("claims media deletion work exclusively and finalizes or exposes terminal failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-outbox-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const repository = new NodeContentRepository(database.connection, () => undefined, {
+      nextId: (() => {
+        let value = 0;
+        return () => `event-${++value}`;
+      })(),
+    });
+    const insert = (id, attempts = 0) => {
+      database.connection
+        .prepare(
+          "insert into media (id, storage_key, filename, mime_type, size, metadata_json, status, created_by, created_at, updated_at) values (?, ?, 'image.png', 'image/png', 1, '{}', 'deleting', 'admin', 1, 1)",
+        )
+        .run(id, `media/${id}`);
+      database.connection
+        .prepare(
+          "insert into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'media.delete.requested', ?, ?, 1, 1)",
+        )
+        .run(`outbox-${id}`, JSON.stringify({ mediaId: id }), attempts);
+    };
+    insert("media-success");
+    const first = await repository.claim({
+      eventTypes: ["media.delete.requested"],
+      limit: 1,
+      now: unixMilliseconds(1),
+    });
+    expect(first).toHaveLength(1);
+    await expect(
+      repository.claim({
+        eventTypes: ["media.delete.requested"],
+        limit: 1,
+        now: unixMilliseconds(2),
+      }),
+    ).resolves.toEqual([]);
+    await repository.completeMediaDeletion({
+      completedAt: unixMilliseconds(2),
+      leaseId: first[0].id,
+      mediaId: mediaId("media-success"),
+    });
+    expect(database.connection.prepare("select count(*) as count from media").get()).toEqual({
+      count: 0,
+    });
+
+    insert("media-terminal", 7);
+    const terminal = await repository.claim({
+      eventTypes: ["media.delete.requested"],
+      limit: 1,
+      now: unixMilliseconds(3),
+    });
+    await repository.failMediaDeletion({
+      failedAt: unixMilliseconds(4),
+      leaseId: terminal[0].id,
+      mediaId: mediaId("media-terminal"),
+      sanitizedError: "endpoint\nsecret",
+      terminal: true,
+    });
+    expect(
+      database.connection
+        .prepare("select status, last_error from media where id = 'media-terminal'")
+        .get(),
+    ).toEqual({ last_error: "endpoint secret", status: "delete_failed" });
+    await repository.retryDeletion({
+      mediaId: mediaId("media-terminal"),
+      requestedAt: unixMilliseconds(5),
+      requestedBy: { id: actorId("admin"), role: "admin" },
+    });
+    expect(
+      database.connection
+        .prepare("select status, last_error from media where id = 'media-terminal'")
+        .get(),
+    ).toEqual({ last_error: null, status: "deleting" });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("dispatches media deletion with retry, terminal, and malformed-event boundaries", async () => {
+  const completed = [];
+  const failed = [];
+  const deleted = [];
+  let now = unixMilliseconds(1_000);
+  const lease = (payload, attempts = 0) => ({
+    event: {
+      attempts,
+      availableAt: now,
+      id: dispatcherEventId(`event-${attempts}`),
+      payload,
+      type: "media.delete.requested",
+    },
+    expiresAt: unixMilliseconds(now + 60_000),
+    id: dispatcherLeaseId(`lease-${attempts}`),
+  });
+  const work = {
+    claim: async () => [lease({ mediaId: "media-1" })],
+    complete: async (input) => completed.push(input),
+    completeMediaDeletion: async (input) => completed.push(input),
+    failMediaDeletion: async (input) => failed.push(input),
+    loadDeletingMedia: async () => ({
+      createdAt: now,
+      createdBy: actorId("admin"),
+      filename: "image.png",
+      id: mediaId("media-1"),
+      mimeType: "image/png",
+      size: 1,
+      status: "deleting",
+      storageKey: "media/media-1",
+      updatedAt: now,
+    }),
+    retry: async () => {},
+  };
+  const dispatcher = new NodeMediaDeletionDispatcher({
+    clock: { now: () => now },
+    logger: { error: () => {} },
+    random: () => 0.5,
+    storage: {
+      createReadUrl: async () => "memory://object",
+      delete: async (key) => deleted.push(key),
+      get: async () => null,
+      put: async () => ({ contentType: "image/png", key: "unused", size: 0 }),
+    },
+    work,
+  });
+  await dispatcher.runOnce();
+  expect(deleted).toEqual(["media/media-1"]);
+  expect(completed).toHaveLength(1);
+
+  work.claim = async () => [lease({ mediaId: "media-1" }, 7)];
+  dispatcher["options"].storage.delete = async () => {
+    throw new Error("private storage detail");
+  };
+  await dispatcher.runOnce();
+  expect(failed).toMatchObject([{ sanitizedError: "storage_unavailable", terminal: true }]);
+
+  work.claim = async () => [lease({}, 0)];
+  await dispatcher.runOnce();
+  expect(completed).toHaveLength(2);
+});
 
 test("security service completes bootstrap once, protects its final admin, and revokes build tokens", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-security-"));
