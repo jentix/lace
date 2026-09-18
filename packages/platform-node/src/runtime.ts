@@ -1,9 +1,10 @@
-import { ContentUseCases } from "@lacecms/application";
+import { ContentUseCases, MediaUseCases } from "@lacecms/application";
 import type {
   Cache,
   Clock,
   IdGenerator,
   ObjectStorage,
+  ImageInspector,
   SiteBuildTrigger,
 } from "@lacecms/application";
 import {
@@ -29,6 +30,9 @@ import { ulid } from "ulid";
 import { NodeContentRepository } from "./content-repository.js";
 import { NodeFixedWindowRateLimiter, NodeSecurityService } from "./security.js";
 import { openNodeDatabase, type NodeDatabase } from "./index.js";
+import { NodeSharpImageInspector } from "./image-inspector.js";
+import { NodeMinioObjectStorage, type NodeMinioSettings } from "./minio-storage.js";
+import { NodeMediaDeletionDispatcher } from "./media-deletion-dispatcher.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -50,6 +54,7 @@ export interface NodeRuntimeSettings {
   readonly adminDevOrigin?: URL;
   readonly databasePath: string;
   readonly host: string;
+  readonly minio: NodeMinioSettings;
   readonly port: number;
   readonly publicBaseUrl: URL;
   readonly siteDevOrigin?: URL;
@@ -98,6 +103,23 @@ function absoluteHttpUrl(
   }
 }
 
+function validBucket(value: string): boolean {
+  return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u.test(value) && !value.includes("..");
+}
+
+function positiveInteger(
+  value: string | undefined,
+  variable: string,
+  issues: NodeEnvironmentIssue[],
+): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 60_000) {
+    issues.push({ reason: "invalid", variable });
+    return undefined;
+  }
+  return parsed;
+}
+
 /** Parses all runtime settings once, without exposing supplied environment values in errors. */
 export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRuntimeSettings {
   const issues: NodeEnvironmentIssue[] = [];
@@ -129,11 +151,38 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     issues,
     { originOnly: true },
   );
+  const minioAccessKeyId = requiredString(environment, "LACE_MINIO_ACCESS_KEY", issues);
+  const minioBucket = requiredString(environment, "LACE_MINIO_BUCKET", issues);
+  if (minioBucket !== undefined && !validBucket(minioBucket)) {
+    issues.push({ reason: "invalid", variable: "LACE_MINIO_BUCKET" });
+  }
+  const minioEndpoint = absoluteHttpUrl(
+    requiredString(environment, "LACE_MINIO_ENDPOINT", issues),
+    "LACE_MINIO_ENDPOINT",
+    issues,
+    { originOnly: true },
+  );
+  const minioRegion = requiredString(environment, "LACE_MINIO_REGION", issues);
+  if (minioRegion !== undefined && /\s/u.test(minioRegion)) {
+    issues.push({ reason: "invalid", variable: "LACE_MINIO_REGION" });
+  }
+  const minioSecretAccessKey = requiredString(environment, "LACE_MINIO_SECRET_KEY", issues);
+  const minioTimeoutMs = positiveInteger(
+    requiredString(environment, "LACE_MINIO_TIMEOUT_MS", issues),
+    "LACE_MINIO_TIMEOUT_MS",
+    issues,
+  );
   if (
     issues.length > 0 ||
     authSecret === undefined ||
     databasePath === undefined ||
-    publicBaseUrl === undefined
+    publicBaseUrl === undefined ||
+    minioAccessKeyId === undefined ||
+    minioBucket === undefined ||
+    minioEndpoint === undefined ||
+    minioRegion === undefined ||
+    minioSecretAccessKey === undefined ||
+    minioTimeoutMs === undefined
   ) {
     throw new NodeEnvironmentError(Object.freeze(issues));
   }
@@ -142,6 +191,15 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     authSecret,
     databasePath,
     host,
+    minio: {
+      accessKeyId: minioAccessKeyId,
+      bucket: minioBucket,
+      endpoint: minioEndpoint,
+      publicBaseUrl,
+      region: minioRegion,
+      secretAccessKey: minioSecretAccessKey,
+      timeoutMs: minioTimeoutMs,
+    },
     port,
     publicBaseUrl,
     ...(siteDevOrigin === undefined ? {} : { siteDevOrigin }),
@@ -261,9 +319,11 @@ export interface CreateNodeRuntimeInput {
   readonly environment?: LaceAppInput["environment"];
   readonly logger?: ServerLogger;
   readonly maxBodyBytes?: number;
+  readonly imageInspector?: ImageInspector;
   readonly rateLimiter?: RequestRateLimiter;
   readonly requestIds?: RequestIdGenerator;
   readonly settings: NodeRuntimeSettings;
+  readonly storage?: ObjectStorage;
 }
 
 export interface NodeRuntime {
@@ -271,11 +331,20 @@ export interface NodeRuntime {
   readonly cache: Cache;
   readonly close: () => void;
   readonly content: ContentUseCases;
+  readonly media: MediaUseCases;
   readonly database: NodeDatabase;
+  readonly deletionDispatcher: NodeMediaDeletionDispatcher;
   readonly readiness: ReadinessProbe;
   readonly repository: NodeContentRepository;
   readonly security: NodeSecurityService;
   readonly storage: ObjectStorage;
+  readonly verifyStorage: () => Promise<void>;
+}
+
+function hasStartupStorageCheck(
+  storage: ObjectStorage,
+): storage is ObjectStorage & { readonly assertReady: () => Promise<void> } {
+  return "assertReady" in storage && typeof storage.assertReady === "function";
 }
 
 /** Small built-in config for the pre-generator local development command. */
@@ -312,7 +381,15 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
       clock,
     );
   const cache = new NoopNodeCache();
-  const storage = new NodePlaceholderObjectStorage(input.settings.publicBaseUrl);
+  const storage = input.storage ?? new NodeMinioObjectStorage(input.settings.minio);
+  const deletionDispatcher = new NodeMediaDeletionDispatcher({
+    clock,
+    logger: {
+      error: (entry) => console.error(JSON.stringify({ component: "media-deletion", ...entry })),
+    },
+    storage,
+    work: repository,
+  });
   const buildTrigger = new NoopNodeBuildTrigger();
   const readiness = new NodeSqliteReadiness(database.connection);
   const content = new ContentUseCases({
@@ -322,6 +399,17 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     idGenerator: ids,
     media: repository,
     siteBuildTrigger: buildTrigger,
+  });
+  const media = new MediaUseCases({
+    clock,
+    idGenerator: ids,
+    imageInspector: input.imageInspector ?? new NodeSharpImageInspector(),
+    logger: {
+      error: (entry) => console.error(JSON.stringify({ component: "media", ...entry })),
+    },
+    media: repository,
+    publicMedia: repository,
+    storage,
   });
   const auth =
     input.auth ??
@@ -340,6 +428,8 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },
     logger: input.logger ?? defaultNodeLogger,
     maxBodyBytes: input.maxBodyBytes ?? 1_048_576,
+    media,
+    publicBaseUrl: input.settings.publicBaseUrl.href,
     publicContent: repository,
     rateLimiter,
     readiness,
@@ -352,10 +442,14 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     close: () => database.connection.close(),
     content,
     database,
+    deletionDispatcher,
+    media,
     readiness,
     repository,
     security,
     storage,
+    verifyStorage: () =>
+      hasStartupStorageCheck(storage) ? storage.assertReady() : Promise.resolve(),
   });
 }
 

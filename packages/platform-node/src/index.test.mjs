@@ -2,11 +2,15 @@ import { expect, test } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { hashPassword } from "better-auth/crypto";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
+  NodeMinioObjectStorage,
+  NodeMediaDeletionDispatcher,
+  NodeObjectStorageError,
   NodeContentRepository,
   NodeFixedWindowRateLimiter,
   NodeSecurityService,
@@ -37,8 +41,161 @@ import {
   mediaId,
   unixMilliseconds,
 } from "@lacecms/domain";
+import { dispatcherEventId, dispatcherLeaseId } from "@lacecms/application";
+
+const minioEnvironment = Object.freeze({
+  LACE_MINIO_ACCESS_KEY: "test-access-key",
+  LACE_MINIO_BUCKET: "lace-media",
+  LACE_MINIO_ENDPOINT: "http://minio.test:9000",
+  LACE_MINIO_REGION: "us-east-1",
+  LACE_MINIO_SECRET_KEY: "test-secret-key",
+  LACE_MINIO_TIMEOUT_MS: "1000",
+});
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("claims media deletion work exclusively and finalizes or exposes terminal failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-outbox-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    const repository = new NodeContentRepository(database.connection, () => undefined, {
+      nextId: (() => {
+        let value = 0;
+        return () => `event-${++value}`;
+      })(),
+    });
+    const insert = (id, attempts = 0) => {
+      database.connection
+        .prepare(
+          "insert into media (id, storage_key, filename, mime_type, size, metadata_json, status, created_by, created_at, updated_at) values (?, ?, 'image.png', 'image/png', 1, '{}', 'deleting', 'admin', 1, 1)",
+        )
+        .run(id, `media/${id}`);
+      database.connection
+        .prepare(
+          "insert into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'media.delete.requested', ?, ?, 1, 1)",
+        )
+        .run(`outbox-${id}`, JSON.stringify({ mediaId: id }), attempts);
+    };
+    insert("media-success");
+    const first = await repository.claim({
+      eventTypes: ["media.delete.requested"],
+      limit: 1,
+      now: unixMilliseconds(1),
+    });
+    expect(first).toHaveLength(1);
+    await expect(
+      repository.claim({
+        eventTypes: ["media.delete.requested"],
+        limit: 1,
+        now: unixMilliseconds(2),
+      }),
+    ).resolves.toEqual([]);
+    await repository.completeMediaDeletion({
+      completedAt: unixMilliseconds(2),
+      leaseId: first[0].id,
+      mediaId: mediaId("media-success"),
+    });
+    expect(database.connection.prepare("select count(*) as count from media").get()).toEqual({
+      count: 0,
+    });
+
+    insert("media-terminal", 7);
+    const terminal = await repository.claim({
+      eventTypes: ["media.delete.requested"],
+      limit: 1,
+      now: unixMilliseconds(3),
+    });
+    await repository.failMediaDeletion({
+      failedAt: unixMilliseconds(4),
+      leaseId: terminal[0].id,
+      mediaId: mediaId("media-terminal"),
+      sanitizedError: "endpoint\nsecret",
+      terminal: true,
+    });
+    expect(
+      database.connection
+        .prepare("select status, last_error from media where id = 'media-terminal'")
+        .get(),
+    ).toEqual({ last_error: "endpoint secret", status: "delete_failed" });
+    await repository.retryDeletion({
+      mediaId: mediaId("media-terminal"),
+      requestedAt: unixMilliseconds(5),
+      requestedBy: { id: actorId("admin"), role: "admin" },
+    });
+    expect(
+      database.connection
+        .prepare("select status, last_error from media where id = 'media-terminal'")
+        .get(),
+    ).toEqual({ last_error: null, status: "deleting" });
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("dispatches media deletion with retry, terminal, and malformed-event boundaries", async () => {
+  const completed = [];
+  const failed = [];
+  const deleted = [];
+  let now = unixMilliseconds(1_000);
+  const lease = (payload, attempts = 0) => ({
+    event: {
+      attempts,
+      availableAt: now,
+      id: dispatcherEventId(`event-${attempts}`),
+      payload,
+      type: "media.delete.requested",
+    },
+    expiresAt: unixMilliseconds(now + 60_000),
+    id: dispatcherLeaseId(`lease-${attempts}`),
+  });
+  const work = {
+    claim: async () => [lease({ mediaId: "media-1" })],
+    complete: async (input) => completed.push(input),
+    completeMediaDeletion: async (input) => completed.push(input),
+    failMediaDeletion: async (input) => failed.push(input),
+    loadDeletingMedia: async () => ({
+      createdAt: now,
+      createdBy: actorId("admin"),
+      filename: "image.png",
+      id: mediaId("media-1"),
+      mimeType: "image/png",
+      size: 1,
+      status: "deleting",
+      storageKey: "media/media-1",
+      updatedAt: now,
+    }),
+    retry: async () => {},
+  };
+  const dispatcher = new NodeMediaDeletionDispatcher({
+    clock: { now: () => now },
+    logger: { error: () => {} },
+    random: () => 0.5,
+    storage: {
+      createReadUrl: async () => "memory://object",
+      delete: async (key) => deleted.push(key),
+      get: async () => null,
+      put: async () => ({ contentType: "image/png", key: "unused", size: 0 }),
+    },
+    work,
+  });
+  await dispatcher.runOnce();
+  expect(deleted).toEqual(["media/media-1"]);
+  expect(completed).toHaveLength(1);
+
+  work.claim = async () => [lease({ mediaId: "media-1" }, 7)];
+  dispatcher["options"].storage.delete = async () => {
+    throw new Error("private storage detail");
+  };
+  await dispatcher.runOnce();
+  expect(failed).toMatchObject([{ sanitizedError: "storage_unavailable", terminal: true }]);
+
+  work.claim = async () => [lease({}, 0)];
+  await dispatcher.runOnce();
+  expect(completed).toHaveLength(2);
+});
 
 test("security service completes bootstrap once, protects its final admin, and revokes build tokens", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-security-"));
@@ -114,6 +271,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   const secret = "https://user:opaque-secret@invalid.test/path?token=opaque-secret";
   expect(() =>
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_DATABASE_PATH: "",
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: secret,
@@ -122,6 +280,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   ).toThrow("Invalid Node environment: LACE_DATABASE_PATH, LACE_PUBLIC_BASE_URL, LACE_PORT.");
   try {
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: "",
       LACE_PUBLIC_BASE_URL: secret,
@@ -131,6 +290,7 @@ test("validates named Node settings without disclosing supplied values", () => {
   }
   expect(
     parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_ADMIN_DEV_ORIGIN: "http://127.0.0.1:5173",
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: "/tmp/lace.sqlite",
@@ -142,10 +302,23 @@ test("validates named Node settings without disclosing supplied values", () => {
     port: 3000,
     publicBaseUrl: new URL("https://lace.test/base/"),
   });
+  try {
+    parseNodeRuntimeSettings({
+      ...minioEnvironment,
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+      LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+      LACE_MINIO_ENDPOINT: "https://user:opaque-minio-secret@minio.test/",
+      LACE_PUBLIC_BASE_URL: "https://lace.test/",
+    });
+  } catch (error) {
+    expect(String(error)).toContain("LACE_MINIO_ENDPOINT");
+    expect(String(error)).not.toContain("opaque-minio-secret");
+  }
 });
 
 test("uses configured public URLs and fails closed for placeholder infrastructure", async () => {
   const settings = parseNodeRuntimeSettings({
+    ...minioEnvironment,
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
     LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
     LACE_PUBLIC_BASE_URL: "https://lace.test/base/",
@@ -162,6 +335,92 @@ test("uses configured public URLs and fails closed for placeholder infrastructur
   await cache.set("derived", { value: 1 });
   await expect(cache.get("derived")).resolves.toBeNull();
   await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({ accepted: false });
+});
+
+test("MinIO storage streams objects, distinguishes missing keys, and sanitizes failures", async () => {
+  const commands = [];
+  const client = {
+    send: async (command, options) => {
+      commands.push({ command, options });
+      if (command.constructor.name === "GetObjectCommand") {
+        return { Body: Readable.from([Buffer.from("media-bytes")]) };
+      }
+      if (command.constructor.name === "PutObjectCommand") {
+        for await (const _chunk of command.input.Body) {
+          // A real S3 client consumes the request stream before resolving.
+        }
+      }
+      return {};
+    },
+  };
+  const storage = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/base/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    client,
+  );
+  await storage.assertReady();
+  const stored = await storage.put({
+    body: {
+      async *[Symbol.asyncIterator]() {
+        yield new Uint8Array([1, 2]);
+        yield new Uint8Array([3]);
+      },
+    },
+    contentType: "image/png",
+    key: "media/example",
+  });
+  expect(stored).toEqual({ contentType: "image/png", key: "media/example", size: 3 });
+  expect(await storage.createReadUrl("media/example")).toBe(
+    "https://lace.test/base/api/v1/public/media/example",
+  );
+  await expect(
+    (async () => {
+      const output = await storage.get("media/example");
+      return output === null ? undefined : Buffer.concat(await Array.fromAsync(output));
+    })(),
+  ).resolves.toEqual(Buffer.from("media-bytes"));
+  await storage.delete("media/example");
+  expect(commands.map(({ command }) => command.constructor.name)).toEqual([
+    "HeadBucketCommand",
+    "PutObjectCommand",
+    "GetObjectCommand",
+    "DeleteObjectCommand",
+  ]);
+  expect(commands.every(({ options }) => options.abortSignal instanceof AbortSignal)).toBe(true);
+
+  const missing = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    { send: async () => Promise.reject({ name: "NoSuchKey" }) },
+  );
+  await expect(missing.get("missing")).resolves.toBeNull();
+  const unavailable = new NodeMinioObjectStorage(
+    {
+      accessKeyId: "test-access-key",
+      bucket: "lace-media",
+      endpoint: new URL("http://minio.test:9000"),
+      publicBaseUrl: new URL("https://lace.test/"),
+      region: "us-east-1",
+      secretAccessKey: "test-secret-key",
+      timeoutMs: 100,
+    },
+    { send: async () => Promise.reject(new Error("opaque infrastructure detail")) },
+  );
+  await expect(unavailable.assertReady()).rejects.toBeInstanceOf(NodeObjectStorageError);
 });
 
 test("reports cheap SQLite readiness failures after the connection closes", async () => {
@@ -185,6 +444,7 @@ test("Node composition maps a Better Auth session into a protected actor", async
   try {
     migrateNodeDatabase(databasePath);
     const settings = parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_DATABASE_PATH: databasePath,
       LACE_PUBLIC_BASE_URL: "https://lace.test/",

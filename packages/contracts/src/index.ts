@@ -7,7 +7,6 @@ import type {
   ContentModelRoute,
   ContentSnapshot,
   DomainErrorCode,
-  MediaMetadata,
   SiteBuildState,
   UnixMilliseconds,
 } from "@lacecms/domain";
@@ -264,6 +263,7 @@ export const mediaMetadataSchema = v.strictObject({
   url: v.string(),
   width: v.optional(nonNegativeIntegerSchema),
 });
+export const mediaListSchema = cursorPageSchema(mediaMetadataSchema);
 
 export const siteBuildSchema = v.strictObject({
   id: identifierSchema,
@@ -306,6 +306,7 @@ export type ContentEntryDto = v.InferOutput<typeof contentEntrySchema>;
 export type ContentSnapshotDto = v.InferOutput<typeof contentSnapshotSchema>;
 export type ContentBlockDto = v.InferOutput<typeof contentBlockSchema>;
 export type MediaMetadataDto = v.InferOutput<typeof mediaMetadataSchema>;
+export type MediaListDto = v.InferOutput<typeof mediaListSchema>;
 export type SiteBuildDto = v.InferOutput<typeof siteBuildSchema>;
 export type ErrorEnvelope = v.InferOutput<typeof errorEnvelopeSchema>;
 export type ContractValidationIssue = v.InferOutput<typeof contractValidationIssueSchema>;
@@ -359,7 +360,20 @@ export function toContentEntryDto(entry: ContentEntry): ContentEntryDto {
 }
 
 /** Maps metadata without exposing the private storage key. */
-export function toMediaMetadataDto(media: MediaMetadata, url: string): MediaMetadataDto {
+export interface MediaMetadataDtoSource {
+  readonly createdAt: UnixMilliseconds;
+  readonly createdBy: string;
+  readonly filename: string;
+  readonly height?: number;
+  readonly id: string;
+  readonly mimeType: string;
+  readonly size: number;
+  readonly status: "active" | "delete_failed" | "deleting";
+  readonly updatedAt: UnixMilliseconds;
+  readonly width?: number;
+}
+
+export function toMediaMetadataDto(media: MediaMetadataDtoSource, url: string): MediaMetadataDto {
   return {
     createdAt: toIsoTimestamp(media.createdAt),
     createdBy: media.createdBy,
@@ -373,6 +387,14 @@ export function toMediaMetadataDto(media: MediaMetadata, url: string): MediaMeta
     url,
     ...(media.width === undefined ? {} : { width: media.width }),
   };
+}
+
+/** Produces the stable Lace media URL from configured public origin data only. */
+export function mediaUrl(baseUrl: string, mediaId: string): string {
+  if (!/^https?:\/\/[^\s]+\/$/u.test(baseUrl)) {
+    throw new TypeError("Media base URL must be an absolute HTTP(S) URL ending in a slash.");
+  }
+  return `${baseUrl}api/v1/public/media/${encodeURIComponent(mediaId)}`;
 }
 
 export function toSiteBuildDto(build: SiteBuildState): SiteBuildDto {

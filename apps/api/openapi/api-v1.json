@@ -368,6 +368,406 @@
         "tags": ["admin"]
       }
     },
+    "/api/v1/admin/media": {
+      "get": {
+        "operationId": "getApiV1AdminMedia",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "createdAt": {},
+                          "createdBy": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "filename": {
+                            "type": "string"
+                          },
+                          "height": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "mimeType": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "status": {
+                            "enum": ["active", "delete_failed", "deleting"]
+                          },
+                          "updatedAt": {},
+                          "url": {
+                            "type": "string"
+                          },
+                          "width": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "createdAt",
+                          "createdBy",
+                          "filename",
+                          "id",
+                          "mimeType",
+                          "size",
+                          "status",
+                          "updatedAt",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "nextCursor": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["items"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Media page"
+          }
+        },
+        "summary": "List media",
+        "tags": ["admin"]
+      },
+      "post": {
+        "operationId": "postApiV1AdminMedia",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "createdAt": {},
+                    "createdBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "height": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": ["active", "delete_failed", "deleting"]
+                    },
+                    "updatedAt": {},
+                    "url": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "createdAt",
+                    "createdBy",
+                    "filename",
+                    "id",
+                    "mimeType",
+                    "size",
+                    "status",
+                    "updatedAt",
+                    "url"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Created media"
+          }
+        },
+        "summary": "Upload media",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/media/{mediaId}": {
+      "delete": {
+        "operationId": "deleteApiV1AdminMediaByMediaId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "createdAt": {},
+                    "createdBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "height": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": ["active", "delete_failed", "deleting"]
+                    },
+                    "updatedAt": {},
+                    "url": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "createdAt",
+                    "createdBy",
+                    "filename",
+                    "id",
+                    "mimeType",
+                    "size",
+                    "status",
+                    "updatedAt",
+                    "url"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Deletion requested"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request media deletion",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/media/{mediaId}/preview": {
+      "get": {
+        "operationId": "getApiV1AdminMediaByMediaIdPreview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview media",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/media/{mediaId}/retry-deletion": {
+      "post": {
+        "operationId": "postApiV1AdminMediaByMediaIdRetryDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "createdAt": {},
+                    "createdBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "height": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": ["active", "delete_failed", "deleting"]
+                    },
+                    "updatedAt": {},
+                    "url": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "createdAt",
+                    "createdBy",
+                    "filename",
+                    "id",
+                    "mimeType",
+                    "size",
+                    "status",
+                    "updatedAt",
+                    "url"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Deletion retry requested"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry media deletion",
+        "tags": ["admin"]
+      }
+    },
     "/api/v1/admin/models/{modelKey}/entries": {
       "get": {
         "operationId": "getApiV1AdminModelsByModelKeyEntries",
@@ -1255,6 +1655,49 @@
         "operationId": "getApiV1PublicContentByPath",
         "responses": {},
         "summary": "Read published content by path",
+        "tags": ["public"]
+      }
+    },
+    "/api/v1/public/media/{mediaId}": {
+      "get": {
+        "operationId": "getApiV1PublicMediaByMediaId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read published media",
         "tags": ["public"]
       }
     },

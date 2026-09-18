@@ -11,17 +11,25 @@ HTTP application safely usable with SQLite and verifiable as an HTTP service.
 
 The system SHALL provide a Node composition root that supplies the normalized
 configuration, SQLite-backed content capabilities, system UTC clock, unique-ID
-generation, non-authoritative no-op cache, placeholder object storage, no-op
-site-build trigger, request IDs, logging, rate limiting, health probes, and
-environment metadata required by the portable HTTP application. It SHALL expose
-only contract DTOs through HTTP and SHALL keep database rows and SQLite driver
-objects inside the Node boundary.
+generation, non-authoritative no-op cache, configured private MinIO
+object-storage, no-op site-build trigger, request IDs, logging, rate limiting,
+health checks, and environment metadata required by the portable HTTP
+application. It SHALL construct the portable media lifecycle use cases with the
+Node object store and expose only contract DTOs or verified binary responses
+through HTTP; database rows, SQLite driver objects, and object-store credentials
+SHALL remain inside the Node boundary.
 
 #### Scenario: A seeded Node service serves the content lifecycle
 - **WHEN** a Node service is seeded with synchronized configuration and a
   test-authorized actor creates, saves, and publishes an entry through HTTP
 - **THEN** public HTTP reads return the published DTO, while subsequent draft
   changes remain absent from the public response until another publication
+
+#### Scenario: A configured Node service serves an uploaded published image
+- **WHEN** a Node service has passed its MinIO startup check and an authorized
+  actor uploads media that is referenced by a current published snapshot
+- **THEN** the public stable media route serves that verified object while the
+  Node composition keeps its object key and MinIO credentials private
 
 #### Scenario: A conditional build export reaches the Node boundary
 - **WHEN** a client requests the Node build export with the ETag returned for
@@ -139,3 +147,22 @@ and use the configured UTC clock and ID generator at the security boundary.
 build-token-authenticated build-export traffic
 - **THEN** it uses its persistent security capability and logs neither
 plaintext token nor raw rate-limit subject
+
+### Requirement: Node composition runs recoverable media-deletion dispatch
+The Node composition root SHALL run a bounded background dispatcher for
+`media.delete.requested` events after its required startup dependencies have
+been validated. It SHALL stop accepting new work and await or safely relinquish
+in-flight leases during shutdown, so a later process can recover unfinished
+work after lease expiry. Dispatch failures SHALL be logged with only sanitized
+event and media identifiers and SHALL not make the HTTP listener appear ready
+before required startup validation succeeds.
+
+#### Scenario: A Node process deletes queued media
+- **WHEN** a running Node service has an available media-deletion event
+- **THEN** its dispatcher claims and processes the event in the background
+  without exposing object-store credentials or blocking an HTTP request
+
+#### Scenario: Node restarts during deletion work
+- **WHEN** a Node process stops with a media-deletion lease still unfinished
+- **THEN** a restarted or peer dispatcher can recover the event after lease
+  expiry and the media record remains protected from unsafe synchronous removal

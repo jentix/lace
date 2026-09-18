@@ -19,6 +19,14 @@ import { createTestActorResolver } from "@lacecms/platform-node/test";
 import { createNodeDevelopmentGateway, startNodeServer } from "../dist/index.js";
 
 const admin = { id: actorId("integration-admin"), role: "admin" };
+const minioEnvironment = Object.freeze({
+  LACE_MINIO_ACCESS_KEY: "test-access-key",
+  LACE_MINIO_BUCKET: "lace-media",
+  LACE_MINIO_ENDPOINT: "http://minio.test:9000",
+  LACE_MINIO_REGION: "us-east-1",
+  LACE_MINIO_SECRET_KEY: "test-secret-key",
+  LACE_MINIO_TIMEOUT_MS: "1000",
+});
 
 async function fixture({ actors = createTestActorResolver(admin) } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "lace-node-api-"));
@@ -27,13 +35,32 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
   const config = await createNodeDevelopmentConfig();
   const settings = {
     ...parseNodeRuntimeSettings({
+      ...minioEnvironment,
       LACE_DATABASE_PATH: databasePath,
       LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
       LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
     }),
     port: 0,
   };
-  const runtime = createNodeRuntime({ actors, config, settings });
+  const deletedKeys = [];
+  const storage = {
+    createReadUrl: async () => "memory-object://media",
+    delete: async (key) => {
+      deletedKeys.push(key);
+    },
+    get: async () => null,
+    put: async (input) => ({
+      contentType: input.contentType,
+      key: input.key,
+      size: 0,
+    }),
+  };
+  const runtime = createNodeRuntime({
+    actors,
+    config,
+    settings,
+    storage,
+  });
   const prepared = await prepareConfigurationSynchronization({
     models: config.runtime.content,
     state: runtime.repository,
@@ -55,6 +82,7 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
     },
     runtime,
     server,
+    storage: { deletedKeys },
   };
 }
 
@@ -157,6 +185,68 @@ test("keeps production composition anonymous even when a request asks for a test
   }
 });
 
+test("processes queued media deletion outside the HTTP request", async () => {
+  const value = await fixture();
+  try {
+    await value.runtime.repository.createMedia({
+      createdAt: unixMilliseconds(1),
+      createdBy: admin.id,
+      filename: "queued.png",
+      height: 1,
+      id: "queued-media",
+      mimeType: "image/png",
+      size: 1,
+      storageKey: "media/queued-media",
+      width: 1,
+    });
+    await value.runtime.repository.markForDeletion({
+      mediaId: "queued-media",
+      requestedAt: unixMilliseconds(2),
+      requestedBy: admin,
+    });
+    await value.runtime.deletionDispatcher.runOnce();
+    expect(value.storage.deletedKeys).toEqual(["media/queued-media"]);
+    expect(await value.runtime.repository.loadMedia("queued-media")).toBeNull();
+  } finally {
+    await value.close();
+  }
+});
+
+test("preflights object storage before binding a Node listener", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-node-preflight-"));
+  const databasePath = join(directory, "lace.sqlite");
+  migrateNodeDatabase(databasePath);
+  const config = await createNodeDevelopmentConfig();
+  const settings = {
+    ...parseNodeRuntimeSettings({
+      ...minioEnvironment,
+      LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+      LACE_DATABASE_PATH: databasePath,
+      LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
+    }),
+    port: 0,
+  };
+  const runtime = createNodeRuntime({
+    config,
+    settings,
+    storage: {
+      assertReady: async () => {
+        throw new Error("bucket unavailable");
+      },
+      createReadUrl: async () => "memory-object://media",
+      delete: async () => {},
+      get: async () => null,
+      put: async (input) => ({ contentType: input.contentType, key: input.key, size: 0 }),
+    },
+  });
+  try {
+    await expect(startNodeServer({ runtime, settings })).rejects.toThrow("bucket unavailable");
+  } finally {
+    runtime.close();
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("refuses to construct the test actor resolver outside Vitest", () => {
   const original = [...process.argv];
   process.argv.splice(0, process.argv.length, "node", "production.js");
@@ -181,6 +271,7 @@ test("routes frontend requests to same-origin development upstreams without prox
   const address = upstream.address();
   const origin = `http://127.0.0.1:${address.port}`;
   const settings = parseNodeRuntimeSettings({
+    ...minioEnvironment,
     LACE_ADMIN_DEV_ORIGIN: origin,
     LACE_DATABASE_PATH: "/tmp/lace.sqlite",
     LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",

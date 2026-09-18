@@ -16,23 +16,26 @@ dry-running and atomically applying a guarded approved synchronization plan;
 creating an entry; loading an entry's draft or published aggregate; listing
 model entries with an opaque cursor; atomically replacing a complete draft at
 an expected revision; atomically publishing a guarded draft with an optional
-idempotency key; deleting an entry with caller actor/time; marking unreferenced
-media for asynchronous deletion; listing published entries for one supplied
-collection model with an opaque cursor, resolving public content, loading media
-that is publicly reachable; reading the current published-state version; and
-exporting build content. The model-sync planning and apply contracts SHALL expose
-ordered portable operations, diagnostics, fresh-state guards, and complete
-outcomes without exposing a database or generic transaction callback. A
-complete-draft command SHALL carry the validated media-reference projection,
-including its stable source key, field path, and media identity, rather than
-requiring an adapter to infer references from arbitrary JSON. Read operations
-SHALL be separate from state-changing operations. State-changing contracts SHALL
-encode their required guards and complete result rather than accepting a generic
-cross-runtime transaction callback. When a guarded publication supplies an
-idempotency key, its command contract SHALL bind the key to the entry,
-authenticated actor, and complete publication input and SHALL return the
-original completed publication result for an identical retry without performing
-the publication again.
+idempotency key; deleting an entry with caller actor/time; creating, listing,
+and loading media metadata; marking unreferenced media for asynchronous
+deletion; retrying failed media deletion; listing published entries for one
+supplied collection model with an opaque cursor, resolving public content,
+loading media that is publicly reachable; reading the current published-state
+version; and exporting build content. The model-sync planning and apply
+contracts SHALL expose ordered portable operations, diagnostics, fresh-state
+guards, and complete outcomes without exposing a database or generic
+transaction callback. A complete-draft command SHALL carry the validated media-
+reference projection, including its stable source key, field path, and media
+identity, rather than requiring an adapter to infer references from arbitrary
+JSON. Read operations SHALL be separate from state-changing operations. State-
+changing contracts SHALL encode their required guards and complete result rather
+than accepting a generic cross-runtime transaction callback. When a guarded
+publication supplies an idempotency key, its command contract SHALL bind the
+key to the entry, authenticated actor, and complete publication input and SHALL
+return the original completed publication result for an identical retry without
+performing the publication again. Media creation SHALL accept validated metadata
+only after storage success; no media command or result SHALL contain binary
+bytes, an HTTP value, a framework type, or a database row.
 
 #### Scenario: A runtime adapter supplies portable entry data
 - **WHEN** an application caller requests an entry aggregate, a cursor page for
@@ -67,6 +70,12 @@ the publication again.
 - **THEN** the persistence command receives the media identities with `$fields`
   or the stable block key and their field paths, without inspecting arbitrary
   serialized values
+
+#### Scenario: Media metadata remains separate from binary storage
+- **WHEN** a caller creates, lists, loads, requests deletion of, or retries
+  deletion of media through an application contract
+- **THEN** the contracts exchange detached metadata and lifecycle guards only,
+  while binary transfer remains at the object-storage capability boundary
 
 #### Scenario: Cursor traversal has no transport dependency
 - **WHEN** a caller lists entries for a model or published entries for one
@@ -153,3 +162,24 @@ derived credential, email-subject, and rate-limit identifiers.
 or limiter command
 - **THEN** it can enforce the documented guarded outcome without importing an
 HTTP DTO or exposing a database row to application callers
+
+### Requirement: Portable dispatch and media-finalization commands preserve recovery state
+The system SHALL expose portable contracts to claim and conditionally complete
+leased asynchronous events with a retry policy, as well as to finalize one
+claimed media-deletion event. Media finalization SHALL either remove only a
+still-`deleting`, unreferenced media record after its object deletion succeeds,
+or record a sanitized terminal deletion failure on that media record. These
+contracts SHALL carry no binary data, HTTP values, database rows, credentials,
+or raw infrastructure errors.
+
+#### Scenario: A runtime finalizes an object-deletion event
+- **WHEN** an adapter receives a valid active lease for one
+  `media.delete.requested` event after idempotent object deletion
+- **THEN** it can complete the event and remove only the matching eligible media
+  metadata through portable command inputs and outputs
+
+#### Scenario: A stale completion is refused
+- **WHEN** a dispatcher attempts to finalize or fail an event with an expired,
+  replaced, or otherwise invalid lease
+- **THEN** the adapter preserves the later event and media state without
+  reporting a successful completion

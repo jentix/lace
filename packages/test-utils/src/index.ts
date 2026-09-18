@@ -1,4 +1,5 @@
 import {
+  DISPATCHER_LEASE_DURATION_MS,
   dispatcherLeaseId,
   opaqueCursor,
   opaqueTokenVerifier,
@@ -19,6 +20,7 @@ import type {
   ContentEntryCommandPort,
   ContentEntryReadPort,
   ContentEntrySummary,
+  CreateMediaMetadataInput,
   ConfigurationSyncApplyPort,
   ConfigurationSyncModel,
   ConfigurationSyncStateReadPort,
@@ -34,7 +36,10 @@ import type {
   LoadContentEntryInput,
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
+  RetryDispatcherLeaseInput,
   MediaCommandPort,
+  MediaListPort,
+  MediaReadPort,
   StoredContentModelState,
   ObjectStorage,
   OpaqueCursor,
@@ -334,7 +339,9 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
 
   public async claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]> {
     assertPositiveInteger(input.limit, "limit");
-    assertPositiveInteger(input.leaseDurationMs, "leaseDurationMs");
+    if (input.eventTypes.length === 0 || input.eventTypes.some((type) => type.length === 0)) {
+      throw new TypeError("eventTypes must contain non-empty strings.");
+    }
     const activelyLeased = new Set(
       [...this.leases.values()]
         .filter((lease) => lease.expiresAt > input.now)
@@ -346,13 +353,14 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
     )) {
       if (
         leases.length === input.limit ||
+        !input.eventTypes.includes(event.type) ||
         event.availableAt > input.now ||
         activelyLeased.has(event.id)
       )
         continue;
       const id = dispatcherLeaseId(`lease-${this.nextLease}`);
       this.nextLease += 1;
-      const expiresAt = unixMilliseconds(input.now + input.leaseDurationMs);
+      const expiresAt = unixMilliseconds(input.now + DISPATCHER_LEASE_DURATION_MS);
       this.leases.set(id, { eventId: event.id, expiresAt });
       leases.push(Object.freeze({ event: clone(event), expiresAt, id }));
     }
@@ -361,20 +369,25 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
 
   public async complete(input: CompleteDispatcherLeaseInput): Promise<void> {
     const lease = this.leases.get(input.leaseId);
-    if (lease === undefined || lease.expiresAt < input.completedAt) {
+    if (lease === undefined || lease.expiresAt <= input.completedAt) {
       throw new Error("Dispatcher lease is missing or expired.");
     }
     this.leases.delete(input.leaseId);
-    if (input.outcome === "succeeded") {
-      this.events.delete(lease.eventId);
-      return;
+    this.events.delete(lease.eventId);
+  }
+
+  public async retry(input: RetryDispatcherLeaseInput): Promise<void> {
+    const lease = this.leases.get(input.leaseId);
+    if (lease === undefined || lease.expiresAt <= input.failedAt) {
+      throw new Error("Dispatcher lease is missing or expired.");
     }
+    this.leases.delete(input.leaseId);
     const event = this.events.get(lease.eventId);
     if (event !== undefined) {
       this.events.set(event.id, {
         ...event,
         attempts: event.attempts + 1,
-        availableAt: input.completedAt,
+        availableAt: input.retryAt ?? input.failedAt,
       });
     }
   }
@@ -402,6 +415,8 @@ export class InMemoryContentStore
     ConfigurationSyncApplyPort,
     ConfigurationSyncStateReadPort,
     MediaCommandPort,
+    MediaListPort,
+    MediaReadPort,
     PublicContentReadPort
 {
   public readonly configurationSyncBuildRequests: number[] = [];
@@ -541,6 +556,7 @@ export class InMemoryContentStore
       (candidate) => candidate.model.key === entry.model.key,
     ).length;
     assertEntryCreationAllowed(entry.model.kind, existingEntryCount);
+    this.assertActiveReferences(input.mediaReferences ?? []);
     this.entries.set(entry.id, entry);
     this.references.set(entry.draft.id, clone(input.mediaReferences ?? []));
     return Object.freeze({ entry: copyEntry(entry), status: "created" });
@@ -597,6 +613,7 @@ export class InMemoryContentStore
     const entry = this.entries.get(input.entryId);
     if (entry === undefined)
       throw new DomainError("CONTENT_INVALID_STATE", "Content entry does not exist.");
+    this.assertActiveReferences(input.mutation.mediaReferences ?? []);
     const saved = saveCompleteDraft(entry, input.mutation);
     this.entries.set(saved.id, saved);
     this.references.set(saved.draft.id, clone(input.mutation.mediaReferences ?? []));
@@ -692,12 +709,81 @@ export class InMemoryContentStore
     this.media.set(value.id, clone(value));
   }
 
+  /** Exposes a detached projection for application-layer contract assertions. */
+  public mediaReferences(snapshotId: string): readonly DraftMediaReference[] {
+    return Object.freeze(clone(this.references.get(snapshotId) ?? []));
+  }
+
+  public async createMedia(input: CreateMediaMetadataInput): Promise<MediaMetadata> {
+    if (
+      this.media.has(input.id) ||
+      [...this.media.values()].some((value) => value.storageKey === input.storageKey)
+    ) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        "Media identity or storage key already exists.",
+      );
+    }
+    const media: MediaMetadata = {
+      createdAt: input.createdAt,
+      createdBy: input.createdBy,
+      filename: input.filename,
+      height: input.height,
+      id: input.id,
+      mimeType: input.mimeType,
+      size: input.size,
+      status: "active",
+      storageKey: input.storageKey,
+      updatedAt: input.createdAt,
+      width: input.width,
+    };
+    this.media.set(media.id, clone(media));
+    return clone(media);
+  }
+
+  public async listMedia(
+    input: import("@lacecms/application").ListMediaInput,
+  ): Promise<CursorPage<MediaMetadata>> {
+    const items = [...this.media.values()]
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt - right.createdAt,
+      )
+      .map((value) => clone(value));
+    return this.page(items, input.after, input.limit, "media");
+  }
+
+  public async loadMedia(id: string): Promise<MediaMetadata | null> {
+    const media = this.media.get(id);
+    return media === undefined ? null : clone(media);
+  }
+
   public async markForDeletion(
     input: MarkMediaForDeletionInput,
   ): Promise<MarkMediaForDeletionResult> {
     const media = this.media.get(input.mediaId);
     if (media === undefined || media.status !== "active") {
       throw new DomainError("CONTENT_INVALID_STATE", "Media is not eligible for deletion.");
+    }
+    const referenced = [...this.references.values()].some((references) =>
+      references.some((reference) => reference.mediaId === input.mediaId),
+    );
+    if (referenced) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    }
+    const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
+    this.media.set(input.mediaId, clone(deleting));
+    this.mediaDeletionRequests.push(input.mediaId);
+    return Object.freeze({ media: clone(deleting), status: "deleting" });
+  }
+
+  public async retryDeletion(
+    input: MarkMediaForDeletionInput,
+  ): Promise<MarkMediaForDeletionResult> {
+    const media = this.media.get(input.mediaId);
+    if (media === undefined || media.status !== "delete_failed") {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media deletion cannot be retried.");
     }
     const referenced = [...this.references.values()].some((references) =>
       references.some((reference) => reference.mediaId === input.mediaId),
@@ -720,6 +806,18 @@ export class InMemoryContentStore
       ),
       version: this.publicVersion,
     });
+  }
+
+  private assertActiveReferences(references: readonly DraftMediaReference[]): void {
+    for (const reference of references) {
+      const media = this.media.get(reference.mediaId);
+      // Some application tests intentionally validate media through a separate
+      // read double; when this store owns the record it still enforces the
+      // persistence-time active-state guard.
+      if (media !== undefined && media.status !== "active") {
+        throw new DomainError("CONTENT_INVALID_STATE", "Media is unavailable for reference.");
+      }
+    }
   }
 
   private page<Value>(
