@@ -305,10 +305,14 @@ export const errorEnvelopeSchema = v.strictObject({
 export type ContentEntryDto = v.InferOutput<typeof contentEntrySchema>;
 export type ContentSnapshotDto = v.InferOutput<typeof contentSnapshotSchema>;
 export type ContentBlockDto = v.InferOutput<typeof contentBlockSchema>;
+export type PublicContentEntryDto = v.InferOutput<typeof publicContentEntrySchema>;
+export type PublicContentListDto = v.InferOutput<typeof publicContentListSchema>;
+export type BuildExportDto = v.InferOutput<typeof buildExportSchema>;
 export type MediaMetadataDto = v.InferOutput<typeof mediaMetadataSchema>;
 export type MediaListDto = v.InferOutput<typeof mediaListSchema>;
 export type SiteBuildDto = v.InferOutput<typeof siteBuildSchema>;
 export type ErrorEnvelope = v.InferOutput<typeof errorEnvelopeSchema>;
+export type LaceErrorCode = v.InferOutput<typeof errorCodeSchema>;
 export type ContractValidationIssue = v.InferOutput<typeof contractValidationIssueSchema>;
 
 /** Maps a portable route without importing configuration or persistence types. */

@@ -486,6 +486,13 @@ importers:
         version: 5.0.0(@types/node@24.10.1)(vite@8.2.2(@types/node@24.10.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   packages/sdk:
+    dependencies:
+      '@lacecms/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      valibot:
+        specifier: 'catalog:'
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       oxlint:
         specifier: 'catalog:'
