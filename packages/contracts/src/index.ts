@@ -1,4 +1,5 @@
-import type { JsonObject, JsonValue } from "@lacecms/content";
+import { canonicalizeJson, field } from "@lacecms/content";
+import type { FieldMetadata, JsonObject, JsonValue } from "@lacecms/content";
 import { DomainError, unixMilliseconds } from "@lacecms/domain";
 import type {
   ContentBlock,
@@ -67,6 +68,56 @@ export type OpaqueCursorDto = v.InferOutput<typeof opaqueCursorSchema>;
 export type IsoTimestamp = v.InferOutput<typeof isoTimestampSchema>;
 export type EntityTag = v.InferOutput<typeof entityTagSchema>;
 export type IdempotencyKey = v.InferOutput<typeof idempotencyKeySchema>;
+
+export type FieldMetadataMapDto = Readonly<Record<string, FieldMetadata>>;
+
+function isFieldMetadata(value: unknown): value is FieldMetadata {
+  if (!isJsonObject(value) || typeof value.type !== "string") return false;
+  const { type, ...options } = value;
+  try {
+    const normalized =
+      type === "boolean"
+        ? field.boolean(options)
+        : type === "date"
+          ? field.date(options)
+          : type === "datetime"
+            ? field.datetime(options)
+            : type === "media"
+              ? field.media(options)
+              : type === "number"
+                ? field.number(options)
+                : type === "richText"
+                  ? field.richText(options)
+                  : type === "select"
+                    ? field.select(options as { readonly options: readonly [string, ...string[]] })
+                    : type === "text"
+                      ? field.text(options)
+                      : type === "textarea"
+                        ? field.textarea(options)
+                        : type === "url"
+                          ? field.url(options)
+                          : undefined;
+    return (
+      normalized !== undefined &&
+      canonicalizeJson(value) === canonicalizeJson(normalized as unknown as JsonValue)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isFieldMetadataMap(value: unknown): value is FieldMetadataMapDto {
+  return (
+    isJsonObject(value) &&
+    Object.entries(value).every(
+      ([key, definition]) => /^[A-Za-z][A-Za-z0-9]*$/u.test(key) && isFieldMetadata(definition),
+    )
+  );
+}
+
+/** Validated, executable-value-free metadata used to render browser form fields. */
+export const fieldMetadataSchema = v.custom<FieldMetadata>(isFieldMetadata);
+export const fieldMetadataMapSchema = v.custom<FieldMetadataMapDto>(isFieldMetadataMap);
 
 /** Converts a portable Unix-millisecond value into the canonical JSON timestamp. */
 export function toIsoTimestamp(value: UnixMilliseconds | number): IsoTimestamp {
@@ -188,7 +239,7 @@ export const deleteContentEntryRequestSchema = v.strictObject({
 export const contentModelSchema = v.strictObject({
   blocks: v.array(identifierSchema),
   description: v.optional(v.string()),
-  fields: jsonObjectSchema,
+  fields: fieldMetadataMapSchema,
   key: identifierSchema,
   kind: v.picklist(["collection", "page"]),
   label: v.optional(v.string()),
@@ -435,7 +486,7 @@ export function toBuildExportDto(
 export interface ContentModelSource {
   readonly blocks: readonly string[];
   readonly description?: string;
-  readonly fields: JsonObject;
+  readonly fields: FieldMetadataMapDto;
   readonly key: string;
   readonly kind: ContentModelKind;
   readonly label?: string;

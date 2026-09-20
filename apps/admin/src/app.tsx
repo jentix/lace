@@ -7,7 +7,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import type { ContentEntryListDto } from "@lacecms/contracts";
+import type { ContentEntryDto, ContentEntryListDto, ContentModelDto } from "@lacecms/contracts";
 import {
   Link,
   Outlet,
@@ -18,11 +18,13 @@ import {
   notFound,
   redirect,
   useNavigate,
+  useBlocker,
   useRouteContext,
   useRouter,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Controller, useForm, type Control } from "react-hook-form";
 import {
   AdminClientError,
   adminQueryKeys,
@@ -30,6 +32,13 @@ import {
   isSessionExpiredError,
   type AdminClient,
 } from "./admin-client.js";
+import {
+  createDraftResolver,
+  initialModelFieldValues,
+  pointerToFormField,
+  suggestSlug,
+  type DraftEditorValues,
+} from "./editor-form.js";
 import {
   Badge,
   Button,
@@ -108,12 +117,7 @@ const modelRoute = createRoute({
   path: "/content/$modelKey",
 });
 const entryRoute = createRoute({
-  component: () => (
-    <RoutePlaceholder
-      description="The draft editor is introduced in the next admin sessions."
-      title="Entry"
-    />
-  ),
+  component: EntryEditor,
   getParentRoute: () => protectedRoute,
   params: {
     parse: (parameters) => {
@@ -582,6 +586,356 @@ function DeleteEntryDialog({
     </Dialog>
   );
 }
+
+function draftValues(model: ContentModelDto, entry: ContentEntryDto): DraftEditorValues {
+  return {
+    blocks: [...entry.draft.blocks],
+    fields: initialModelFieldValues(model, entry.draft.fields),
+    ...(entry.draft.slug === undefined ? {} : { slug: entry.draft.slug }),
+    title: entry.draft.title,
+  };
+}
+
+function fieldLabel(key: string, label: string | undefined): string {
+  return label ?? key.replace(/([A-Z])/gu, " $1").replace(/^./u, (value) => value.toUpperCase());
+}
+
+function MetadataField({
+  control,
+  definition,
+  error,
+  fieldKey,
+}: {
+  readonly control: Control<DraftEditorValues, unknown, DraftEditorValues>;
+  readonly definition: ContentModelDto["fields"][string];
+  readonly error: string | undefined;
+  readonly fieldKey: string;
+}) {
+  const id = `field-${fieldKey}`;
+  const errorId = `${id}-error`;
+  const descriptionId = `${id}-description`;
+  const describedBy = [
+    definition.description === undefined ? undefined : descriptionId,
+    error === undefined ? undefined : errorId,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join(" ");
+  return (
+    <Controller
+      control={control}
+      name={`fields.${fieldKey}` as never}
+      render={({ field }) => (
+        <div className="lace-field">
+          <label htmlFor={id}>{fieldLabel(fieldKey, definition.label)}</label>
+          {definition.description === undefined ? undefined : (
+            <small id={descriptionId}>{definition.description}</small>
+          )}
+          {definition.type === "boolean" ? (
+            <input
+              aria-describedby={describedBy || undefined}
+              checked={field.value === true}
+              id={id}
+              onChange={(event) => field.onChange(event.currentTarget.checked)}
+              type="checkbox"
+            />
+          ) : definition.type === "select" ? (
+            <select
+              aria-describedby={describedBy || undefined}
+              id={id}
+              onBlur={field.onBlur}
+              onChange={(event) => field.onChange(event.currentTarget.value || undefined)}
+              value={typeof field.value === "string" ? field.value : ""}
+            >
+              <option value="">Select an option</option>
+              {definition.options.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          ) : definition.type === "richText" ? (
+            <textarea
+              aria-describedby={describedBy || undefined}
+              id={id}
+              onBlur={field.onBlur}
+              onChange={(event) => {
+                try {
+                  field.onChange(JSON.parse(event.currentTarget.value));
+                } catch {
+                  field.onChange(event.currentTarget.value);
+                }
+              }}
+              rows={8}
+              value={field.value === undefined ? "" : JSON.stringify(field.value, null, 2)}
+            />
+          ) : definition.type === "textarea" ? (
+            <textarea
+              aria-describedby={describedBy || undefined}
+              id={id}
+              maxLength={definition.maxLength}
+              minLength={definition.minLength}
+              onBlur={field.onBlur}
+              onChange={(event) => field.onChange(event.currentTarget.value || undefined)}
+              rows={5}
+              value={typeof field.value === "string" ? field.value : ""}
+            />
+          ) : (
+            <input
+              aria-describedby={describedBy || undefined}
+              id={id}
+              max={definition.type === "number" ? definition.max : undefined}
+              maxLength={definition.type === "text" ? definition.maxLength : undefined}
+              min={definition.type === "number" ? definition.min : undefined}
+              minLength={definition.type === "text" ? definition.minLength : undefined}
+              onBlur={field.onBlur}
+              onChange={(event) =>
+                field.onChange(
+                  definition.type === "number"
+                    ? event.currentTarget.value === ""
+                      ? undefined
+                      : Number(event.currentTarget.value)
+                    : event.currentTarget.value || undefined,
+                )
+              }
+              type={
+                definition.type === "date"
+                  ? "date"
+                  : definition.type === "number"
+                    ? "number"
+                    : definition.type === "url"
+                      ? "url"
+                      : "text"
+              }
+              value={
+                typeof field.value === "string" || typeof field.value === "number"
+                  ? field.value
+                  : ""
+              }
+            />
+          )}
+          {error === undefined ? undefined : (
+            <p className="lace-field-error" id={errorId} role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
+    />
+  );
+}
+
+function EntryEditor() {
+  const { entryId, modelKey } = entryRoute.useParams();
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const queryClient = useQueryClient();
+  const models = useQuery({ queryFn: client.listModels, queryKey: adminQueryKeys.models });
+  const entry = useQuery({
+    queryFn: () => client.loadEntry(entryId),
+    queryKey: adminQueryKeys.entry(entryId),
+  });
+  const [savedEntry, setSavedEntry] = useState<ContentEntryDto | undefined>(undefined);
+  const currentEntry = savedEntry ?? entry.data;
+  const model = models.data?.items.find((item) => item.key === modelKey);
+  const modelRef = useRef<ContentModelDto | undefined>(undefined);
+  modelRef.current = model;
+  const form = useForm<DraftEditorValues, unknown, DraftEditorValues>({
+    defaultValues: { blocks: [], fields: {}, title: "" },
+    ...(model === undefined ? {} : { resolver: createDraftResolver(model) }),
+  });
+  const loaded = useRef<string | undefined>(undefined);
+  const [suggestingSlug, setSuggestingSlug] = useState(false);
+  const suggestingSlugRef = useRef(false);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
+  const titleValue = form.watch("title");
+  const initial =
+    model === undefined || currentEntry === undefined
+      ? undefined
+      : draftValues(model, currentEntry);
+  useEffect(() => {
+    if (initial === undefined || currentEntry === undefined) return;
+    const key = `${currentEntry.id}:${currentEntry.draft.revision}`;
+    if (loaded.current === key) return;
+    suggestingSlugRef.current = false;
+    form.reset(initial);
+    loaded.current = key;
+    setSuggestingSlug(false);
+    setSlugManuallyEdited(false);
+  }, [currentEntry, form, initial]);
+  useEffect(() => setSavedEntry(undefined), [entryId]);
+  useEffect(() => {
+    if (!suggestingSlugRef.current || slugManuallyEdited) return;
+    const suggested = suggestSlug(titleValue);
+    if (form.getValues("slug") !== suggested)
+      form.setValue("slug", suggested, { shouldDirty: true });
+  }, [form, slugManuallyEdited, suggestingSlug, titleValue]);
+  const blocker = useBlocker({
+    enableBeforeUnload: () => form.formState.isDirty,
+    shouldBlockFn: () => form.formState.isDirty,
+    withResolver: true,
+  });
+  const save = useMutation({
+    mutationFn: (values: DraftEditorValues) => {
+      if (currentEntry === undefined) throw new Error("The entry has not loaded.");
+      return client.saveDraft(entryId, {
+        blocks: values.blocks,
+        expectedRevision: currentEntry.draft.revision,
+        fields: values.fields,
+        ...(modelRef.current?.kind === "collection" && values.slug !== undefined
+          ? { slug: values.slug }
+          : {}),
+        title: values.title,
+      });
+    },
+    onError: (error) => {
+      if (!(error instanceof AdminClientError)) return;
+      for (const issue of error.issues ?? []) {
+        const name = pointerToFormField(issue.path);
+        if (name !== undefined)
+          form.setError(name as never, { message: issue.message, type: "server" });
+      }
+    },
+    onSuccess: async (saved) => {
+      const savedModel = modelRef.current;
+      if (savedModel === undefined) return;
+      const values = draftValues(savedModel, saved);
+      queryClient.setQueryData(adminQueryKeys.entry(entryId), saved);
+      setSavedEntry(saved);
+      loaded.current = `${saved.id}:${saved.draft.revision}`;
+      suggestingSlugRef.current = false;
+      form.reset(values);
+      setSuggestingSlug(false);
+      setSlugManuallyEdited(false);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+    },
+  });
+  useSessionRecovery(models.error ?? entry.error);
+  if (models.isPending || entry.isPending) return <RouteLoading label="Loading draft" />;
+  if (models.error !== null) return <RouteError error={models.error} />;
+  if (entry.error !== null) return <RouteError error={entry.error} />;
+  if (model === undefined || currentEntry === undefined || currentEntry.model.key !== model.key)
+    return (
+      <RoutePlaceholder
+        description="This entry is not available for the requested model."
+        title="Entry not found"
+      />
+    );
+
+  const errors = form.formState.errors.fields as
+    | Record<string, { readonly message?: string }>
+    | undefined;
+  return (
+    <section className="lace-page" aria-labelledby="entry-title">
+      <div className="lace-page-heading">
+        <div>
+          <h1 id="entry-title">Edit {model.label ?? model.key}</h1>
+          <p aria-live="polite">
+            {save.isPending
+              ? "Saving…"
+              : form.formState.isDirty
+                ? "Unsaved changes"
+                : `Saved revision ${currentEntry.draft.revision}`}
+          </p>
+        </div>
+        <Button
+          disabled={save.isPending || !form.formState.isDirty}
+          onClick={form.handleSubmit((values) => save.mutate(values))}
+        >
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      <form
+        className="lace-form lace-draft-form"
+        onSubmit={form.handleSubmit((values) => save.mutate(values))}
+      >
+        <label className="lace-field" htmlFor="system-title">
+          <span>Title</span>
+          <input
+            aria-describedby={
+              form.formState.errors.title === undefined ? undefined : "system-title-error"
+            }
+            className="lace-input"
+            id="system-title"
+            {...form.register("title")}
+          />
+          {form.formState.errors.title === undefined ? undefined : (
+            <p className="lace-field-error" id="system-title-error" role="alert">
+              {form.formState.errors.title.message}
+            </p>
+          )}
+        </label>
+        {model.kind === "collection" ? (
+          <div className="lace-field">
+            <label htmlFor="system-slug">Slug</label>
+            <input
+              aria-describedby={
+                form.formState.errors.slug === undefined ? undefined : "system-slug-error"
+              }
+              className="lace-input"
+              id="system-slug"
+              {...form.register("slug", {
+                onChange: () => {
+                  if (suggestingSlug) setSlugManuallyEdited(true);
+                },
+              })}
+            />
+            <label className="lace-checkbox">
+              <input
+                checked={suggestingSlug}
+                onChange={(event) => {
+                  const enabled = event.currentTarget.checked;
+                  suggestingSlugRef.current = enabled;
+                  setSuggestingSlug(enabled);
+                  setSlugManuallyEdited(false);
+                  if (enabled)
+                    form.setValue("slug", suggestSlug(form.getValues("title")), {
+                      shouldDirty: true,
+                    });
+                }}
+                type="checkbox"
+              />
+              Suggest from title
+            </label>
+            {form.formState.errors.slug === undefined ? undefined : (
+              <p className="lace-field-error" id="system-slug-error" role="alert">
+                {form.formState.errors.slug.message}
+              </p>
+            )}
+          </div>
+        ) : undefined}
+        {Object.entries(model.fields).map(([key, definition]) => (
+          <MetadataField
+            control={form.control}
+            definition={definition}
+            error={errors?.[key]?.message}
+            fieldKey={key}
+            key={key}
+          />
+        ))}
+        <Button disabled={save.isPending || !form.formState.isDirty} type="submit">
+          {save.isPending ? "Saving…" : "Save draft"}
+        </Button>
+      </form>
+      {save.error === null ? undefined : <RouteError error={save.error} />}
+      {blocker.status !== "blocked" ? undefined : (
+        <div
+          aria-labelledby="discard-title"
+          className="lace-state lace-state--error"
+          role="alertdialog"
+        >
+          <h2 id="discard-title">Discard unsaved changes?</h2>
+          <p>Your draft has not been saved.</p>
+          <div className="lace-actions">
+            <Button onClick={() => blocker.reset()}>Stay</Button>
+            <Button onClick={() => blocker.proceed()} variant="secondary">
+              Leave without saving
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RouteLoading({ label }: { readonly label: string }) {
   return (
     <section className="lace-page">

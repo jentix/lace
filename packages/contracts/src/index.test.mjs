@@ -20,6 +20,7 @@ import {
   deleteContentEntryRequestSchema,
   entityTagForVersion,
   entityTagSchema,
+  fieldMetadataMapSchema,
   fromIsoTimestamp,
   idempotencyKeySchema,
   isoTimestampSchema,
@@ -144,7 +145,7 @@ describe("shared REST contract DTOs", () => {
 
     const modelDto = toContentModelDto({
       blocks: ["hero"],
-      fields: { author: { type: "text" } },
+      fields: { author: { required: false, type: "text" } },
       key: "posts",
       kind: "collection",
       label: "Posts",
@@ -182,6 +183,41 @@ describe("shared REST contract DTOs", () => {
     expect(v.parse(deleteContentEntryRequestSchema, { expectedRevision: 4 })).toEqual({
       expectedRevision: 4,
     });
+  });
+
+  test("accepts only normalized portable field metadata", () => {
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        active: { required: false, type: "boolean" },
+        body: { label: "Body", maxLength: 500, required: false, type: "textarea" },
+        date: { required: false, type: "date" },
+        datetime: { required: false, type: "datetime" },
+        featured: { defaultValue: false, required: false, type: "boolean" },
+        kind: { options: ["article", "note"], required: true, type: "select" },
+        media: { required: false, type: "media" },
+        richBody: {
+          defaultValue: {
+            content: [{ content: [{ text: "Lace", type: "text" }], type: "paragraph" }],
+            type: "doc",
+          },
+          required: false,
+          type: "richText",
+        },
+        score: { max: 10, min: 0, required: false, type: "number" },
+        title: { required: false, type: "text" },
+        url: { required: false, type: "url" },
+      }).success,
+    ).toBe(true);
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        body: { required: false, surprise: true, type: "text" },
+      }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        body: { required: false, type: "select" },
+      }).success,
+    ).toBe(false);
   });
 });
 

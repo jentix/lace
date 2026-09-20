@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lacecms/content": "workspace:*",
     "@lacecms/contracts": "workspace:*",
     "@radix-ui/react-dialog": "catalog:",
     "@radix-ui/react-select": "catalog:",
@@ -19,6 +20,7 @@
     "@tanstack/react-router": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-hook-form": "catalog:",
     "valibot": "catalog:"
   },
   "devDependencies": {

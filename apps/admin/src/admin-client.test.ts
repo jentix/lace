@@ -75,6 +75,61 @@ test("sends collection mutations with credentialed JSON requests", async () => {
   );
 });
 
+test("loads and saves one validated complete draft with its revision", async () => {
+  const entry = {
+    draft: {
+      blocks: [],
+      createdAt: "2026-09-20T00:00:00.000Z",
+      entryId: "entry-1",
+      fields: { body: "Original" },
+      id: "snapshot-1",
+      revision: 3,
+      state: "draft",
+      title: "First post",
+      updatedAt: "2026-09-20T00:00:00.000Z",
+      updatedBy: { id: "editor-1", role: "editor" },
+    },
+    id: "entry-1",
+    model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+  };
+  const fetcher = vi.fn(async () => Response.json(entry));
+  const client = createAdminClient(fetcher);
+
+  await expect(client.loadEntry("entry-1")).resolves.toMatchObject({ id: "entry-1" });
+  await expect(
+    client.saveDraft("entry-1", {
+      blocks: [],
+      expectedRevision: 3,
+      fields: { body: "Updated" },
+      slug: "first-post",
+      title: "First post",
+    }),
+  ).resolves.toMatchObject({ draft: { revision: 3 } });
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/entries/entry-1/draft",
+    expect.objectContaining({ credentials: "same-origin", method: "PUT" }),
+  );
+});
+
+test("retains only validated field issues from an API error", async () => {
+  await expect(
+    createAdminClient(async () =>
+      Response.json(
+        {
+          error: {
+            code: "VALIDATION_FAILED",
+            details: {
+              issues: [{ code: "invalid_value", message: "Invalid", path: "/fields/body" }],
+            },
+            message: "Invalid request",
+          },
+        },
+        { status: 422 },
+      ),
+    ).saveDraft("entry-1", { blocks: [], expectedRevision: 1, fields: {}, title: "Post" }),
+  ).rejects.toMatchObject({ issues: [{ path: "/fields/body" }] });
+});
+
 test("identifies only authentication-status client errors as recovery candidates", () => {
   expect(isSessionExpiredError(new AdminClientError({ message: "Expired", status: 401 }))).toBe(
     true,

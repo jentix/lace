@@ -48,6 +48,11 @@ input {
   font: inherit;
 }
 
+select,
+textarea {
+  font: inherit;
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -107,6 +112,34 @@ input:focus-visible,
   min-height: 2.5rem;
   padding: var(--lace-space-2) var(--lace-space-3);
   width: 100%;
+}
+.lace-field textarea,
+.lace-field select {
+  background: var(--lace-color-surface);
+  border: 1px solid var(--lace-color-border);
+  border-radius: var(--lace-radius-sm);
+  color: var(--lace-color-text);
+  padding: var(--lace-space-2) var(--lace-space-3);
+  width: 100%;
+}
+.lace-field small {
+  color: var(--lace-color-muted);
+  font-weight: 400;
+}
+.lace-field-error {
+  color: var(--lace-color-danger);
+  margin: 0;
+}
+.lace-checkbox {
+  align-items: center;
+  display: flex;
+  font-weight: 500;
+  gap: var(--lace-space-2);
+}
+.lace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lace-space-2);
 }
 .lace-select-trigger {
   align-items: center;
