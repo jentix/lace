@@ -1,0 +1,22 @@
+---
+import type { BlockContext, PublicBlock } from "../lib/rendering.js";
+import { readOptionalDocument, readRequiredString, readUrl } from "../lib/rendering.js";
+import RichText from "./RichText.astro";
+
+interface Props {
+  readonly block: PublicBlock;
+  readonly context: BlockContext;
+}
+
+const { block, context } = Astro.props;
+const actionLabel = readRequiredString(block, context, "actionLabel");
+const actionUrl = readUrl(block, context, "actionUrl");
+const body = readOptionalDocument(block, context, "body");
+const heading = readRequiredString(block, context, "heading");
+---
+
+<aside class="cta">
+  <h2>{heading}</h2>
+  {body !== undefined && <RichText document={body} />}
+  <a href={actionUrl}>{actionLabel}</a>
+</aside>

@@ -11,12 +11,17 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
+    "typecheck": "ASTRO_TELEMETRY_DISABLED=1 astro sync && tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
-    "test": "vitest run src/index.test.mjs"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lacecms/sdk": "workspace:*",
+    "astro": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

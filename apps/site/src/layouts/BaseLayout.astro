@@ -1,0 +1,19 @@
+---
+interface Props {
+  readonly title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1" name="viewport" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main><slot /></main>
+  </body>
+</html>
