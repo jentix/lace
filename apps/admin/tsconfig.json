@@ -1,5 +1,8 @@
 {
   "extends": "../../tsconfig.browser.json",
-  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
-  "include": ["src/index.ts"]
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts"]
 }
