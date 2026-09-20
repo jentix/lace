@@ -1,0 +1,11 @@
+---
+import BlockRenderer from "../components/BlockRenderer.astro";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getSiteData } from "../lib/site-data.js";
+
+const { home, mediaUrl } = await getSiteData();
+---
+
+<BaseLayout title={home.title}>
+  <BlockRenderer entry={home} mediaUrl={mediaUrl} />
+</BaseLayout>

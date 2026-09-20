@@ -11,14 +11,14 @@ export default await defineConfig({
   ],
   content: [
     definePage({
-      blocks: ["hero"],
+      blocks: ["hero", "richText", "image", "quote", "cta"],
       key: "home",
       label: "Home",
       path: "/",
-      version: 1,
+      version: 2,
     }),
     defineCollection({
-      blocks: ["richText", "image", "quote"],
+      blocks: ["hero", "richText", "image", "quote", "cta"],
       fields: {
         author: field.text(),
         category: field.select({ options: ["engineering", "design", "news"] }),
@@ -27,7 +27,7 @@ export default await defineConfig({
       key: "posts",
       label: "Posts",
       route: "/blog/:slug",
-      version: 1,
+      version: 2,
     }),
   ],
 });

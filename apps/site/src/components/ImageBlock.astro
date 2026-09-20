@@ -1,0 +1,20 @@
+---
+import type { BlockContext, PublicBlock } from "../lib/rendering.js";
+import { readOptionalString, readRequiredString } from "../lib/rendering.js";
+
+interface Props {
+  readonly block: PublicBlock;
+  readonly context: BlockContext;
+  readonly mediaUrl: (mediaId: string) => string;
+}
+
+const { block, context, mediaUrl } = Astro.props;
+const alt = readRequiredString(block, context, "alt");
+const caption = readOptionalString(block, context, "caption");
+const media = readRequiredString(block, context, "media");
+---
+
+<figure>
+  <img alt={alt} src={mediaUrl(media)} />
+  {caption !== undefined && <figcaption>{caption}</figcaption>}
+</figure>

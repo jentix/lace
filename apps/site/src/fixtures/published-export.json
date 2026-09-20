@@ -1,0 +1,202 @@
+{
+  "entries": [
+    {
+      "entry": {
+        "draft": {
+          "blocks": [
+            {
+              "data": { "heading": "DRAFT ONLY HOME" },
+              "key": "draft-home-hero",
+              "position": 0,
+              "schemaVersion": 1,
+              "type": "hero"
+            }
+          ],
+          "createdAt": "2026-09-20T00:00:00.000Z",
+          "entryId": "home-entry",
+          "fields": {},
+          "id": "home-draft",
+          "revision": 3,
+          "state": "draft",
+          "title": "DRAFT ONLY HOME",
+          "updatedAt": "2026-09-20T00:00:00.000Z",
+          "updatedBy": { "id": "admin-user", "role": "admin" }
+        },
+        "id": "home-entry",
+        "model": { "key": "home", "kind": "page", "path": "/" },
+        "published": {
+          "blocks": [
+            {
+              "data": {
+                "body": {
+                  "content": [
+                    {
+                      "content": [{ "text": "Build once from published content.", "type": "text" }],
+                      "type": "paragraph"
+                    }
+                  ],
+                  "type": "doc"
+                },
+                "eyebrow": "Lace",
+                "heading": "The static Lace starter",
+                "image": "hero-media",
+                "primaryActionLabel": "Read the blog",
+                "primaryActionUrl": "/blog/first-post"
+              },
+              "key": "home-hero",
+              "position": 0,
+              "schemaVersion": 1,
+              "type": "hero"
+            },
+            {
+              "data": {
+                "actionLabel": "Get started",
+                "actionUrl": "https://lace.example/docs",
+                "body": {
+                  "content": [
+                    {
+                      "content": [
+                        {
+                          "marks": [{ "type": "bold" }],
+                          "text": "Everything ships as static HTML.",
+                          "type": "text"
+                        }
+                      ],
+                      "type": "paragraph"
+                    }
+                  ],
+                  "type": "doc"
+                },
+                "heading": "Ready for your content"
+              },
+              "key": "home-cta",
+              "position": 1,
+              "schemaVersion": 1,
+              "type": "cta"
+            }
+          ],
+          "createdAt": "2026-09-20T00:00:00.000Z",
+          "entryId": "home-entry",
+          "fields": {},
+          "id": "home-published",
+          "revision": 2,
+          "state": "published",
+          "title": "Lace starter",
+          "updatedAt": "2026-09-20T00:00:00.000Z",
+          "updatedBy": { "id": "admin-user", "role": "admin" }
+        }
+      },
+      "path": "/"
+    },
+    {
+      "entry": {
+        "draft": {
+          "blocks": [],
+          "createdAt": "2026-09-20T00:00:00.000Z",
+          "entryId": "first-post-entry",
+          "fields": {},
+          "id": "first-post-draft",
+          "revision": 2,
+          "slug": "first-post",
+          "state": "draft",
+          "title": "DRAFT ONLY POST",
+          "updatedAt": "2026-09-20T00:00:00.000Z",
+          "updatedBy": { "id": "admin-user", "role": "admin" }
+        },
+        "id": "first-post-entry",
+        "model": { "key": "posts", "kind": "collection", "route": "/blog/:slug" },
+        "published": {
+          "blocks": [
+            {
+              "data": {
+                "content": {
+                  "content": [
+                    {
+                      "attrs": { "level": 2 },
+                      "content": [{ "text": "A safe rich-text heading", "type": "text" }],
+                      "type": "heading"
+                    },
+                    {
+                      "content": [
+                        {
+                          "marks": [
+                            { "attrs": { "href": "https://lace.example" }, "type": "link" },
+                            { "type": "italic" }
+                          ],
+                          "text": "Published only",
+                          "type": "text"
+                        }
+                      ],
+                      "type": "paragraph"
+                    },
+                    {
+                      "content": [
+                        {
+                          "content": [
+                            {
+                              "content": [{ "text": "Ordered content", "type": "text" }],
+                              "type": "paragraph"
+                            }
+                          ],
+                          "type": "listItem"
+                        }
+                      ],
+                      "type": "bulletList"
+                    },
+                    {
+                      "content": [{ "text": "Quoted rich text", "type": "text" }],
+                      "type": "blockquote"
+                    },
+                    { "type": "hardBreak" }
+                  ],
+                  "type": "doc"
+                }
+              },
+              "key": "post-rich-text",
+              "position": 0,
+              "schemaVersion": 1,
+              "type": "richText"
+            },
+            {
+              "data": {
+                "alt": "A durable media URL",
+                "caption": "Media is served by Lace.",
+                "media": "post-media"
+              },
+              "key": "post-image",
+              "position": 1,
+              "schemaVersion": 1,
+              "type": "image"
+            },
+            {
+              "data": {
+                "attribution": "Lace team",
+                "quote": "Content belongs in the CMS; presentation belongs in the site."
+              },
+              "key": "post-quote",
+              "position": 2,
+              "schemaVersion": 1,
+              "type": "quote"
+            }
+          ],
+          "createdAt": "2026-09-20T00:00:00.000Z",
+          "entryId": "first-post-entry",
+          "fields": {
+            "author": "Lace team",
+            "category": "engineering",
+            "publishedAt": "2026-09-20"
+          },
+          "id": "first-post-published",
+          "revision": 1,
+          "slug": "first-post",
+          "state": "published",
+          "title": "First published post",
+          "updatedAt": "2026-09-20T00:00:00.000Z",
+          "updatedBy": { "id": "admin-user", "role": "admin" }
+        }
+      },
+      "path": "/blog/first-post"
+    }
+  ],
+  "version": 7
+}

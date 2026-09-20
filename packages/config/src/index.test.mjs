@@ -44,6 +44,16 @@ function homeModel(overrides = {}) {
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/config"));
 
+test("expands both starter models to every built-in block at a new version", () => {
+  const expectedBlocks = ["hero", "richText", "image", "quote", "cta"];
+  expect(fixtureConfig.content).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ blocks: expectedBlocks, key: "home", version: 2 }),
+      expect.objectContaining({ blocks: expectedBlocks, key: "posts", version: 2 }),
+    ]),
+  );
+});
+
 test("defines deeply readonly page and collection models", () => {
   const fields = { heading: field.text({ label: "Original", required: true }) };
   const blocks = ["hero"];

@@ -1,0 +1,27 @@
+---
+import type { BlockContext, PublicBlock } from "../lib/rendering.js";
+import { readOptionalDocument, readOptionalString, readRequiredString, readUrl } from "../lib/rendering.js";
+import RichText from "./RichText.astro";
+
+interface Props {
+  readonly block: PublicBlock;
+  readonly context: BlockContext;
+  readonly mediaUrl: (mediaId: string) => string;
+}
+
+const { block, context, mediaUrl } = Astro.props;
+const eyebrow = readOptionalString(block, context, "eyebrow");
+const heading = readRequiredString(block, context, "heading");
+const body = readOptionalDocument(block, context, "body");
+const image = readOptionalString(block, context, "image");
+const actionLabel = readOptionalString(block, context, "primaryActionLabel");
+const actionUrl = actionLabel === undefined ? undefined : readUrl(block, context, "primaryActionUrl");
+---
+
+<section class="hero">
+  {eyebrow !== undefined && <p>{eyebrow}</p>}
+  <h1>{heading}</h1>
+  {body !== undefined && <RichText document={body} />}
+  {image !== undefined && <img alt="" src={mediaUrl(image)} />}
+  {actionLabel !== undefined && actionUrl !== undefined && <a href={actionUrl}>{actionLabel}</a>}
+</section>

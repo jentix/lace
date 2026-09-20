@@ -1,0 +1,18 @@
+---
+import type { BlockContext, PublicBlock } from "../lib/rendering.js";
+import { readOptionalString, readRequiredString } from "../lib/rendering.js";
+
+interface Props {
+  readonly block: PublicBlock;
+  readonly context: BlockContext;
+}
+
+const { block, context } = Astro.props;
+const attribution = readOptionalString(block, context, "attribution");
+const quote = readRequiredString(block, context, "quote");
+---
+
+<blockquote>
+  <p>{quote}</p>
+  {attribution !== undefined && <footer>{attribution}</footer>}
+</blockquote>
