@@ -7,7 +7,12 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import type { ContentEntryDto, ContentEntryListDto, ContentModelDto } from "@lacecms/contracts";
+import type {
+  ContentBlockDto,
+  ContentEntryDto,
+  ContentEntryListDto,
+  ContentModelDto,
+} from "@lacecms/contracts";
 import {
   Link,
   Outlet,
@@ -24,7 +29,23 @@ import {
   type RouterHistory,
 } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Controller, useForm, type Control } from "react-hook-form";
+import { Controller, useFieldArray, useForm, type Control } from "react-hook-form";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ulid } from "ulid";
 import {
   AdminClientError,
   adminQueryKeys,
@@ -50,6 +71,7 @@ import {
   Table,
 } from "./components/ui.js";
 import type { AdminRole, AdminSession, AdminSessionSource } from "./session.js";
+import { RichTextEditor } from "./rich-text-editor.js";
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -600,18 +622,82 @@ function fieldLabel(key: string, label: string | undefined): string {
   return label ?? key.replace(/([A-Z])/gu, " $1").replace(/^./u, (value) => value.toUpperCase());
 }
 
+function MediaPicker({
+  fieldKey,
+  onChange,
+  value,
+}: {
+  readonly fieldKey: string;
+  readonly onChange: (value: string | undefined) => void;
+  readonly value: unknown;
+}) {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const [open, setOpen] = useState(false);
+  const media = useQuery({
+    enabled: open,
+    queryFn: () => client.listMedia(),
+    queryKey: adminQueryKeys.media(),
+  });
+  return (
+    <div className="lace-media-picker">
+      <p aria-live="polite">
+        {typeof value === "string" ? `Selected: ${value}` : "No media selected"}
+      </p>
+      <Button
+        aria-expanded={open}
+        onClick={() => setOpen((visible) => !visible)}
+        type="button"
+        variant="secondary"
+      >
+        Choose media for {fieldLabel(fieldKey, undefined)}
+      </Button>
+      {!open ? undefined : media.isPending ? <p role="status">Loading media…</p> : undefined}
+      {!open || media.error === null ? undefined : <p role="alert">Media could not be loaded.</p>}
+      {!open || media.data === undefined ? undefined : media.data.items.filter(
+          (item) => item.status === "active",
+        ).length === 0 ? (
+        <p>No active media is available.</p>
+      ) : (
+        <ul
+          aria-label={`Media choices for ${fieldLabel(fieldKey, undefined)}`}
+          className="lace-media-list"
+        >
+          {media.data.items
+            .filter((item) => item.status === "active")
+            .map((item) => (
+              <li key={item.id}>
+                <button
+                  aria-pressed={value === item.id}
+                  onClick={() => {
+                    onChange(item.id);
+                    setOpen(false);
+                  }}
+                  type="button"
+                >
+                  {item.filename}
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function MetadataField({
   control,
   definition,
   error,
   fieldKey,
+  name,
 }: {
   readonly control: Control<DraftEditorValues, unknown, DraftEditorValues>;
   readonly definition: ContentModelDto["fields"][string];
   readonly error: string | undefined;
   readonly fieldKey: string;
+  readonly name: `blocks.${number}.data.${string}` | `fields.${string}`;
 }) {
-  const id = `field-${fieldKey}`;
+  const id = `field-${name.replaceAll(".", "-")}`;
   const errorId = `${id}-error`;
   const descriptionId = `${id}-description`;
   const describedBy = [
@@ -620,13 +706,18 @@ function MetadataField({
   ]
     .filter((value): value is string => value !== undefined)
     .join(" ");
+  const label = fieldLabel(fieldKey, definition.label);
   return (
     <Controller
       control={control}
-      name={`fields.${fieldKey}` as never}
+      name={name as never}
       render={({ field }) => (
         <div className="lace-field">
-          <label htmlFor={id}>{fieldLabel(fieldKey, definition.label)}</label>
+          {definition.type === "richText" || definition.type === "media" ? (
+            <span>{label}</span>
+          ) : (
+            <label htmlFor={id}>{label}</label>
+          )}
           {definition.description === undefined ? undefined : (
             <small id={descriptionId}>{definition.description}</small>
           )}
@@ -654,20 +745,16 @@ function MetadataField({
               ))}
             </select>
           ) : definition.type === "richText" ? (
-            <textarea
-              aria-describedby={describedBy || undefined}
+            <RichTextEditor
+              {...(describedBy === "" ? {} : { describedBy })}
               id={id}
+              label={label}
               onBlur={field.onBlur}
-              onChange={(event) => {
-                try {
-                  field.onChange(JSON.parse(event.currentTarget.value));
-                } catch {
-                  field.onChange(event.currentTarget.value);
-                }
-              }}
-              rows={8}
-              value={field.value === undefined ? "" : JSON.stringify(field.value, null, 2)}
+              onChange={field.onChange}
+              value={field.value}
             />
+          ) : definition.type === "media" ? (
+            <MediaPicker fieldKey={fieldKey} onChange={field.onChange} value={field.value} />
           ) : definition.type === "textarea" ? (
             <textarea
               aria-describedby={describedBy || undefined}
@@ -721,6 +808,188 @@ function MetadataField({
         </div>
       )}
     />
+  );
+}
+
+function SortableBlockCard({
+  block,
+  collapsed,
+  control,
+  definition,
+  error,
+  index,
+  onCollapse,
+  onDuplicate,
+  onMove,
+  onRemove,
+  total,
+}: {
+  readonly block: DraftEditorValues["blocks"][number];
+  readonly collapsed: boolean;
+  readonly control: Control<DraftEditorValues, unknown, DraftEditorValues>;
+  readonly definition: NonNullable<ContentModelDto["blockDefinitions"]>[number];
+  readonly error: Record<string, unknown> | undefined;
+  readonly index: number;
+  readonly onCollapse: () => void;
+  readonly onDuplicate: () => void;
+  readonly onMove: (target: number) => void;
+  readonly total: number;
+  readonly onRemove: () => void;
+}) {
+  const sortable = useSortable({ id: block.key });
+  return (
+    <article
+      className="lace-block-card"
+      ref={sortable.setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(sortable.transform),
+        transition: sortable.transition,
+      }}
+    >
+      <header className="lace-block-card-header">
+        <h2>{definition.label ?? fieldLabel(definition.type, undefined)}</h2>
+        <div className="lace-actions">
+          <button
+            aria-label={`Drag ${definition.type} block`}
+            {...sortable.attributes}
+            {...sortable.listeners}
+            type="button"
+          >
+            Drag
+          </button>
+          <button disabled={index === 0} onClick={() => onMove(index - 1)} type="button">
+            Move up
+          </button>
+          <button disabled={index === total - 1} onClick={() => onMove(index + 1)} type="button">
+            Move down
+          </button>
+          <button onClick={onDuplicate} type="button">
+            Duplicate
+          </button>
+          <button onClick={onCollapse} type="button">
+            {collapsed ? "Expand" : "Collapse"}
+          </button>
+          <button onClick={onRemove} type="button">
+            Remove
+          </button>
+        </div>
+      </header>
+      {collapsed ? undefined : (
+        <div className="lace-block-fields">
+          {Object.entries(definition.fields).map(([fieldKey, fieldDefinition]) => (
+            <MetadataField
+              control={control}
+              definition={fieldDefinition}
+              error={
+                (error?.data as Record<string, { readonly message?: string }> | undefined)?.[
+                  fieldKey
+                ]?.message
+              }
+              fieldKey={fieldKey}
+              key={fieldKey}
+              name={`blocks.${index}.data.${fieldKey}`}
+            />
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function BlockEditor({
+  control,
+  errors,
+  model,
+}: {
+  readonly control: Control<DraftEditorValues, unknown, DraftEditorValues>;
+  readonly errors: Record<string, Record<string, unknown>> | undefined;
+  readonly model: ContentModelDto;
+}) {
+  const { append, fields, move, remove } = useFieldArray({
+    control,
+    name: "blocks",
+    keyName: "formId",
+  });
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const definitions = model.blockDefinitions ?? [];
+  const add = (definition: (typeof definitions)[number]) => {
+    const maximum = Math.max(0, ...fields.map((block) => block.position));
+    append({
+      data: structuredClone(definition.defaultValue ?? {}) as ContentBlockDto["data"],
+      key: ulid(),
+      position: maximum + 1_024,
+      schemaVersion: definition.version,
+      type: definition.type,
+    });
+  };
+  const duplicate = (index: number) => {
+    const current = fields[index];
+    if (current === undefined) return;
+    const { formId: _formId, ...block } = current;
+    append({ ...block, data: structuredClone(block.data), key: ulid() });
+  };
+  return (
+    <section aria-labelledby="blocks-title" className="lace-block-editor">
+      <h2 id="blocks-title">Blocks</h2>
+      {definitions.length === 0 ? (
+        <p>This model does not allow blocks.</p>
+      ) : (
+        <div className="lace-actions" role="group" aria-label="Add a block">
+          {definitions.map((definition) => (
+            <button key={definition.type} onClick={() => add(definition)} type="button">
+              Add {definition.label ?? fieldLabel(definition.type, undefined)}
+            </button>
+          ))}
+        </div>
+      )}
+      <DndContext
+        collisionDetection={closestCenter}
+        onDragEnd={({ active, over }) => {
+          if (over === null || active.id === over.id) return;
+          const from = fields.findIndex((block) => block.key === active.id);
+          const to = fields.findIndex((block) => block.key === over.id);
+          if (from >= 0 && to >= 0) move(from, to);
+        }}
+        sensors={sensors}
+      >
+        <SortableContext
+          items={fields.map((block) => block.key)}
+          strategy={verticalListSortingStrategy}
+        >
+          {fields.map((block, index) => {
+            const definition = definitions.find((item) => item.type === block.type);
+            if (definition === undefined) return null;
+            return (
+              <SortableBlockCard
+                block={block}
+                collapsed={collapsed.has(block.key)}
+                control={control}
+                definition={definition}
+                error={errors?.[index]}
+                index={index}
+                key={block.formId}
+                onCollapse={() =>
+                  setCollapsed((current) => {
+                    const next = new Set(current);
+                    if (next.has(block.key)) next.delete(block.key);
+                    else next.add(block.key);
+                    return next;
+                  })
+                }
+                onDuplicate={() => duplicate(index)}
+                onMove={(target) => target >= 0 && target < fields.length && move(index, target)}
+                onRemove={() => remove(index)}
+                total={fields.length}
+              />
+            );
+          })}
+        </SortableContext>
+      </DndContext>
+    </section>
   );
 }
 
@@ -789,7 +1058,7 @@ function EntryEditor() {
     onError: (error) => {
       if (!(error instanceof AdminClientError)) return;
       for (const issue of error.issues ?? []) {
-        const name = pointerToFormField(issue.path);
+        const name = pointerToFormField(issue.path, modelRef.current, form.getValues("blocks"));
         if (name !== undefined)
           form.setError(name as never, { message: issue.message, type: "server" });
       }
@@ -822,6 +1091,9 @@ function EntryEditor() {
 
   const errors = form.formState.errors.fields as
     | Record<string, { readonly message?: string }>
+    | undefined;
+  const blockErrors = form.formState.errors.blocks as
+    | Record<string, Record<string, unknown>>
     | undefined;
   return (
     <section className="lace-page" aria-labelledby="entry-title">
@@ -909,8 +1181,10 @@ function EntryEditor() {
             error={errors?.[key]?.message}
             fieldKey={key}
             key={key}
+            name={`fields.${key}`}
           />
         ))}
+        <BlockEditor control={form.control} errors={blockErrors} model={model} />
         <Button disabled={save.isPending || !form.formState.isDirty} type="submit">
           {save.isPending ? "Saving…" : "Save draft"}
         </Button>

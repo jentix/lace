@@ -30,6 +30,33 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
     "posts",
     "opaque+/=",
   ]);
+  expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
+});
+
+test("lists validated media through the credentialed admin API", async () => {
+  const item = {
+    createdAt: "2026-09-20T00:00:00.000Z",
+    createdBy: "admin-1",
+    filename: "hero.png",
+    id: "media-1",
+    mimeType: "image/png",
+    size: 12,
+    status: "active",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    url: "https://lace.test/api/v1/public/media/media-1",
+  };
+  const fetcher = vi.fn(async () => Response.json({ items: [item], nextCursor: "next" }));
+  await expect(createAdminClient(fetcher).listMedia("previous+/=")).resolves.toEqual({
+    items: [item],
+    nextCursor: "next",
+  });
+  expect(fetcher).toHaveBeenCalledWith("/api/v1/admin/media?after=previous%2B%2F%3D", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  await expect(
+    createAdminClient(async () => Response.json({ items: [{ id: "bad" }] })).listMedia(),
+  ).rejects.toBeInstanceOf(AdminClientError);
 });
 
 test("rejects malformed responses and maps API errors with their request ID", async () => {

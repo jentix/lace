@@ -12,6 +12,7 @@ import * as v from "valibot";
 import { describe, expect, test } from "vitest";
 import {
   buildExportSchema,
+  blockMetadataSchema,
   classifyError,
   contentEntryListSchema,
   contentEntrySchema,
@@ -183,6 +184,53 @@ describe("shared REST contract DTOs", () => {
     expect(v.parse(deleteContentEntryRequestSchema, { expectedRevision: 4 })).toEqual({
       expectedRevision: 4,
     });
+  });
+
+  test("validates portable allowed block metadata against each model", () => {
+    const hero = {
+      fields: { heading: { required: true, type: "text" } },
+      label: "Hero",
+      type: "hero",
+      version: 1,
+    };
+    expect(v.parse(blockMetadataSchema, hero)).toEqual(hero);
+    expect(
+      v.parse(contentModelListSchema, {
+        items: [
+          {
+            blockDefinitions: [hero],
+            blocks: ["hero"],
+            fields: {},
+            key: "home",
+            kind: "page",
+            path: "/",
+            version: 1,
+          },
+        ],
+      }),
+    ).toMatchObject({ items: [{ blockDefinitions: [hero] }] });
+    expect(
+      v.safeParse(contentModelListSchema, {
+        items: [
+          {
+            blockDefinitions: [hero],
+            blocks: ["quote"],
+            fields: {},
+            key: "home",
+            kind: "page",
+            path: "/",
+            version: 1,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(v.safeParse(blockMetadataSchema, { ...hero, validate: () => true }).success).toBe(false);
+    expect(
+      v.safeParse(blockMetadataSchema, {
+        ...hero,
+        defaultValue: { unknown: "field" },
+      }).success,
+    ).toBe(false);
   });
 
   test("accepts only normalized portable field metadata", () => {

@@ -130,6 +130,49 @@ input:focus-visible,
   color: var(--lace-color-danger);
   margin: 0;
 }
+
+.lace-rich-text,
+.lace-block-card,
+.lace-media-picker {
+  border: 1px solid var(--lace-border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.lace-rich-text-toolbar,
+.lace-block-card-header,
+.lace-block-editor,
+.lace-block-fields,
+.lace-media-picker {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.lace-rich-text-toolbar {
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+}
+
+.lace-rich-text .ProseMirror {
+  min-height: 8rem;
+  outline: none;
+}
+
+.lace-block-editor {
+  margin-top: 1.5rem;
+}
+
+.lace-block-card-header {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.lace-media-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .lace-checkbox {
   align-items: center;
   display: flex;

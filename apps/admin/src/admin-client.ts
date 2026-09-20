@@ -4,11 +4,13 @@ import {
   contentModelListSchema,
   contractValidationIssueSchema,
   errorEnvelopeSchema,
+  mediaListSchema,
   type ContentBlockDto,
   type ContractValidationIssue,
   type ContentEntryDto,
   type ContentEntryListDto,
   type ContentModelListDto,
+  type MediaListDto,
 } from "@lacecms/contracts";
 import * as v from "valibot";
 
@@ -16,6 +18,7 @@ export const adminQueryKeys = Object.freeze({
   entry: (entryId: string) => ["admin", "entry", entryId] as const,
   entries: (modelKey: string, cursor?: string) =>
     ["admin", "entries", modelKey, cursor ?? null] as const,
+  media: (cursor?: string) => ["admin", "media", cursor ?? null] as const,
   models: ["admin", "models"] as const,
   session: ["admin", "session"] as const,
 });
@@ -47,6 +50,7 @@ export interface AdminClient {
   deleteEntry(entryId: string, expectedRevision: number): Promise<void>;
   loadEntry(entryId: string): Promise<ContentEntryDto>;
   listEntries(modelKey: string, cursor?: string): Promise<ContentEntryListDto>;
+  listMedia(cursor?: string): Promise<MediaListDto>;
   listModels(): Promise<ContentModelListDto>;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
@@ -155,6 +159,10 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     },
     listModels: async () =>
       parse(contentModelListSchema, await request(fetcher, "/api/v1/admin/content-models")),
+    listMedia: async (cursor?: string) => {
+      const query = cursor === undefined ? "" : `?after=${encodeURIComponent(cursor)}`;
+      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${query}`));
+    },
     signIn: async (email: string, password: string) => {
       await request(fetcher, "/api/auth/sign-in/email", {
         body: JSON.stringify({ email, password }),

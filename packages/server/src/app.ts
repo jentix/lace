@@ -84,7 +84,12 @@ type ServerContentModel =
   | (ServerModelBase & { readonly kind: "collection"; readonly route: string })
   | (ServerModelBase & { readonly kind: "page"; readonly path: string });
 
+interface ServerBlockMetadata {
+  readonly type: string;
+}
+
 interface ServerConfig {
+  readonly blocks?: readonly ServerBlockMetadata[];
   readonly content: readonly ServerContentModel[];
 }
 type ServerSchema = v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>;
@@ -289,8 +294,16 @@ function optionalIdempotencyKey(request: Request): string | undefined {
   return value === undefined ? undefined : parse(idempotencyKeySchema, value);
 }
 
-function modelDto(model: ServerContentModel) {
+function modelDto(config: ServerConfig, model: ServerContentModel) {
+  const definitions =
+    config.blocks === undefined
+      ? undefined
+      : model.blocks.map((type) => config.blocks?.find((block) => block.type === type));
+  if (definitions?.some((definition) => definition === undefined)) {
+    throw new Error("The model references a block absent from the public configuration.");
+  }
   return toContentModelDto({
+    ...(definitions === undefined ? {} : { blockDefinitions: definitions as never }),
     blocks: model.blocks,
     ...(model.description === undefined ? {} : { description: model.description }),
     fields: model.fields as never,
@@ -724,7 +737,9 @@ export function createLaceApp(input: LaceAppInput): Hono {
     }),
     async (context) => {
       await actor(context);
-      return response(contentModelListSchema, { items: input.config.content.map(modelDto) });
+      return response(contentModelListSchema, {
+        items: input.config.content.map((model) => modelDto(input.config, model)),
+      });
     },
   );
 

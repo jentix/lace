@@ -1,5 +1,5 @@
-import { canonicalizeJson, field } from "@lacecms/content";
-import type { FieldMetadata, JsonObject, JsonValue } from "@lacecms/content";
+import { canonicalizeJson, defineBlock, field, toBlockMetadata } from "@lacecms/content";
+import type { BlockMetadata, FieldMetadata, JsonObject, JsonValue } from "@lacecms/content";
 import { DomainError, unixMilliseconds } from "@lacecms/domain";
 import type {
   ContentBlock,
@@ -115,9 +115,66 @@ function isFieldMetadataMap(value: unknown): value is FieldMetadataMapDto {
   );
 }
 
+function isBlockMetadata(value: unknown): value is BlockMetadata {
+  if (!isJsonObject(value)) return false;
+  const allowedKeys = new Set([
+    "defaultValue",
+    "description",
+    "fields",
+    "label",
+    "type",
+    "version",
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false;
+  if (
+    typeof value.type !== "string" ||
+    !/^[A-Za-z][A-Za-z0-9-]*$/u.test(value.type) ||
+    typeof value.version !== "number" ||
+    !Number.isSafeInteger(value.version) ||
+    value.version < 1 ||
+    (value.label !== undefined && typeof value.label !== "string") ||
+    (value.description !== undefined && typeof value.description !== "string") ||
+    !isFieldMetadataMap(value.fields) ||
+    (value.defaultValue !== undefined && !isJsonObject(value.defaultValue))
+  ) {
+    return false;
+  }
+  try {
+    const normalized = defineBlock({
+      ...(value.defaultValue === undefined ? {} : { defaultValue: value.defaultValue }),
+      ...(value.description === undefined ? {} : { description: value.description }),
+      fields: value.fields,
+      ...(value.label === undefined ? {} : { label: value.label }),
+      type: value.type,
+      version: value.version,
+    });
+    return (
+      canonicalizeJson(value) ===
+      canonicalizeJson(toBlockMetadata(normalized) as unknown as JsonValue)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasMatchingBlockDefinitions<
+  Value extends {
+    blockDefinitions?: BlockMetadata[] | undefined;
+    blocks: string[];
+  },
+>(value: Value): boolean {
+  if (value.blockDefinitions === undefined) return true;
+  if (value.blockDefinitions.length !== value.blocks.length) return false;
+  return value.blockDefinitions.every(
+    (definition, index) => definition.type === value.blocks[index],
+  );
+}
+
 /** Validated, executable-value-free metadata used to render browser form fields. */
 export const fieldMetadataSchema = v.custom<FieldMetadata>(isFieldMetadata);
 export const fieldMetadataMapSchema = v.custom<FieldMetadataMapDto>(isFieldMetadataMap);
+/** Validated executable-value-free metadata used to render generic block forms. */
+export const blockMetadataSchema = v.custom<BlockMetadata>(isBlockMetadata);
 
 /** Converts a portable Unix-millisecond value into the canonical JSON timestamp. */
 export function toIsoTimestamp(value: UnixMilliseconds | number): IsoTimestamp {
@@ -236,17 +293,21 @@ export const deleteContentEntryRequestSchema = v.strictObject({
   expectedRevision: v.optional(expectedRevisionSchema),
 });
 
-export const contentModelSchema = v.strictObject({
-  blocks: v.array(identifierSchema),
-  description: v.optional(v.string()),
-  fields: fieldMetadataMapSchema,
-  key: identifierSchema,
-  kind: v.picklist(["collection", "page"]),
-  label: v.optional(v.string()),
-  path: v.optional(v.string()),
-  route: v.optional(v.string()),
-  version: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
+export const contentModelSchema = v.pipe(
+  v.strictObject({
+    blockDefinitions: v.optional(v.array(blockMetadataSchema)),
+    blocks: v.array(identifierSchema),
+    description: v.optional(v.string()),
+    fields: fieldMetadataMapSchema,
+    key: identifierSchema,
+    kind: v.picklist(["collection", "page"]),
+    label: v.optional(v.string()),
+    path: v.optional(v.string()),
+    route: v.optional(v.string()),
+    version: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  }),
+  v.check(hasMatchingBlockDefinitions, "Block definitions must match the model's allowed blocks."),
+);
 export const contentModelListSchema = v.strictObject({ items: v.array(contentModelSchema) });
 
 export const publicContentEntrySchema = v.strictObject({
@@ -484,6 +545,7 @@ export function toBuildExportDto(
 }
 
 export interface ContentModelSource {
+  readonly blockDefinitions?: readonly BlockMetadata[];
   readonly blocks: readonly string[];
   readonly description?: string;
   readonly fields: FieldMetadataMapDto;
@@ -499,6 +561,9 @@ export function toContentModelDto(
   model: ContentModelSource,
 ): v.InferOutput<typeof contentModelSchema> {
   return {
+    ...(model.blockDefinitions === undefined
+      ? {}
+      : { blockDefinitions: [...model.blockDefinitions] }),
     blocks: [...model.blocks],
     ...(model.description === undefined ? {} : { description: model.description }),
     fields: model.fields,

@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { createLaceApp } from "../dist/index.js";
 import { ContentUseCases, MediaUseCases } from "@lacecms/application";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
-import { field } from "@lacecms/content";
+import { defineBlock, field } from "@lacecms/content";
 import { actorId, unixMilliseconds } from "@lacecms/domain";
 import {
   DeterministicClock,
@@ -16,9 +16,17 @@ const editor = { id: actorId("editor"), role: "editor" };
 
 async function fixture({ actor = admin, auth, ready = true, allowed = true } = {}) {
   const config = await defineConfig({
+    blocks: [
+      defineBlock({
+        fields: { heading: field.text({ required: true }) },
+        type: "hero",
+        version: 1,
+      }),
+    ],
     content: [
       definePage({ key: "home", path: "/", version: 1 }),
       defineCollection({
+        blocks: ["hero"],
         fields: { image: field.media() },
         key: "posts",
         route: "/blog/:slug",
@@ -30,7 +38,7 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
   const storage = new InMemoryObjectStorage();
   const content = new ContentUseCases({
     clock: new DeterministicClock(unixMilliseconds(1)),
-    config: config.runtime,
+    config: config.public,
     content: store,
     idGenerator: new DeterministicIdGenerator("server"),
     media: store,
@@ -154,6 +162,18 @@ test("validates admin requests, rejects anonymous actors, and protects fallbacks
     response: { status: 403 },
   });
   const authenticated = await fixture({ actor: editor });
+  expect(await json(authenticated.app, "/api/v1/admin/content-models")).toMatchObject({
+    body: {
+      items: [
+        { blockDefinitions: [], blocks: [], key: "home" },
+        {
+          blockDefinitions: [{ fields: { heading: { type: "text" } }, type: "hero" }],
+          key: "posts",
+        },
+      ],
+    },
+    response: { status: 200 },
+  });
   expect(
     await json(authenticated.app, "/api/v1/admin/models/posts/entries", {
       body: JSON.stringify({ blocks: [], fields: {}, title: "Post", unknown: true }),

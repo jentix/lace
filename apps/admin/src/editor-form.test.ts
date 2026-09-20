@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ContentModelDto } from "@lacecms/contracts";
 import {
   initialModelFieldValues,
+  isUlid,
   pointerToFormField,
   suggestSlug,
   validateDraftValues,
@@ -81,6 +82,48 @@ describe("metadata-driven draft validation", () => {
     expect(initialModelFieldValues(model, {})).toMatchObject({ enabled: false });
     expect(pointerToFormField("/fields/status")).toBe("fields.status");
     expect(pointerToFormField("/blocks/0/data/title")).toBeUndefined();
+  });
+
+  test("validates local block metadata and maps only its current block paths", () => {
+    const blockModel = {
+      blockDefinitions: [
+        {
+          fields: { actionUrl: { required: false, type: "url" } },
+          type: "cta",
+          version: 1,
+        },
+      ],
+      blocks: ["cta"],
+      fields: {},
+      key: "posts",
+      kind: "collection" as const,
+      route: "/posts/:slug",
+      version: 1,
+    } satisfies ContentModelDto;
+    const block = {
+      data: { actionUrl: "javascript:alert(1)" },
+      key: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      position: 1_000,
+      schemaVersion: 1,
+      type: "cta",
+    };
+    expect(isUlid(block.key)).toBe(true);
+    expect(
+      validateDraftValues(blockModel, { blocks: [block], fields: {}, title: "Post" }),
+    ).toMatchObject({
+      blocks: { 0: { data: { actionUrl: {} } } },
+    });
+    expect(pointerToFormField("/blocks/0/data/actionUrl", blockModel, [block])).toBe(
+      "blocks.0.data.actionUrl",
+    );
+    expect(pointerToFormField("/blocks/0/data/unknown", blockModel, [block])).toBeUndefined();
+    expect(
+      validateDraftValues(blockModel, {
+        blocks: [{ ...block, data: { actionUrl: "/safe" }, key: "invalid" }, { ...block }],
+        fields: {},
+        title: "Post",
+      }),
+    ).toMatchObject({ blocks: { 0: { key: {} } } });
   });
 
   test("suggests a stable collection slug", () => {
