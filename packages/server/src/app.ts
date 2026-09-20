@@ -33,6 +33,7 @@ import {
   idempotencyKeySchema,
   identifierSchemaPublic,
   opaqueCursorSchema,
+  publishContentEntryResultSchema,
   publicContentEntrySchema,
   publicContentListSchema,
   publishContentEntryRequestSchema,
@@ -44,6 +45,7 @@ import {
   toContentModelDto,
   toIsoTimestamp,
   toMediaMetadataDto,
+  toPublishContentEntryResultDto,
   transportError,
   userCreateRequestSchema,
   userUpdateRequestSchema,
@@ -868,7 +870,7 @@ export function createLaceApp(input: LaceAppInput): Hono {
         expectedRevision: revision(body, context.req.raw),
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       });
-      return response(contentEntrySchema, toContentEntryDto(published.entry));
+      return response(publishContentEntryResultSchema, toPublishContentEntryResultDto(published));
     },
   );
 

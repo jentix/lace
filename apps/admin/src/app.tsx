@@ -13,6 +13,7 @@ import type {
   ContentEntryListDto,
   ContentModelDto,
 } from "@lacecms/contracts";
+import { canonicalizeJson, type JsonValue } from "@lacecms/content";
 import {
   Link,
   Outlet,
@@ -202,6 +203,7 @@ export function createAdminRouter(
   client: AdminClient = createAdminClient(),
 ) {
   return createRouter({
+    basepath: "/admin",
     context: { client, sessionSource },
     defaultPendingComponent: PendingRoute,
     defaultPendingMs: 0,
@@ -618,6 +620,39 @@ function draftValues(model: ContentModelDto, entry: ContentEntryDto): DraftEdito
   };
 }
 
+export function resolvedPublicPath(
+  model: ContentModelDto,
+  entry: ContentEntryDto,
+): string | undefined {
+  if (model.kind === "page") return model.path;
+  const slug = (entry.published ?? entry.draft).slug;
+  return slug === undefined ? undefined : model.route?.replace(":slug", slug);
+}
+
+function localDraftJson(values: DraftEditorValues): string {
+  return canonicalizeJson({
+    blocks: values.blocks,
+    fields: values.fields,
+    ...(values.slug === undefined ? {} : { slug: values.slug }),
+    title: values.title,
+  } as unknown as JsonValue);
+}
+
+function buildDispatchDescription(
+  status: "accepted" | "not-dispatched" | "rejected" | "unavailable",
+) {
+  switch (status) {
+    case "accepted":
+      return "Published. Build pending.";
+    case "not-dispatched":
+      return "Publication was already accepted; no new build was requested.";
+    case "rejected":
+      return "Published, but the build request was rejected.";
+    case "unavailable":
+      return "Published, but build dispatch is currently unavailable.";
+  }
+}
+
 function fieldLabel(key: string, label: string | undefined): string {
   return label ?? key.replace(/([A-Z])/gu, " $1").replace(/^./u, (value) => value.toUpperCase());
 }
@@ -996,6 +1031,7 @@ function BlockEditor({
 function EntryEditor() {
   const { entryId, modelKey } = entryRoute.useParams();
   const { client } = useRouteContext({ from: rootRoute.id });
+  const { session } = useRouteContext({ from: protectedRoute.id });
   const queryClient = useQueryClient();
   const models = useQuery({ queryFn: client.listModels, queryKey: adminQueryKeys.models });
   const entry = useQuery({
@@ -1003,6 +1039,13 @@ function EntryEditor() {
     queryKey: adminQueryKeys.entry(entryId),
   });
   const [savedEntry, setSavedEntry] = useState<ContentEntryDto | undefined>(undefined);
+  const [conflict, setConflict] = useState<"publish" | "save" | undefined>(undefined);
+  const [copyError, setCopyError] = useState<string | undefined>(undefined);
+  const [publishAttempt, setPublishAttempt] = useState<
+    { readonly idempotencyKey: string; readonly revision: number } | undefined
+  >(undefined);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishMessage, setPublishMessage] = useState<string | undefined>(undefined);
   const currentEntry = savedEntry ?? entry.data;
   const model = models.data?.items.find((item) => item.key === modelKey);
   const modelRef = useRef<ContentModelDto | undefined>(undefined);
@@ -1030,7 +1073,12 @@ function EntryEditor() {
     setSuggestingSlug(false);
     setSlugManuallyEdited(false);
   }, [currentEntry, form, initial]);
-  useEffect(() => setSavedEntry(undefined), [entryId]);
+  useEffect(() => {
+    setSavedEntry(undefined);
+    setConflict(undefined);
+    setPublishAttempt(undefined);
+    setPublishMessage(undefined);
+  }, [entryId]);
   useEffect(() => {
     if (!suggestingSlugRef.current || slugManuallyEdited) return;
     const suggested = suggestSlug(titleValue);
@@ -1057,6 +1105,10 @@ function EntryEditor() {
     },
     onError: (error) => {
       if (!(error instanceof AdminClientError)) return;
+      if (error.code === "CONTENT_REVISION_CONFLICT") {
+        setConflict("save");
+        return;
+      }
       for (const issue of error.issues ?? []) {
         const name = pointerToFormField(issue.path, modelRef.current, form.getValues("blocks"));
         if (name !== undefined)
@@ -1074,7 +1126,50 @@ function EntryEditor() {
       form.reset(values);
       setSuggestingSlug(false);
       setSlugManuallyEdited(false);
+      setConflict(undefined);
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+    },
+  });
+  const publish = useMutation({
+    mutationFn: (attempt: { readonly idempotencyKey: string; readonly revision: number }) =>
+      client.publishEntry(entryId, {
+        expectedRevision: attempt.revision,
+        idempotencyKey: attempt.idempotencyKey,
+      }),
+    onError: (error) => {
+      if (error instanceof AdminClientError && error.code === "CONTENT_REVISION_CONFLICT") {
+        setConflict("publish");
+        setPublishAttempt(undefined);
+        return;
+      }
+      if (error instanceof AdminClientError && error.status !== undefined)
+        setPublishAttempt(undefined);
+    },
+    onSuccess: async (result) => {
+      const publishedModel = modelRef.current;
+      if (publishedModel === undefined) return;
+      const values = draftValues(publishedModel, result.entry);
+      queryClient.setQueryData(adminQueryKeys.entry(entryId), result.entry);
+      setSavedEntry(result.entry);
+      loaded.current = `${result.entry.id}:${result.entry.draft.revision}`;
+      form.reset(values);
+      setConflict(undefined);
+      setPublishAttempt(undefined);
+      setPublishMessage(buildDispatchDescription(result.build.status));
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+    },
+  });
+  const reloadServerDraft = useMutation({
+    mutationFn: () => client.loadEntry(entryId),
+    onSuccess: (reloaded) => {
+      const reloadedModel = modelRef.current;
+      if (reloadedModel === undefined) return;
+      queryClient.setQueryData(adminQueryKeys.entry(entryId), reloaded);
+      setSavedEntry(reloaded);
+      loaded.current = `${reloaded.id}:${reloaded.draft.revision}`;
+      form.reset(draftValues(reloadedModel, reloaded));
+      setConflict(undefined);
+      setPublishAttempt(undefined);
     },
   });
   useSessionRecovery(models.error ?? entry.error);
@@ -1095,6 +1190,20 @@ function EntryEditor() {
   const blockErrors = form.formState.errors.blocks as
     | Record<string, Record<string, unknown>>
     | undefined;
+  const publicPath = resolvedPublicPath(model, currentEntry);
+  const canPublish = session.role === "admin";
+  const retryPublish = () => {
+    if (publishAttempt !== undefined) publish.mutate(publishAttempt);
+  };
+  const copyLocalDraft = async () => {
+    try {
+      if (navigator.clipboard === undefined) throw new Error("Clipboard is unavailable.");
+      await navigator.clipboard.writeText(localDraftJson(form.getValues()));
+      setCopyError(undefined);
+    } catch {
+      setCopyError("Could not copy local JSON. Select and copy it manually from your browser.");
+    }
+  };
   return (
     <section className="lace-page" aria-labelledby="entry-title">
       <div className="lace-page-heading">
@@ -1108,13 +1217,61 @@ function EntryEditor() {
                 : `Saved revision ${currentEntry.draft.revision}`}
           </p>
         </div>
-        <Button
-          disabled={save.isPending || !form.formState.isDirty}
-          onClick={form.handleSubmit((values) => save.mutate(values))}
-        >
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
+        <div className="lace-actions">
+          <Button
+            disabled={save.isPending || !form.formState.isDirty}
+            onClick={form.handleSubmit((values) => save.mutate(values))}
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+          {canPublish ? (
+            <Dialog
+              description="Publishing makes the current validated draft public. A later draft save will not change it."
+              onOpenChange={setPublishDialogOpen}
+              open={publishDialogOpen}
+              title="Publish this entry?"
+              trigger={
+                <Button disabled={publish.isPending || form.formState.isDirty}>Publish</Button>
+              }
+            >
+              <div className="lace-actions">
+                <Button
+                  disabled={publish.isPending}
+                  onClick={() => {
+                    const attempt = {
+                      idempotencyKey: ulid(),
+                      revision: currentEntry.draft.revision,
+                    };
+                    setPublishAttempt(attempt);
+                    setPublishDialogOpen(false);
+                    publish.mutate(attempt);
+                  }}
+                >
+                  {publish.isPending ? "Publishing…" : "Confirm publication"}
+                </Button>
+              </div>
+            </Dialog>
+          ) : undefined}
+        </div>
       </div>
+      <section aria-label="Publication status" className="lace-state lace-publication-status">
+        <h2>Publication</h2>
+        <p>Draft revision {currentEntry.draft.revision}</p>
+        <p>
+          Last edited by {currentEntry.draft.updatedBy.id} at {currentEntry.draft.updatedAt}
+        </p>
+        <p>{currentEntry.published === undefined ? "Not published" : "Published"}</p>
+        {publicPath === undefined ? undefined : <p>Public path: {publicPath}</p>}
+        {publishMessage === undefined ? undefined : <p role="status">{publishMessage}</p>}
+        {publish.error !== null && publishAttempt !== undefined ? (
+          <div className="lace-actions">
+            <p role="alert">{errorDescription(publish.error)}</p>
+            <Button disabled={publish.isPending} onClick={retryPublish} variant="secondary">
+              Retry publish
+            </Button>
+          </div>
+        ) : undefined}
+      </section>
       <form
         className="lace-form lace-draft-form"
         onSubmit={form.handleSubmit((values) => save.mutate(values))}
@@ -1189,7 +1346,38 @@ function EntryEditor() {
           {save.isPending ? "Saving…" : "Save draft"}
         </Button>
       </form>
-      {save.error === null ? undefined : <RouteError error={save.error} />}
+      {conflict === undefined ? (
+        save.error === null ? undefined : (
+          <RouteError error={save.error} />
+        )
+      ) : (
+        <section
+          aria-labelledby="conflict-title"
+          className="lace-state lace-state--error"
+          role="alert"
+        >
+          <h2 id="conflict-title">Draft changed elsewhere</h2>
+          <p>
+            Your local {conflict} values are still available. Reloading is the only action that
+            replaces them.
+          </p>
+          <div className="lace-actions">
+            <Button
+              disabled={reloadServerDraft.isPending}
+              onClick={() => reloadServerDraft.mutate()}
+            >
+              {reloadServerDraft.isPending ? "Reloading…" : "Reload server draft"}
+            </Button>
+            <Button onClick={() => void copyLocalDraft()} variant="secondary">
+              Copy my JSON
+            </Button>
+          </div>
+          {copyError === undefined ? undefined : <p role="alert">{copyError}</p>}
+          {reloadServerDraft.error === null ? undefined : (
+            <p role="alert">{errorDescription(reloadServerDraft.error)}</p>
+          )}
+        </section>
+      )}
       {blocker.status !== "blocked" ? undefined : (
         <div
           aria-labelledby="discard-title"

@@ -31,6 +31,7 @@ import {
   mediaUrl,
   opaqueCursorSchema,
   packageName,
+  publishContentEntryResultSchema,
   publishContentEntryRequestSchema,
   resolveExpectedRevision,
   saveDraftRequestSchema,
@@ -40,6 +41,7 @@ import {
   toContentModelDto,
   toIsoTimestamp,
   toMediaMetadataDto,
+  toPublishContentEntryResultDto,
   toSiteBuildDto,
   transportError,
   validationError,
@@ -143,6 +145,27 @@ describe("shared REST contract DTOs", () => {
       targetVersion: 7,
     });
     expect(v.parse(siteBuildSchema, buildDto)).toEqual(buildDto);
+
+    const publishedResult = toPublishContentEntryResultDto({
+      build: { buildId: "build-1", status: "accepted" },
+      entry,
+      publication: "published",
+    });
+    expect(v.parse(publishContentEntryResultSchema, publishedResult)).toEqual(publishedResult);
+    expect(
+      v.parse(publishContentEntryResultSchema, {
+        build: { status: "unavailable" },
+        entry: entryDto,
+        publication: "published",
+      }),
+    ).toMatchObject({ build: { status: "unavailable" } });
+    expect(
+      v.parse(publishContentEntryResultSchema, {
+        build: { status: "not-dispatched" },
+        entry: entryDto,
+        publication: "replayed",
+      }),
+    ).toMatchObject({ publication: "replayed" });
 
     const modelDto = toContentModelDto({
       blocks: ["hero"],

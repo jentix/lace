@@ -5,12 +5,14 @@ import {
   contractValidationIssueSchema,
   errorEnvelopeSchema,
   mediaListSchema,
+  publishContentEntryResultSchema,
   type ContentBlockDto,
   type ContractValidationIssue,
   type ContentEntryDto,
   type ContentEntryListDto,
   type ContentModelListDto,
   type MediaListDto,
+  type PublishContentEntryResultDto,
 } from "@lacecms/contracts";
 import * as v from "valibot";
 
@@ -52,6 +54,10 @@ export interface AdminClient {
   listEntries(modelKey: string, cursor?: string): Promise<ContentEntryListDto>;
   listMedia(cursor?: string): Promise<MediaListDto>;
   listModels(): Promise<ContentModelListDto>;
+  publishEntry(
+    entryId: string,
+    input: { readonly expectedRevision: number; readonly idempotencyKey: string },
+  ): Promise<PublishContentEntryResultDto>;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
   saveDraft(
@@ -173,6 +179,21 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     signOut: async () => {
       await request(fetcher, "/api/auth/sign-out", { method: "POST" });
     },
+    publishEntry: async (
+      entryId: string,
+      input: { readonly expectedRevision: number; readonly idempotencyKey: string },
+    ) =>
+      parse(
+        publishContentEntryResultSchema,
+        await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}/publish`, {
+          body: JSON.stringify({ expectedRevision: input.expectedRevision }),
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": input.idempotencyKey,
+          },
+          method: "POST",
+        }),
+      ),
     saveDraft: async (
       entryId: string,
       input: {

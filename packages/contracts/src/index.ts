@@ -254,6 +254,19 @@ export const contentEntrySchema = v.strictObject({
   published: v.optional(publishedSnapshotSchema),
 });
 
+export const publicationOutcomeSchema = v.picklist(["published", "replayed"]);
+export const buildDispatchOutcomeSchema = v.variant("status", [
+  v.strictObject({ buildId: v.optional(identifierSchema), status: v.literal("accepted") }),
+  v.strictObject({ status: v.literal("not-dispatched") }),
+  v.strictObject({ status: v.literal("rejected") }),
+  v.strictObject({ status: v.literal("unavailable") }),
+]);
+export const publishContentEntryResultSchema = v.strictObject({
+  build: buildDispatchOutcomeSchema,
+  entry: contentEntrySchema,
+  publication: publicationOutcomeSchema,
+});
+
 export const contentEntrySummarySchema = v.strictObject({
   draftRevision: nonNegativeIntegerSchema,
   id: identifierSchema,
@@ -415,6 +428,7 @@ export const errorEnvelopeSchema = v.strictObject({
 });
 
 export type ContentEntryDto = v.InferOutput<typeof contentEntrySchema>;
+export type PublishContentEntryResultDto = v.InferOutput<typeof publishContentEntryResultSchema>;
 export type ContentEntryListDto = v.InferOutput<typeof contentEntryListSchema>;
 export type ContentEntrySummaryDto = v.InferOutput<typeof contentEntrySummarySchema>;
 export type ContentModelDto = v.InferOutput<typeof contentModelSchema>;
@@ -476,6 +490,27 @@ export function toContentEntryDto(entry: ContentEntry): ContentEntryDto {
             typeof publishedSnapshotSchema
           >,
         }),
+  };
+}
+
+/** Maps the portable publication command outcome without exposing application internals. */
+export function toPublishContentEntryResultDto(input: {
+  readonly build:
+    | Readonly<{ readonly buildId?: string; readonly status: "accepted" }>
+    | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
+  readonly entry: ContentEntry;
+  readonly publication: "published" | "replayed";
+}): PublishContentEntryResultDto {
+  return {
+    build:
+      input.build.status === "accepted"
+        ? {
+            ...(input.build.buildId === undefined ? {} : { buildId: input.build.buildId }),
+            status: "accepted",
+          }
+        : { status: input.build.status },
+    entry: toContentEntryDto(input.entry),
+    publication: input.publication,
   };
 }
 

@@ -57,6 +57,7 @@ function client(overrides: Partial<AdminClient> = {}): AdminClient {
         : { items: [entry] },
     listMedia: async () => ({ items: [] }),
     listModels: async () => models,
+    publishEntry: async () => ({}) as never,
     signIn: async () => undefined,
     signOut: async () => undefined,
     saveDraft: async () => ({}) as never,
@@ -249,6 +250,200 @@ test("entry editor prevents invalid local submission and keeps manual slug edits
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("does not conform");
   expect(saveDraft).not.toHaveBeenCalled();
+});
+
+test("entry editor shows separate draft and publication facts without offering publish to editors", async () => {
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      loadEntry: async () => ({
+        ...draftEntry,
+        draft: { ...draftEntry.draft, revision: 4, slug: "draft-post" },
+        published: {
+          ...draftEntry.draft,
+          id: "published-1",
+          revision: 3,
+          slug: "published-post",
+          state: "published" as const,
+        },
+      }),
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
+    "Draft revision 4",
+  );
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
+    "Last edited by editor-1",
+  );
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
+    "Public path: /posts/published-post",
+  );
+  expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+});
+
+test("admin confirms publication and sees an independent pending-build outcome", async () => {
+  const user = userEvent.setup();
+  const publishEntry = vi.fn(async () => ({
+    build: { status: "accepted" as const },
+    entry: {
+      ...draftEntry,
+      published: { ...draftEntry.draft, id: "published-1", state: "published" as const },
+    },
+    publication: "published" as const,
+  }));
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ publishEntry }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  const dialog = screen.getByRole("dialog", { name: "Publish this entry?" });
+  await user.click(within(dialog).getByRole("button", { name: "Confirm publication" }));
+  await waitFor(() => expect(publishEntry).toHaveBeenCalledTimes(1));
+  expect(publishEntry).toHaveBeenCalledWith(
+    "entry-1",
+    expect.objectContaining({ expectedRevision: 2, idempotencyKey: expect.any(String) }),
+  );
+  expect(await screen.findByText("Published. Build pending.")).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent("Published");
+});
+
+test("publish retries an uncertain network outcome with the same attempt key", async () => {
+  const user = userEvent.setup();
+  const publishEntry = vi
+    .fn()
+    .mockRejectedValueOnce(new AdminClientError({ message: "The Lace API could not be reached." }))
+    .mockResolvedValueOnce({
+      build: { status: "unavailable" as const },
+      entry: draftEntry,
+      publication: "published" as const,
+    });
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ publishEntry }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Publish this entry?" })).getByRole("button", {
+      name: "Confirm publication",
+    }),
+  );
+  await screen.findByRole("button", { name: "Retry publish" });
+  await user.click(screen.getByRole("button", { name: "Retry publish" }));
+  await waitFor(() => expect(publishEntry).toHaveBeenCalledTimes(2));
+  expect(publishEntry.mock.calls[1]![1]).toEqual(publishEntry.mock.calls[0]![1]);
+  expect(
+    await screen.findByText("Published, but build dispatch is currently unavailable."),
+  ).toBeInTheDocument();
+});
+
+test("a publish revision conflict leaves the loaded form available for explicit recovery", async () => {
+  const user = userEvent.setup();
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({
+      publishEntry: async () => {
+        throw new AdminClientError({
+          code: "CONTENT_REVISION_CONFLICT",
+          message: "The draft was modified by another request.",
+          status: 409,
+        });
+      },
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Publish this entry?" })).getByRole("button", {
+      name: "Confirm publication",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Draft changed elsewhere");
+  expect(screen.getByLabelText("Title")).toHaveValue("First post");
+});
+
+test("a later draft save preserves the published public output", async () => {
+  const user = userEvent.setup();
+  const initiallyPublished = {
+    ...draftEntry,
+    draft: { ...draftEntry.draft, revision: 4, slug: "draft-path" },
+    published: {
+      ...draftEntry.draft,
+      id: "published-1",
+      revision: 3,
+      slug: "published-path",
+      state: "published" as const,
+    },
+  };
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({
+      loadEntry: async () => initiallyPublished,
+      saveDraft: async (_entryId, input) =>
+        ({
+          ...initiallyPublished,
+          draft: { ...initiallyPublished.draft, ...input, revision: 5 },
+        }) as never,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.clear(screen.getByLabelText("Title"));
+  await user.type(screen.getByLabelText("Title"), "Later draft");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText("Saved revision 5")).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
+    "Public path: /posts/published-path",
+  );
+});
+
+test("revision conflicts retain local values until reload and copying changes nothing", async () => {
+  const user = userEvent.setup();
+  const loadEntry = vi
+    .fn()
+    .mockResolvedValueOnce(draftEntry)
+    .mockResolvedValueOnce({
+      ...draftEntry,
+      draft: { ...draftEntry.draft, title: "Server title" },
+    });
+  const clipboard = { writeText: vi.fn(async () => undefined) };
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      loadEntry,
+      saveDraft: async () => {
+        throw new AdminClientError({
+          code: "CONTENT_REVISION_CONFLICT",
+          message: "The draft was modified by another request.",
+          status: 409,
+        });
+      },
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.clear(screen.getByLabelText("Title"));
+  await user.type(screen.getByLabelText("Title"), "Keep local");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Draft changed elsewhere");
+  expect(screen.getByLabelText("Title")).toHaveValue("Keep local");
+  await user.click(screen.getByRole("button", { name: "Copy my JSON" }));
+  await waitFor(() =>
+    expect(clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Keep local")),
+  );
+  expect(screen.getByLabelText("Title")).toHaveValue("Keep local");
+  expect(loadEntry).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Reload server draft" }));
+  await waitFor(() => expect(loadEntry).toHaveBeenCalledTimes(2));
+  expect(await screen.findByLabelText("Title")).toHaveValue("Server title");
+  expect(screen.queryByText("Draft changed elsewhere")).not.toBeInTheDocument();
 });
 
 test("rich-text controls reject an unsafe link before save", async () => {
@@ -533,9 +728,12 @@ test("remote models link pages directly and collections to their entry lists", a
 
   expect(await screen.findByRole("link", { name: "home" })).toHaveAttribute(
     "href",
-    "/content/home/home-1",
+    "/admin/content/home/home-1",
   );
-  expect(screen.getByRole("link", { name: "posts" })).toHaveAttribute("href", "/content/posts");
+  expect(screen.getByRole("link", { name: "posts" })).toHaveAttribute(
+    "href",
+    "/admin/content/posts",
+  );
 });
 
 test("collection lists keep cursors opaque and expose permitted mutations", async () => {

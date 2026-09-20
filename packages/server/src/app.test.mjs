@@ -214,7 +214,14 @@ test("validates admin requests, rejects anonymous actors, and protects fallbacks
       headers: { "content-type": "application/json", "idempotency-key": "publish-key" },
       method: "POST",
     }),
-  ).toMatchObject({ body: { published: { state: "published" } }, response: { status: 200 } });
+  ).toMatchObject({
+    body: {
+      build: { status: "unavailable" },
+      entry: { published: { state: "published" } },
+      publication: "published",
+    },
+    response: { status: 200 },
+  });
   expect(
     await (await authenticated.app.fetch(new Request("https://lace.test/admin/content"))).text(),
   ).toBe("admin-shell");

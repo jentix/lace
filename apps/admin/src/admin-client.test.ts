@@ -138,6 +138,48 @@ test("loads and saves one validated complete draft with its revision", async () 
   );
 });
 
+test("publishes with one validated idempotency key and rejects malformed publish results", async () => {
+  const entry = {
+    draft: {
+      blocks: [],
+      createdAt: "2026-09-20T00:00:00.000Z",
+      entryId: "entry-1",
+      fields: {},
+      id: "snapshot-1",
+      revision: 3,
+      state: "draft",
+      title: "First post",
+      updatedAt: "2026-09-20T00:00:00.000Z",
+      updatedBy: { id: "admin-1", role: "admin" },
+    },
+    id: "entry-1",
+    model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+  };
+  const fetcher = vi.fn(async () =>
+    Response.json({ build: { status: "unavailable" }, entry, publication: "published" }),
+  );
+  await expect(
+    createAdminClient(fetcher).publishEntry("entry-1", {
+      expectedRevision: 3,
+      idempotencyKey: "publish-attempt-1",
+    }),
+  ).resolves.toMatchObject({ build: { status: "unavailable" }, publication: "published" });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/admin/entries/entry-1/publish",
+    expect.objectContaining({
+      credentials: "same-origin",
+      headers: expect.objectContaining({ "idempotency-key": "publish-attempt-1" }),
+      method: "POST",
+    }),
+  );
+  await expect(
+    createAdminClient(async () => Response.json({ entry })).publishEntry("entry-1", {
+      expectedRevision: 3,
+      idempotencyKey: "publish-attempt-1",
+    }),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
 test("retains only validated field issues from an API error", async () => {
   await expect(
     createAdminClient(async () =>

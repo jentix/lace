@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
+    "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
     "test": "vitest run"
@@ -44,6 +45,7 @@
     "valibot": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@testing-library/jest-dom": "catalog:",
     "@testing-library/react": "catalog:",
