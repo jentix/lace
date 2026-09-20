@@ -285,6 +285,30 @@ input:focus-visible,
   color: var(--lace-color-muted);
   margin: calc(-1 * var(--lace-space-4)) 0 0;
 }
+.lace-page-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lace-space-4);
+  justify-content: space-between;
+}
+.lace-form {
+  display: grid;
+  gap: var(--lace-space-4);
+  max-width: 28rem;
+}
+.lace-model-list {
+  display: grid;
+  gap: var(--lace-space-2);
+}
+.lace-model-list a {
+  background: var(--lace-color-surface);
+  border: 1px solid var(--lace-color-border);
+  border-radius: var(--lace-radius-sm);
+  color: var(--lace-color-text);
+  padding: var(--lace-space-3);
+  text-decoration: none;
+}
 .lace-menu-button {
   display: none;
 }

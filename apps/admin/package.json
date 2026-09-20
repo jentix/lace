@@ -11,13 +11,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lacecms/contracts": "workspace:*",
     "@radix-ui/react-dialog": "catalog:",
     "@radix-ui/react-select": "catalog:",
     "@radix-ui/react-toast": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

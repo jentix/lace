@@ -7,6 +7,7 @@ export interface AdminSession {
 
 export interface AdminSessionSource {
   get(): Promise<AdminSession | null>;
+  invalidate(): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,9 +35,12 @@ export function createBrowserSessionSource(fetcher: typeof fetch = fetch): Admin
         .catch(() => null);
       return pending;
     },
+    invalidate: () => {
+      pending = undefined;
+    },
   });
 }
 
 export function createStaticSessionSource(session: AdminSession | null): AdminSessionSource {
-  return Object.freeze({ get: async () => session });
+  return Object.freeze({ get: async () => session, invalidate: () => undefined });
 }

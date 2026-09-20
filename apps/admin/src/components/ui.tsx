@@ -216,9 +216,11 @@ export function EmptyState({
 
 export function ErrorState({
   description,
+  technicalDetails,
   title = "Something went wrong",
 }: {
   readonly description: string;
+  readonly technicalDetails?: string | undefined;
   readonly title?: string;
 }) {
   return (
@@ -229,6 +231,12 @@ export function ErrorState({
     >
       <h2 id="error-state-title">{title}</h2>
       <p>{description}</p>
+      {technicalDetails === undefined ? undefined : (
+        <details>
+          <summary>Technical details</summary>
+          <p>Request ID: {technicalDetails}</p>
+        </details>
+      )}
     </section>
   );
 }

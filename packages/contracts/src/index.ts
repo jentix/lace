@@ -303,6 +303,10 @@ export const errorEnvelopeSchema = v.strictObject({
 });
 
 export type ContentEntryDto = v.InferOutput<typeof contentEntrySchema>;
+export type ContentEntryListDto = v.InferOutput<typeof contentEntryListSchema>;
+export type ContentEntrySummaryDto = v.InferOutput<typeof contentEntrySummarySchema>;
+export type ContentModelDto = v.InferOutput<typeof contentModelSchema>;
+export type ContentModelListDto = v.InferOutput<typeof contentModelListSchema>;
 export type ContentSnapshotDto = v.InferOutput<typeof contentSnapshotSchema>;
 export type ContentBlockDto = v.InferOutput<typeof contentBlockSchema>;
 export type PublicContentEntryDto = v.InferOutput<typeof publicContentEntrySchema>;

@@ -37,8 +37,9 @@ The admin application SHALL provide typed client routes for `/login`,
 `/builds`, `/users`, and `/settings`. Refreshing one of these client routes
 through the configured API/admin composition SHALL render the corresponding
 admin client route rather than an API or health fallback response. The content
-and resource screens may render foundation placeholders until their Session 11B
-remote-state behavior is added.
+landing, and content-model routes SHALL present their Session 11B remote-state
+behavior; resource screens outside Session 11B may retain their foundation
+placeholders.
 
 #### Scenario: A model-entry route is refreshed
 - **WHEN** a browser refreshes `/content/posts/entry-123` through the admin
