@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   base: "/admin/",
   plugins: [react(), tailwindcss()],
+  server: { allowedHosts: ["admin"] },
   test: {
     css: true,
     environment: "jsdom",

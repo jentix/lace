@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
+    "dev:container": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",

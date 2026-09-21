@@ -10,29 +10,160 @@ services:
       start_period: 5s
       test: ["CMD-SHELL", "curl --fail http://localhost:9000/minio/health/live"]
       timeout: 3s
-    image: minio/minio:latest
-    ports:
-      - "${LACE_MINIO_PORT:-9000}:9000"
-      - "${LACE_MINIO_CONSOLE_PORT:-9001}:9001"
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
     volumes:
       - minio-data:/data
 
   minio-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     command:
       [
         "sh",
         "-ec",
-        'mc alias set local http://minio:9000 "$${LACE_MINIO_ROOT_ACCESS_KEY}" "$${LACE_MINIO_ROOT_SECRET}" && mc mb --ignore-existing local/$${LACE_MINIO_BUCKET}',
+        "pnpm --filter @lacecms/platform-node... install --frozen-lockfile && pnpm --dir packages/platform-node exec node src/minio-init.mjs",
       ]
     depends_on:
       minio:
         condition: service_healthy
     environment:
       LACE_MINIO_BUCKET: ${LACE_MINIO_BUCKET:?set LACE_MINIO_BUCKET}
+      LACE_MINIO_ENDPOINT: ${LACE_MINIO_ENDPOINT:?set LACE_MINIO_ENDPOINT}
+      LACE_MINIO_REGION: ${LACE_MINIO_REGION:?set LACE_MINIO_REGION}
       LACE_MINIO_ROOT_ACCESS_KEY: ${LACE_MINIO_ROOT_ACCESS_KEY:?set LACE_MINIO_ROOT_ACCESS_KEY}
       LACE_MINIO_ROOT_SECRET: ${LACE_MINIO_ROOT_SECRET:?set LACE_MINIO_ROOT_SECRET}
-    image: minio/mc:latest
+    volumes:
+      - .:/workspace
+      - minio-init-node-modules:/workspace/node_modules
+      - minio-init-pnpm-store:/pnpm/store
     restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: >-
+      sh -ec 'pnpm --filter @lacecms/platform-node... install --frozen-lockfile && pnpm db:migrate:node'
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      LACE_DATABASE_PATH: ${LACE_DATABASE_PATH:?set LACE_DATABASE_PATH}
+    volumes:
+      - .:/workspace
+      - migrate-node-modules:/workspace/node_modules
+      - migrate-pnpm-store:/pnpm/store
+      - lace-db:${LACE_DATABASE_DIRECTORY:-/workspace/dev-data}
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: >-
+      sh -ec 'pnpm --filter @lacecms/app-api... install --frozen-lockfile && pnpm --filter @lacecms/app-api run dev'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      LACE_ADMIN_DEV_ORIGIN: ${LACE_ADMIN_DEV_ORIGIN:?set LACE_ADMIN_DEV_ORIGIN}
+      LACE_AUTH_SECRET: ${LACE_AUTH_SECRET:?set LACE_AUTH_SECRET}
+      LACE_DATABASE_PATH: ${LACE_DATABASE_PATH:?set LACE_DATABASE_PATH}
+      LACE_HOST: 0.0.0.0
+      LACE_MINIO_ACCESS_KEY: ${LACE_MINIO_ROOT_ACCESS_KEY:?set LACE_MINIO_ROOT_ACCESS_KEY}
+      LACE_MINIO_BUCKET: ${LACE_MINIO_BUCKET:?set LACE_MINIO_BUCKET}
+      LACE_MINIO_ENDPOINT: ${LACE_MINIO_ENDPOINT:?set LACE_MINIO_ENDPOINT}
+      LACE_MINIO_REGION: ${LACE_MINIO_REGION:?set LACE_MINIO_REGION}
+      LACE_MINIO_SECRET_KEY: ${LACE_MINIO_ROOT_SECRET:?set LACE_MINIO_ROOT_SECRET}
+      LACE_MINIO_TIMEOUT_MS: ${LACE_MINIO_TIMEOUT_MS:?set LACE_MINIO_TIMEOUT_MS}
+      LACE_PORT: 3000
+      LACE_PUBLIC_BASE_URL: ${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}
+      LACE_SITE_DEV_ORIGIN: ${LACE_SITE_DEV_ORIGIN:?set LACE_SITE_DEV_ORIGIN}
+    healthcheck:
+      interval: 5s
+      retries: 18
+      start_period: 15s
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      timeout: 3s
+    ports:
+      - "${LACE_API_PORT:-3000}:3000"
+    volumes:
+      - .:/workspace
+      - api-node-modules:/workspace/node_modules
+      - api-pnpm-store:/pnpm/store
+      - lace-db:${LACE_DATABASE_DIRECTORY:-/workspace/dev-data}
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: >-
+      sh -ec 'pnpm --filter @lacecms/app-admin... install --frozen-lockfile && pnpm --filter @lacecms/app-admin run dev:container'
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    healthcheck:
+      interval: 5s
+      retries: 18
+      start_period: 15s
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5173/admin/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      timeout: 3s
+    volumes:
+      - .:/workspace
+      - admin-node-modules:/workspace/node_modules
+      - admin-pnpm-store:/pnpm/store
+
+  site:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: >-
+      sh -ec 'pnpm --filter @lacecms/app-site... install --frozen-lockfile && pnpm --filter @lacecms/app-site run dev:container'
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    healthcheck:
+      interval: 5s
+      retries: 18
+      start_period: 15s
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4321/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      timeout: 3s
+    volumes:
+      - .:/workspace
+      - site-node-modules:/workspace/node_modules
+      - site-pnpm-store:/pnpm/store
 
 volumes:
   minio-data:
+    name: ${LACE_DATA_VOLUME_PREFIX:-lace-dev}-minio-data
+  lace-db:
+    name: ${LACE_DATA_VOLUME_PREFIX:-lace-dev}-sqlite-data
+  migrate-node-modules:
+  migrate-pnpm-store:
+  minio-init-node-modules:
+  minio-init-pnpm-store:
+  api-node-modules:
+  api-pnpm-store:
+  admin-node-modules:
+  admin-pnpm-store:
+  site-node-modules:
+  site-pnpm-store:

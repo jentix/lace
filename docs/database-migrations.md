@@ -21,6 +21,12 @@ production migration needs correction, restore a verified database backup or
 ship a reviewed later forward migration; do not edit an already-applied
 migration file.
 
+For local development, do not run a separate migration process. `pnpm dev:node`
+starts the Compose migration role against its named SQLite volume before the
+API is allowed to become ready. Ordinary `pnpm dev:stop` and subsequent starts
+preserve that volume; only `pnpm dev:reset -- --confirm` deletes the named
+local development database and MinIO data.
+
 Node content repositories require this migration before they are constructed.
 They provide bounded reads, draft lifecycle writes, guarded publication, and
 entry deletion. Public-projection mutations atomically enqueue durable build
