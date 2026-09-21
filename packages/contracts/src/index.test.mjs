@@ -12,6 +12,7 @@ import * as v from "valibot";
 import { describe, expect, test } from "vitest";
 import {
   buildExportSchema,
+  blockMetadataSchema,
   classifyError,
   contentEntryListSchema,
   contentEntrySchema,
@@ -20,6 +21,7 @@ import {
   deleteContentEntryRequestSchema,
   entityTagForVersion,
   entityTagSchema,
+  fieldMetadataMapSchema,
   fromIsoTimestamp,
   idempotencyKeySchema,
   isoTimestampSchema,
@@ -29,6 +31,7 @@ import {
   mediaUrl,
   opaqueCursorSchema,
   packageName,
+  publishContentEntryResultSchema,
   publishContentEntryRequestSchema,
   resolveExpectedRevision,
   saveDraftRequestSchema,
@@ -38,6 +41,7 @@ import {
   toContentModelDto,
   toIsoTimestamp,
   toMediaMetadataDto,
+  toPublishContentEntryResultDto,
   toSiteBuildDto,
   transportError,
   validationError,
@@ -142,9 +146,30 @@ describe("shared REST contract DTOs", () => {
     });
     expect(v.parse(siteBuildSchema, buildDto)).toEqual(buildDto);
 
+    const publishedResult = toPublishContentEntryResultDto({
+      build: { buildId: "build-1", status: "accepted" },
+      entry,
+      publication: "published",
+    });
+    expect(v.parse(publishContentEntryResultSchema, publishedResult)).toEqual(publishedResult);
+    expect(
+      v.parse(publishContentEntryResultSchema, {
+        build: { status: "unavailable" },
+        entry: entryDto,
+        publication: "published",
+      }),
+    ).toMatchObject({ build: { status: "unavailable" } });
+    expect(
+      v.parse(publishContentEntryResultSchema, {
+        build: { status: "not-dispatched" },
+        entry: entryDto,
+        publication: "replayed",
+      }),
+    ).toMatchObject({ publication: "replayed" });
+
     const modelDto = toContentModelDto({
       blocks: ["hero"],
-      fields: { author: { type: "text" } },
+      fields: { author: { required: false, type: "text" } },
       key: "posts",
       kind: "collection",
       label: "Posts",
@@ -182,6 +207,88 @@ describe("shared REST contract DTOs", () => {
     expect(v.parse(deleteContentEntryRequestSchema, { expectedRevision: 4 })).toEqual({
       expectedRevision: 4,
     });
+  });
+
+  test("validates portable allowed block metadata against each model", () => {
+    const hero = {
+      fields: { heading: { required: true, type: "text" } },
+      label: "Hero",
+      type: "hero",
+      version: 1,
+    };
+    expect(v.parse(blockMetadataSchema, hero)).toEqual(hero);
+    expect(
+      v.parse(contentModelListSchema, {
+        items: [
+          {
+            blockDefinitions: [hero],
+            blocks: ["hero"],
+            fields: {},
+            key: "home",
+            kind: "page",
+            path: "/",
+            version: 1,
+          },
+        ],
+      }),
+    ).toMatchObject({ items: [{ blockDefinitions: [hero] }] });
+    expect(
+      v.safeParse(contentModelListSchema, {
+        items: [
+          {
+            blockDefinitions: [hero],
+            blocks: ["quote"],
+            fields: {},
+            key: "home",
+            kind: "page",
+            path: "/",
+            version: 1,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(v.safeParse(blockMetadataSchema, { ...hero, validate: () => true }).success).toBe(false);
+    expect(
+      v.safeParse(blockMetadataSchema, {
+        ...hero,
+        defaultValue: { unknown: "field" },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("accepts only normalized portable field metadata", () => {
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        active: { required: false, type: "boolean" },
+        body: { label: "Body", maxLength: 500, required: false, type: "textarea" },
+        date: { required: false, type: "date" },
+        datetime: { required: false, type: "datetime" },
+        featured: { defaultValue: false, required: false, type: "boolean" },
+        kind: { options: ["article", "note"], required: true, type: "select" },
+        media: { required: false, type: "media" },
+        richBody: {
+          defaultValue: {
+            content: [{ content: [{ text: "Lace", type: "text" }], type: "paragraph" }],
+            type: "doc",
+          },
+          required: false,
+          type: "richText",
+        },
+        score: { max: 10, min: 0, required: false, type: "number" },
+        title: { required: false, type: "text" },
+        url: { required: false, type: "url" },
+      }).success,
+    ).toBe(true);
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        body: { required: false, surprise: true, type: "text" },
+      }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(fieldMetadataMapSchema, {
+        body: { required: false, type: "select" },
+      }).success,
+    ).toBe(false);
   });
 });
 

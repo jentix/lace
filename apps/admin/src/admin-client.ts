@@ -2,16 +2,25 @@ import {
   contentEntryListSchema,
   contentEntrySchema,
   contentModelListSchema,
+  contractValidationIssueSchema,
   errorEnvelopeSchema,
+  mediaListSchema,
+  publishContentEntryResultSchema,
+  type ContentBlockDto,
+  type ContractValidationIssue,
   type ContentEntryDto,
   type ContentEntryListDto,
   type ContentModelListDto,
+  type MediaListDto,
+  type PublishContentEntryResultDto,
 } from "@lacecms/contracts";
 import * as v from "valibot";
 
 export const adminQueryKeys = Object.freeze({
+  entry: (entryId: string) => ["admin", "entry", entryId] as const,
   entries: (modelKey: string, cursor?: string) =>
     ["admin", "entries", modelKey, cursor ?? null] as const,
+  media: (cursor?: string) => ["admin", "media", cursor ?? null] as const,
   models: ["admin", "models"] as const,
   session: ["admin", "session"] as const,
 });
@@ -20,28 +29,47 @@ export class AdminClientError extends Error {
   readonly code: string | undefined;
   readonly requestId: string | undefined;
   readonly status: number | undefined;
+  readonly issues: readonly ContractValidationIssue[] | undefined;
 
   constructor(input: {
     readonly code?: string;
     readonly message: string;
     readonly requestId?: string;
     readonly status?: number;
+    readonly issues?: readonly ContractValidationIssue[];
   }) {
     super(input.message);
     this.name = "AdminClientError";
     this.code = input.code;
     this.requestId = input.requestId;
     this.status = input.status;
+    this.issues = input.issues;
   }
 }
 
 export interface AdminClient {
   createEntry(modelKey: string, title: string): Promise<ContentEntryDto>;
   deleteEntry(entryId: string, expectedRevision: number): Promise<void>;
+  loadEntry(entryId: string): Promise<ContentEntryDto>;
   listEntries(modelKey: string, cursor?: string): Promise<ContentEntryListDto>;
+  listMedia(cursor?: string): Promise<MediaListDto>;
   listModels(): Promise<ContentModelListDto>;
+  publishEntry(
+    entryId: string,
+    input: { readonly expectedRevision: number; readonly idempotencyKey: string },
+  ): Promise<PublishContentEntryResultDto>;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
+  saveDraft(
+    entryId: string,
+    input: {
+      readonly blocks: readonly ContentBlockDto[];
+      readonly expectedRevision: number;
+      readonly fields: Record<string, unknown>;
+      readonly slug?: string;
+      readonly title: string;
+    },
+  ): Promise<ContentEntryDto>;
 }
 
 type Fetcher = typeof fetch;
@@ -49,18 +77,25 @@ type Fetcher = typeof fetch;
 function responseError(response: Response, body: unknown): AdminClientError {
   const parsed = v.safeParse(errorEnvelopeSchema, body);
   const requestId = response.headers.get("x-request-id") ?? undefined;
+  const issues = parsed.success ? parseIssues(parsed.output.error.details?.issues) : undefined;
   return parsed.success
     ? new AdminClientError({
         code: parsed.output.error.code,
         message: parsed.output.error.message,
         ...(requestId === undefined ? {} : { requestId }),
         status: response.status,
+        ...(issues === undefined ? {} : { issues }),
       })
     : new AdminClientError({
         message: `The Lace API request failed (${response.status}).`,
         ...(requestId === undefined ? {} : { requestId }),
         status: response.status,
       });
+}
+
+function parseIssues(value: unknown): readonly ContractValidationIssue[] | undefined {
+  const parsed = v.safeParse(v.array(contractValidationIssueSchema), value);
+  return parsed.success ? parsed.output : undefined;
 }
 
 async function json(response: Response): Promise<unknown> {
@@ -113,6 +148,11 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
         method: "DELETE",
       });
     },
+    loadEntry: async (entryId: string) =>
+      parse(
+        contentEntrySchema,
+        await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}`),
+      ),
     listEntries: async (modelKey: string, cursor?: string) => {
       const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
       return parse(
@@ -125,6 +165,10 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     },
     listModels: async () =>
       parse(contentModelListSchema, await request(fetcher, "/api/v1/admin/content-models")),
+    listMedia: async (cursor?: string) => {
+      const query = cursor === undefined ? "" : `?after=${encodeURIComponent(cursor)}`;
+      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${query}`));
+    },
     signIn: async (email: string, password: string) => {
       await request(fetcher, "/api/auth/sign-in/email", {
         body: JSON.stringify({ email, password }),
@@ -135,6 +179,39 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     signOut: async () => {
       await request(fetcher, "/api/auth/sign-out", { method: "POST" });
     },
+    publishEntry: async (
+      entryId: string,
+      input: { readonly expectedRevision: number; readonly idempotencyKey: string },
+    ) =>
+      parse(
+        publishContentEntryResultSchema,
+        await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}/publish`, {
+          body: JSON.stringify({ expectedRevision: input.expectedRevision }),
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": input.idempotencyKey,
+          },
+          method: "POST",
+        }),
+      ),
+    saveDraft: async (
+      entryId: string,
+      input: {
+        readonly blocks: readonly ContentBlockDto[];
+        readonly expectedRevision: number;
+        readonly fields: Record<string, unknown>;
+        readonly slug?: string;
+        readonly title: string;
+      },
+    ) =>
+      parse(
+        contentEntrySchema,
+        await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}/draft`, {
+          body: JSON.stringify(input),
+          headers: { "content-type": "application/json" },
+          method: "PUT",
+        }),
+      ),
   });
 }
 

@@ -10,18 +10,39 @@ conventions shared by Lace API implementations, clients, and documentation.
 ### Requirement: Shared versioned content DTOs
 The system SHALL provide one shared runtime contract for the `/api/v1` content
 surface. It SHALL validate request and response representations for content
-models; admin entry lists, entry details, complete-draft saves, publications,
-and deletions; public page, collection, path, media, and build-export reads;
-media metadata; site-build state; cursor pagination; and the error envelope.
-The representations SHALL use JSON primitives and objects only, SHALL expose
-content values through explicit DTOs rather than persistence rows, and SHALL
-remain usable by both Node and Cloudflare API implementations.
+models, including each model's serializable discriminated field-descriptor map
+and allowed registered block-definition metadata; admin entry lists, entry
+details, complete-draft saves, publications, and deletions; public page,
+collection, path, media, and build-export reads; media metadata; site-build
+state; cursor pagination; and the error envelope. Field and block metadata
+SHALL represent only the supported portable field types and their portable
+options, including defaults and constraints where present, and SHALL reject
+unknown descriptor keys, executable values, or non-JSON values. Each model's
+block-definition metadata SHALL correspond only to its declared allowed block
+types and include the stable type, schema version, display metadata, field map,
+and optional default data. The representations SHALL use JSON primitives and
+objects only, SHALL expose content values through explicit DTOs rather than
+persistence rows, and SHALL remain usable by both Node and Cloudflare API
+implementations.
 
 #### Scenario: A content response crosses a runtime boundary
 - **WHEN** an API implementation returns an entry, public content, media
   metadata, build export, or site-build DTO that satisfies the shared contract
 - **THEN** a client can validate the JSON payload without importing a database
   schema or a runtime-specific API package
+
+#### Scenario: Model field metadata crosses a runtime boundary
+- **WHEN** an API implementation returns a configured content model with text,
+  textarea, rich-text, number, boolean, date, datetime, select, URL, or media
+  field metadata
+- **THEN** a browser client can validate the descriptor type and its portable
+  options without importing server configuration code or executable validators
+
+#### Scenario: Allowed block metadata crosses a runtime boundary
+- **WHEN** an API implementation returns a configured content model that allows
+  one or more registered blocks
+- **THEN** a browser client can validate metadata for exactly those block types
+  and render their portable fields without importing a server-side registry
 
 #### Scenario: A malformed mutation is rejected before dispatch
 - **WHEN** a client submits a create, draft-save, publish, or delete payload
@@ -155,3 +176,22 @@ filename-derived value may create, split, or override an HTTP response header.
 - **WHEN** valid media has a filename containing controls or header-like text
 - **THEN** its binary response contains only safe media headers and no injected
   response header or unvalidated content type
+
+### Requirement: Publication responses expose independent dispatch outcomes
+The shared publish response contract SHALL validate and expose the resulting
+content entry, whether the request published or replayed an idempotent prior
+publication, and a portable build-dispatch outcome. The outcome SHALL
+distinguish accepted (optionally with a build identity), rejected, unavailable,
+and not-dispatched dispatches without reporting build completion. A validated
+client SHALL be able to present publication success independently from build
+dispatch state without importing application or persistence types.
+
+#### Scenario: Publication is accepted while dispatch is unavailable
+- **WHEN** publication commits successfully and its build trigger is unavailable
+- **THEN** the publish response validates the published entry and an
+  `unavailable` dispatch outcome, without representing publication as failed
+
+#### Scenario: An idempotent replay is returned
+- **WHEN** a publish request repeats a prior successful idempotent publication
+- **THEN** the publish response validates the original entry with `replayed`
+  publication state and a `not-dispatched` outcome

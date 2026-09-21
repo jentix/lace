@@ -70,6 +70,10 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "blockDefinitions": {
+                            "items": {},
+                            "type": "array"
+                          },
                           "blocks": {
                             "items": {
                               "maxLength": 255,
