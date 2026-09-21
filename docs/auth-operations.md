@@ -8,6 +8,12 @@ performing `POST /api/v1/setup/admin`. The endpoint accepts the token, email,
 and password; after successful completion it returns `404` permanently. If a
 request is interrupted, repeat it with the same token and normalized email.
 
+For the repository's local Docker workflow, use `pnpm dev:bootstrap` after
+`pnpm dev:node` becomes healthy. It runs against the configured local SQLite
+database, prints the token once to its invoker, and persists only its hash. No
+Compose service seeds an account or a default password. The root README has the
+complete first-run request and sign-in path.
+
 ## Users and build credentials
 
 Only administrators can create, list, disable, or change users. Lace refuses

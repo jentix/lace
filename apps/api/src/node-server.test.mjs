@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { createServer } from "node:http";
+import { connect } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,11 @@ import {
   parseNodeRuntimeSettings,
 } from "@lacecms/platform-node";
 import { createTestActorResolver } from "@lacecms/platform-node/test";
-import { createNodeDevelopmentGateway, startNodeServer } from "../dist/index.js";
+import {
+  createNodeDevelopmentGateway,
+  proxyNodeDevelopmentUpgrade,
+  startNodeServer,
+} from "../dist/index.js";
 
 const admin = { id: actorId("integration-admin"), role: "admin" };
 const minioEnvironment = Object.freeze({
@@ -303,6 +308,65 @@ test("routes frontend requests to same-origin development upstreams without prox
     });
     expect((await unavailable(new Request("http://lace.test/"))).status).toBe(502);
   } finally {
+    await new Promise((resolve, reject) =>
+      upstream.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("forwards frontend development upgrades and closes connections on gateway shutdown", async () => {
+  const upstream = createServer();
+  let upgradeRequests = 0;
+  let upgradedSocket;
+  upstream.on("upgrade", (request, socket) => {
+    upgradeRequests += 1;
+    upgradedSocket = socket;
+    expect(request.url).toBe("/admin/@vite/client?token=test");
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    );
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamAddress = upstream.address();
+  const upstreamOrigin = `http://127.0.0.1:${upstreamAddress.port}`;
+  const settings = parseNodeRuntimeSettings({
+    ...minioEnvironment,
+    LACE_ADMIN_DEV_ORIGIN: upstreamOrigin,
+    LACE_DATABASE_PATH: "/tmp/lace.sqlite",
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+    LACE_PUBLIC_BASE_URL: "https://public.lace.test/",
+    LACE_SITE_DEV_ORIGIN: upstreamOrigin,
+  });
+  const gateway = createServer((request, response) => response.end("local"));
+  gateway.on("upgrade", (request, socket, head) =>
+    proxyNodeDevelopmentUpgrade(request, socket, head, settings),
+  );
+  await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  const gatewayAddress = gateway.address();
+  const client = connect(gatewayAddress.port, "127.0.0.1");
+  try {
+    const opened = new Promise((resolve, reject) => {
+      let response = "";
+      client.on("data", (chunk) => {
+        response += chunk;
+        if (response.includes("\r\n\r\n")) resolve(response);
+      });
+      client.once("error", reject);
+    });
+    client.write(
+      "GET /admin/@vite/client?token=test HTTP/1.1\r\nHost: lace.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: test\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    await expect(opened).resolves.toContain("101 Switching Protocols");
+    expect(upgradeRequests).toBe(1);
+  } finally {
+    const clientClosed = new Promise((resolve) => client.once("close", resolve));
+    client.destroy();
+    await clientClosed;
+    upgradedSocket?.destroy();
+    gateway.closeAllConnections();
+    await new Promise((resolve, reject) =>
+      gateway.close((error) => (error ? reject(error) : resolve())),
+    );
     await new Promise((resolve, reject) =>
       upstream.close((error) => (error ? reject(error) : resolve())),
     );

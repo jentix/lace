@@ -5,16 +5,11 @@ checks that the configured bucket exists before binding the listener.
 
 ## Prerequisites
 
-Run the forward migrations before starting a server:
-
-```sh
-LACE_DATABASE_PATH=./lace.sqlite pnpm db:migrate:node
-```
-
-Then synchronize the normalized configuration against that database before
-creating or reading content. Configuration synchronization is intentionally an
-explicit operator action; readiness does not run migrations or synchronize
-configuration.
+For the supported full local browser stack, follow the root
+[README](../README.md). `pnpm dev:node` owns the Compose lifecycle: it applies
+already-committed migrations before the API becomes ready and does not run
+configuration synchronization. Synchronization remains an intentional operator
+operation, not a readiness side effect.
 
 ## Environment
 
@@ -31,8 +26,8 @@ configuration.
 | `LACE_MINIO_TIMEOUT_MS` | yes | Positive per-operation timeout, capped at 60 seconds. |
 | `LACE_HOST` | no | Listener host; defaults to `127.0.0.1`. |
 | `LACE_PORT` | no | Listener port from `1` to `65535`; defaults to `3000`. |
-| `LACE_ADMIN_DEV_ORIGIN` | no | Absolute origin for the already-running admin development server. |
-| `LACE_SITE_DEV_ORIGIN` | no | Absolute origin for the already-running site development server. |
+| `LACE_ADMIN_DEV_ORIGIN` | no | Absolute origin for the Admin development server. The Docker topology uses `http://admin:5173`. |
+| `LACE_SITE_DEV_ORIGIN` | no | Absolute origin for the Astro development server. The Docker topology uses `http://site:4321`. |
 
 Startup errors identify invalid variable names, never their values. The runtime
 does not derive public URLs from `Host`, `Forwarded`, or `X-Forwarded-*`
@@ -40,32 +35,21 @@ headers.
 
 ## Local development
 
-```sh
-LACE_DATABASE_PATH=./lace.sqlite \
-LACE_AUTH_SECRET=replace-with-a-local-secret \
-LACE_PUBLIC_BASE_URL=http://127.0.0.1:3000/ \
-LACE_MINIO_ENDPOINT=http://127.0.0.1:9000 \
-LACE_MINIO_BUCKET=lace-media \
-LACE_MINIO_REGION=us-east-1 \
-LACE_MINIO_ACCESS_KEY=local-access-key \
-LACE_MINIO_SECRET_KEY=local-secret-key \
-LACE_MINIO_TIMEOUT_MS=5000 \
-LACE_ADMIN_DEV_ORIGIN=http://127.0.0.1:5173 \
-LACE_SITE_DEV_ORIGIN=http://127.0.0.1:4321 \
-pnpm dev:node
-```
+`pnpm dev:node` starts all six development roles: private MinIO, its bucket
+initializer, a migration job, the Node gateway, Admin Vite, and Astro. It is
+the only supported local start command; do not manually start an API process,
+frontend process, or MinIO service alongside it.
 
-The command starts the Node API listener. `/api/*`, `/health/live`, and
-`/health/ready` stay local; `/admin/*` is proxied to the configured admin
-origin and all other frontend paths go to the site origin. The command does not
-start frontend processes: current admin/site packages have no development
-servers yet.
+The browser uses `http://127.0.0.1:3000` by default. `/api/*` and `/health/*`
+stay local to Node; `/admin/*` reaches Vite and all other frontend paths reach
+Astro through the same origin. Upgrade connections used by the frontend
+development servers are forwarded to their selected upstream. If a frontend
+upstream is unavailable, the gateway returns a sanitized `502` response.
 
-Start the development bucket and its idempotent initializer with
-`docker compose -f docker-compose.dev.yml up minio minio-init`. Supply the
-required `LACE_MINIO_ROOT_*` variables in a local ignored `.env`; local API
-credentials can use the same values. The `minio-data` named volume preserves
-development objects across restarts.
+The full local environment list is in [`.env.example`](../.env.example); use
+`pnpm dev:env` rather than placing credentials in shell history. MinIO remains
+inside the Compose network, and its persistent data is preserved unless the
+explicit root reset is requested.
 
 `GET /health/live` only confirms that the HTTP process is serving. `GET
 /health/ready` performs one local SQLite `SELECT 1`; bucket reachability is

@@ -134,6 +134,7 @@ foundation
   -> media
   -> SDK + Astro fixture
   -> admin shell + editor
+  -> local development environment
   -> outbox + builder
   -> Cloudflare runtime
   -> generator + upgrade
@@ -155,13 +156,14 @@ foundation
 | 10 | SDK and reference Astro site | M | 10A, 10B |
 | 11 | Admin foundation | M | 11A, 11B |
 | 12 | Draft and block editor | L | 12A, 12B, 12C |
+| 12.5 | Local development environment | S | whole step |
 | 13 | Outbox, builds, and VPS builder | L | 13A, 13B, 13C |
 | 14 | Cloudflare runtime | L | 14A, 14B, 14C |
 | 15 | CLI generator and operational commands | L | 15A, 15B, 15C |
 | 16 | Upgrade safety | M | 16A, 16B |
 | 17 | MVP release gate | L | 17A, 17B, 17C |
 
-The roadmap is therefore **43 recommended session units**. Small neighboring
+The roadmap is therefore **44 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
@@ -746,6 +748,53 @@ revision or publication isolation.
 - Rich text and URLs rejected by the server are also identified in the form.
 
 **Session boundary:** L; use 12A, 12B, and 12C.
+
+## Step 12.5 — Local development environment
+
+**Outcome:** a contributor can start the complete Node/SQLite/MinIO/API/Admin/
+Astro browser stack from a clean configured checkout, bootstrap a first local
+administrator, and repeat a non-destructive smoke verification before Step 13
+introduces the VPS builder and static release topology.
+
+### Substeps
+
+1. Expand the development Compose topology to include persistent SQLite and
+   MinIO data, idempotent bucket initialization, forward migrations, the Node
+   API gateway, Admin Vite, and Astro development servers. Use health checks and
+   dependency conditions instead of fixed sleeps; mount workspace sources while
+   isolating container-native dependencies. Do not add a builder, release
+   directory, production reverse proxy, public object bucket, or hard-coded
+   credentials.
+2. Make `pnpm dev:node` the single Node local-start command. Add documented
+   start/stop/log/reset/bootstrap/smoke commands that delegate to one Compose
+   topology. Preserve API and health namespaces at the Node gateway, support
+   frontend development upgrade traffic, and make reset the only explicitly
+   destructive operation. The local bootstrap helper must mint the existing
+   one-time setup token and never seed a password or write a plaintext token.
+3. Complete `.env.example` with every required local setting but no usable
+   secret. Replace the root README with the canonical developer guide covering
+   prerequisites, first start, first-admin setup, local URLs, normal operations,
+   testing, quality gates, resets, and troubleshooting; reconcile focused Node,
+   authentication, and migration references.
+4. Add a `dev:smoke` command that creates a unique temporary Compose project,
+   waits with bounded polling, verifies API, admin, site, and MinIO reachability,
+   and cleans up only resources it created. Cover root lifecycle helpers and
+   gateway routing/upgrade behavior with focused tests.
+
+### Acceptance
+
+- A clean configured checkout starts the full browser stack with `pnpm dev:node`;
+  API, Admin, and site requests use the documented Node origin, while MinIO
+  remains private.
+- Normal stop/start preserves only the named Lace development data; reset is
+  explicit, clearly destructive, and cannot target arbitrary Docker resources.
+- `pnpm dev:smoke` is repeatable and does not alter an existing local stack or
+  its data.
+- The README alone is sufficient to complete first run, create an administrator,
+  sign in, run tests, and diagnose common local failures.
+
+**Session boundary:** S; complete as one session under the OpenSpec change
+`m12d-local-dev-stack`.
 
 ## Step 13 — Outbox, build tracking, and VPS builder
 
