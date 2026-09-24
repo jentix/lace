@@ -475,6 +475,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/server
     devDependencies:
+      '@lacecms/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       '@lacecms/config':
         specifier: workspace:*
         version: link:../../packages/config
