@@ -22,9 +22,9 @@ import {
   openNodeDatabase,
   packageName,
   parseNodeRuntimeSettings,
-  createNodeDevelopmentConfig,
   createNodeRuntime,
 } from "../dist/index.js";
+import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import {
   applyPreparedConfigurationSynchronization,
   prepareConfigurationSynchronization,
@@ -449,7 +449,13 @@ test("Node composition maps a Better Auth session into a protected actor", async
       LACE_DATABASE_PATH: databasePath,
       LACE_PUBLIC_BASE_URL: "https://lace.test/",
     });
-    const runtime = createNodeRuntime({ config: await createNodeDevelopmentConfig(), settings });
+    const config = await defineConfig({
+      content: [
+        definePage({ key: "home", path: "/", version: 1 }),
+        defineCollection({ key: "posts", route: "/blog/:slug", version: 1 }),
+      ],
+    });
+    const runtime = createNodeRuntime({ config, settings });
     const now = Date.now();
     runtime.database.connection
       .prepare(

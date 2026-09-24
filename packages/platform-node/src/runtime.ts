@@ -7,13 +7,7 @@ import type {
   ImageInspector,
   SiteBuildTrigger,
 } from "@lacecms/application";
-import {
-  defineCollection,
-  defineConfig,
-  definePage,
-  type ContentModelDefinition,
-  type NormalizedConfig,
-} from "@lacecms/config";
+import { type ContentModelDefinition, type NormalizedConfig } from "@lacecms/config";
 import { createBetterAuthBoundary } from "@lacecms/auth";
 import { betterAuthSchema } from "@lacecms/db";
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
@@ -345,16 +339,6 @@ function hasStartupStorageCheck(
   storage: ObjectStorage,
 ): storage is ObjectStorage & { readonly assertReady: () => Promise<void> } {
   return "assertReady" in storage && typeof storage.assertReady === "function";
-}
-
-/** Small built-in config for the pre-generator local development command. */
-export async function createNodeDevelopmentConfig() {
-  return defineConfig({
-    content: [
-      definePage({ key: "home", path: "/", version: 1 }),
-      defineCollection({ key: "posts", route: "/blog/:slug", version: 1 }),
-    ],
-  });
 }
 
 /** Creates the SQLite-backed Node composition without importing Node code into portable packages. */

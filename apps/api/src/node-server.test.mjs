@@ -11,7 +11,6 @@ import {
 import { actorId, unixMilliseconds } from "@lacecms/domain";
 import {
   anonymousActorResolver,
-  createNodeDevelopmentConfig,
   createNodeRuntime,
   migrateNodeDatabase,
   parseNodeRuntimeSettings,
@@ -22,6 +21,7 @@ import {
   proxyNodeDevelopmentUpgrade,
   startNodeServer,
 } from "../dist/index.js";
+import { loadProjectConfig } from "../dist/project-config.js";
 
 const admin = { id: actorId("integration-admin"), role: "admin" };
 const minioEnvironment = Object.freeze({
@@ -37,7 +37,7 @@ async function fixture({ actors = createTestActorResolver(admin) } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "lace-node-api-"));
   const databasePath = join(directory, "lace.sqlite");
   migrateNodeDatabase(databasePath);
-  const config = await createNodeDevelopmentConfig();
+  const config = await loadProjectConfig();
   const settings = {
     ...parseNodeRuntimeSettings({
       ...minioEnvironment,
@@ -102,8 +102,16 @@ async function json(server, path, init) {
 test("serves the seeded lifecycle through an actual Node listener", async () => {
   const value = await fixture();
   try {
+    const models = await json(value.server, "/api/v1/admin/content-models?config=ignored.ts");
+    expect(models.response.status).toBe(200);
+    expect(models.body.items.map((model) => model.key)).toEqual(["home", "posts"]);
     const created = await json(value.server, "/api/v1/admin/models/posts/entries", {
-      body: JSON.stringify({ blocks: [], fields: {}, slug: "first", title: "Initial" }),
+      body: JSON.stringify({
+        blocks: [],
+        fields: { publishedAt: "2026-09-24" },
+        slug: "first",
+        title: "Initial",
+      }),
       headers: { "content-type": "application/json" },
       method: "POST",
     });
@@ -113,7 +121,7 @@ test("serves the seeded lifecycle through an actual Node listener", async () => 
       body: JSON.stringify({
         blocks: [],
         expectedRevision: 1,
-        fields: {},
+        fields: { publishedAt: "2026-09-24" },
         slug: "first",
         title: "Published title",
       }),
@@ -142,7 +150,7 @@ test("serves the seeded lifecycle through an actual Node listener", async () => 
       body: JSON.stringify({
         blocks: [],
         expectedRevision: 2,
-        fields: {},
+        fields: { publishedAt: "2026-09-24" },
         slug: "first",
         title: "Draft-only title",
       }),
@@ -221,7 +229,7 @@ test("preflights object storage before binding a Node listener", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-node-preflight-"));
   const databasePath = join(directory, "lace.sqlite");
   migrateNodeDatabase(databasePath);
-  const config = await createNodeDevelopmentConfig();
+  const config = await loadProjectConfig();
   const settings = {
     ...parseNodeRuntimeSettings({
       ...minioEnvironment,

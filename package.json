@@ -2,6 +2,7 @@
   "name": "lace",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "turbo run build",
     "content:sync": "node scripts/not-implemented.mjs content:sync failure",
@@ -23,7 +24,12 @@
     "spec:validate": "pnpm exec openspec validate --all --strict --no-interactive",
     "test": "turbo run test && vitest run tests",
     "test:integration": "node scripts/not-implemented.mjs test:integration failure",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck && pnpm typecheck:config",
+    "typecheck:config": "tsc -p tsconfig.project.json"
+  },
+  "dependencies": {
+    "@lacecms/config": "workspace:*",
+    "@lacecms/content": "workspace:*"
   },
   "devDependencies": {
     "@fission-ai/openspec": "catalog:",

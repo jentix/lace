@@ -66,6 +66,25 @@ The token expires after one hour. The setup endpoint closes permanently after
 the first administrator is created. The local stack applies migrations only;
 configuration synchronization remains a deliberate operator operation.
 
+### Project content configuration
+
+Edit [`lace.config.ts`](./lace.config.ts) to define pages and collections in
+version-controlled code. The file contains `home` (`/`) and `posts`
+(`/blog/:slug`) examples with fields and allowed blocks. The Node API loads and
+validates this file when it starts. After editing it, restart the local stack:
+
+```sh
+pnpm dev:stop
+pnpm dev:node
+```
+
+Loading a definition does not add or change a SQLite model or content entry.
+The explicit local sync command and the admin empty-state guidance arrive in
+Session 13B. Route validation also does not create Astro pages: add or update
+the matching route and renderer in `apps/site/src/pages/`. See
+[the Node configuration guide](./docs/node-api.md#editing-content-models) for
+key, version, rename, and route examples.
+
 ### Normal operations
 
 ```sh

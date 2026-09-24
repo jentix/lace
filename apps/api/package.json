@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@lacecms/application": "workspace:*",
+    "@lacecms/config": "workspace:*",
     "@lacecms/domain": "workspace:*",
     "@types/node": "catalog:",
     "oxlint": "catalog:",

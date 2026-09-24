@@ -1,13 +1,10 @@
-import {
-  createNodeDevelopmentConfig,
-  createNodeRuntime,
-  parseNodeRuntimeSettings,
-} from "@lacecms/platform-node";
+import { createNodeRuntime, parseNodeRuntimeSettings } from "@lacecms/platform-node";
 import { startNodeServer } from "./node-server.js";
+import { loadProjectConfig } from "./project-config.js";
 
 async function main(): Promise<void> {
   const settings = parseNodeRuntimeSettings(process.env);
-  const config = await createNodeDevelopmentConfig();
+  const config = await loadProjectConfig();
   const runtime = createNodeRuntime({ config, settings });
   const server = await startNodeServer({ developmentGateway: true, runtime, settings });
   console.info(`Lace Node development server listening at ${server.url.href}`);
