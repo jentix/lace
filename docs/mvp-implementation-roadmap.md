@@ -80,8 +80,8 @@ update. Changes are created just in time; do not pre-create all roadmap changes.
    intentionally has no specs, verify the sync, and archive the completed change.
 
 Proposal, apply, and archive are separate agent turns, although they may remain
-in the same Codex task. The 43 units below count implementation/apply units; the
-planning and archive turns are workflow gates, not additional implementation
+in the same Codex task. The session units below count implementation/apply units;
+the planning and archive turns are workflow gates, not additional implementation
 units.
 
 ### CI and source-of-truth rules
@@ -135,6 +135,9 @@ foundation
   -> SDK + Astro fixture
   -> admin shell + editor
   -> local development environment
+  -> local code-first configuration + sync
+  -> live local Astro content
+  -> complete browser-admin workflows
   -> outbox + builder
   -> Cloudflare runtime
   -> generator + upgrade
@@ -157,13 +160,16 @@ foundation
 | 11 | Admin foundation | M | 11A, 11B |
 | 12 | Draft and block editor | L | 12A, 12B, 12C |
 | 12.5 | Local development environment | S | whole step |
-| 13 | Outbox, builds, and VPS builder | L | 13A, 13B, 13C |
-| 14 | Cloudflare runtime | L | 14A, 14B, 14C |
-| 15 | CLI generator and operational commands | L | 15A, 15B, 15C |
-| 16 | Upgrade safety | M | 16A, 16B |
-| 17 | MVP release gate | L | 17A, 17B, 17C |
+| 13 | Local code-first configuration and sync | M | 13A, 13B |
+| 14 | Live local Astro site | M | 14A, 14B |
+| 15 | Complete browser-admin workflows | L | 15A, 15B, 15C |
+| 16 | Outbox, builds, and VPS builder | L | 16A, 16B, 16C |
+| 17 | Cloudflare runtime | L | 17A, 17B, 17C |
+| 18 | CLI generator and operational commands | L | 18A, 18B, 18C |
+| 19 | Upgrade safety | M | 19A, 19B |
+| 20 | MVP release gate | L | 20A, 20B, 20C |
 
-The roadmap is therefore **44 recommended session units**. Small neighboring
+The roadmap is therefore **51 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
@@ -754,7 +760,7 @@ revision or publication isolation.
 **Outcome:** a contributor can start the complete Node/SQLite/MinIO/API/Admin/
 Astro browser stack from a clean configured checkout, bootstrap a first local
 administrator, and repeat a non-destructive smoke verification before Step 13
-introduces the VPS builder and static release topology.
+begins the local content workflow.
 
 ### Substeps
 
@@ -796,12 +802,148 @@ introduces the VPS builder and static release topology.
 **Session boundary:** S; complete as one session under the OpenSpec change
 `m12d-local-dev-stack`.
 
-## Step 13 — Outbox, build tracking, and VPS builder
+## Step 13 — Local code-first configuration and sync
+
+**Outcome:** a contributor can define a page or collection in version-controlled
+configuration, synchronize it with local SQLite, and immediately find it in the
+browser admin. Model structure remains code-first; content values remain
+admin-managed. This advances the local Node portion of Step 18B without replacing
+its cross-environment operational CLI.
+
+### Session 13A — Project configuration entry point
+
+1. Add a root `lace.config.ts` with the existing home page and posts collection as
+   editable examples. Load and normalize this file in the Node development
+   composition instead of using the hard-coded development configuration.
+2. Preserve the architecture's typed page, collection, field, and block
+   definitions. Changing a model key, path, route, or structure follows the
+   existing version and `renamedFrom` rules; do not add browser-based model
+   creation or arbitrary TypeScript evaluation through HTTP.
+3. Document how a contributor defines a page or collection, chooses its Astro
+   route and rendering code, and restarts the development API when configuration
+   changes. Keep the sample project usable from a clean checkout.
+
+### Session 13B — Local sync and empty-state guidance
+
+1. Wire a local-only `content:sync` command to the existing planner and guarded
+   Node apply operation. Show the plan before mutation, support non-mutating
+   `--check`, and reject invalid or stale plans with actionable diagnostics.
+2. Keep synchronization explicit. Startup and migration do not silently create,
+   rename, or remove models. Sync creates singleton page drafts; collection
+   entries are created later through the admin/API.
+3. Make `/admin/content` explain the empty-model state and the local sync step.
+   Distinguish no configured models, pending synchronization, and an API error
+   where the available server information permits it.
+4. Test first sync, repeated no-op sync, changed configuration, blocked unsafe
+   changes, and the browser path from synced models to a page editor or
+   collection list. Update the local developer guide.
+
+### Acceptance
+
+- A clean local checkout can synchronize its example models without a generated
+  project or production deployment.
+- A newly defined page gets exactly one editable draft; a newly defined
+  collection appears with an empty entry list and a permitted create action.
+- `--check` and failed plans preserve SQLite content and public state.
+
+**Session boundary:** M; use 13A and 13B as separate OpenSpec changes.
+
+## Step 14 — Live local Astro site
+
+**Outcome:** the local site renders content published through the admin instead
+of relying on the fixture export. The fixture remains available for isolated
+reference-site tests.
+
+### Session 14A — Published-content development mode
+
+1. Connect the Astro development process to the local published-content API with
+   a read-only build token, using the existing SDK and same-origin local stack.
+   Document token setup through the existing admin API until the Settings screen
+   in Step 15B exposes token management. Keep secrets on the server side and
+   retain fixture mode for deterministic tests.
+2. Ensure local content changes are visible through a documented refresh or
+   restart workflow before automated build dispatch exists. Explain that saved
+   drafts do not change the public site until publication.
+3. Cover missing or invalid build tokens, an unavailable API, and a published
+   export with no home page using actionable local errors.
+
+### Session 14B — Code-owned routes and end-to-end content proof
+
+1. Demonstrate one additional page and one additional collection using
+   `lace.config.ts`, matching Astro route files, and the existing block renderer.
+   Preserve the rule that the CMS validates route patterns but does not create
+   Astro route files or choose site presentation.
+2. Verify local sync, admin draft editing, publication, published-only API
+   output, and the resulting Astro pages in one browser-level flow. Verify a
+   later draft remains invisible on the public site until published.
+3. Document the repeatable developer workflow for a new page, collection,
+   field, and block, including which changes require a config version bump.
+
+### Acceptance
+
+- The local Astro site displays the latest published content from local SQLite
+  after the documented refresh or restart step, without editing a JSON fixture.
+- Adding a new code-owned route and synchronizing its model produces an editable
+  admin surface and the expected public URL.
+
+**Session boundary:** M; use 14A and 14B as separate OpenSpec changes.
+
+## Step 15 — Complete browser-admin workflows
+
+**Outcome:** a user can manage content, media, access, and operational settings
+through the existing local browser stack before deployment tooling is expanded.
+The server remains authoritative for permissions and validation.
+
+### Session 15A — Media library and reuse
+
+1. Replace the `/media` placeholder with browse, upload, preview, pagination,
+   and permitted deletion/recovery controls backed by the existing media API.
+2. Connect media selection in fields and blocks to the library, including a clear
+   empty state, upload progress, validation errors, and inaccessible media.
+3. Verify keyboard access and browser flows for upload, reuse, and failure
+   recovery. Keep object storage credentials out of browser responses.
+
+### Session 15B — Users and settings
+
+1. Replace the `/users` placeholder with the existing admin-only user list,
+   creation, role-change, and disable flows. Surface last-admin protection and
+   API errors without suggesting a failed change succeeded.
+2. Replace the `/settings` placeholder with the available status and API-token
+   operations needed to configure and inspect a local site. Add missing
+   read-only status contracts only when they have a concrete operator use.
+3. Verify admin/editor/viewer affordances against server authorization, session
+   expiry recovery, and safe handling of once-shown token values.
+
+### Session 15C — Local product acceptance
+
+1. Exercise a clean local setup from configuration sync through page editing,
+   collection-entry creation, media upload/reuse, publication, and Astro output.
+2. Test role restrictions, draft/published isolation, conflict recovery,
+   responsive navigation, keyboard access, and the empty/error states of each
+   now-functional route.
+3. Resolve concrete product-flow gaps found by this pass before acceptance.
+   Revise the active OpenSpec artifacts first when a fix changes accepted
+   behavior; keep broader feature ideas in later, just-in-time changes rather
+   than hiding them in the release gate.
+
+### Acceptance
+
+- An administrator can complete the local editorial flow without modifying a
+  fixture or calling the content API by hand.
+- Content, Media, Users, and Settings have useful behavior or an explicit,
+  justified operational state; Builds gains its history/retry screen in Step 16.
+  Viewer and editor permissions remain enforced by the API.
+- A local product walkthrough can be repeated before any VPS, Cloudflare, or
+  generated-project work starts.
+
+**Session boundary:** L; use 15A, 15B, and 15C.
+
+## Step 16 — Outbox, build tracking, and VPS builder
 
 **Outcome:** publication reliably causes a coalesced static build and operators
 can see/retry failures.
 
-### Session 13A — Site-build dispatch
+### Session 16A — Site-build dispatch
 
 1. Extend the generic dispatcher for `site.build.requested`. Use the architecture
    defaults: 5-second debounce, 60-second leases, full-jitter exponential backoff
@@ -814,20 +956,22 @@ can see/retry failures.
 4. Add manual admin build request and retry semantics; both still coalesce through
    the outbox.
 
-### Session 13B — Fixed-command builder
+### Session 16B — Fixed-command builder
 
 1. Build `apps/builder` as a private service accepting only an authenticated
    trigger containing build ID and target version. Reject command, path, env, or
    arbitrary argument fields.
-2. Copy the read-only mounted generated project into a temporary work directory,
+2. Copy the read-only mounted site project into a temporary work directory,
    install with frozen lockfile using an image-pinned toolchain, run the fixed
-   Astro build, and write to a new release directory.
+   Astro build, and write to a new release directory. Use the reference project
+   until Step 18 supplies the generated-project template; the generated project
+   must then pass the same builder contract.
 3. Atomically switch the static-output `current` release only after success; keep
    the previous successful release and clean older releases by fixed retention.
 4. Return sanitized logs/status to the API without secrets or full environment
    dumps. Authenticate API-to-builder with a dedicated secret and no public port.
 
-### Session 13C — VPS composition and build UI
+### Session 16C — VPS composition and build UI
 
 1. Complete Docker Compose with API, MinIO, builder, and static reverse proxy,
    named database/object/output volumes, health checks, and internal networks.
@@ -845,14 +989,14 @@ can see/retry failures.
 - Recovery after process termination dispatches the leased event after expiry.
 - No HTTP input can choose a shell command or filesystem target.
 
-**Session boundary:** L; use 13A, 13B, and 13C.
+**Session boundary:** L; use 16A, 16B, and 16C.
 
-## Step 14 — Cloudflare runtime
+## Step 17 — Cloudflare runtime
 
 **Outcome:** the same contracts and application behavior run locally and in a
 Cloudflare Worker with D1 and R2.
 
-### Session 14A — D1 persistence
+### Session 17A — D1 persistence
 
 1. Implement D1 read repositories and specialized atomic mutations using
    prepared statements and `batch()`. Never emulate an interactive transaction
@@ -866,7 +1010,7 @@ Cloudflare Worker with D1 and R2.
 4. Run the reusable repository contract suite against local D1/Miniflare and add
    targeted tests for route-conflict rollback and concurrent revisions.
 
-### Session 14B — R2, Worker, and scheduled recovery
+### Session 17B — R2, Worker, and scheduled recovery
 
 1. Implement native R2 storage without the AWS SDK and the same media semantics
    as MinIO.
@@ -877,7 +1021,7 @@ Cloudflare Worker with D1 and R2.
 4. Implement scheduled outbox recovery and event leasing. `waitUntil` may improve
    latency after commit but is never the only recovery path.
 
-### Session 14C — Cloudflare development and deploy hook
+### Session 17C — Cloudflare development and deploy hook
 
 1. Implement `pnpm dev:cloudflare` with persisted local D1/R2 state and same-origin
    admin/API proxying.
@@ -894,14 +1038,14 @@ Cloudflare Worker with D1 and R2.
 - Worker bundle contains no Node-only SQLite, S3, filesystem, or secret material.
 - Correctness is unchanged when KV is absent or stale.
 
-**Session boundary:** L; use 14A, 14B, and 14C.
+**Session boundary:** L; use 17A, 17B, and 17C.
 
-## Step 15 — CLI generator and operational commands
+## Step 18 — CLI generator and operational commands
 
 **Outcome:** a user can create an upgrade-aware Lace project and operate either
 runtime without editing engine source.
 
-### Session 15A — Generator
+### Session 18A — Generator
 
 1. Implement `create-lace` commands `create <dir>` and `init .`. Resolve and
    validate the target path; allow only `.git`, `README.md`, and `LICENSE` in an
@@ -916,19 +1060,20 @@ runtime without editing engine source.
    atomic final rename where possible. On failure, leave the original target
    unchanged and report cleanup instructions.
 
-### Session 15B — Migrate, sync, and bootstrap commands
+### Session 18B — Migrate, sync, and bootstrap commands
 
 1. Implement one CLI environment loader with named Node and Cloudflare targets;
    redact secret values in errors.
 2. Wire `db migrate`, `content sync [--check]`, and `auth bootstrap` to the
    application services. Require explicit remote target selection; commands must
-   not accidentally use production from a local default.
+   not accidentally use production from a local default. Extend the local Node
+   sync delivered in Step 13 rather than implementing a second sync policy.
 3. Add machine-readable `--json`, non-interactive CI behavior, stable exit codes,
    and actionable human output.
 4. Make migrations explicit deployment steps; API startup reports an outdated
    schema and fails readiness rather than auto-migrating production.
 
-### Session 15C — Generated-project acceptance
+### Session 18C — Generated-project acceptance
 
 1. Pack workspace packages locally and generate a project using the tarballs so
    tests do not accidentally resolve source-workspace imports.
@@ -946,14 +1091,14 @@ runtime without editing engine source.
 - Commands never print passwords, tokens after their one allowed reveal, or
   complete environment values.
 
-**Session boundary:** L; use 15A, 15B, and 15C.
+**Session boundary:** L; use 18A, 18B, and 18C.
 
-## Step 16 — Upgrade safety
+## Step 19 — Upgrade safety
 
 **Outcome:** engine upgrades preserve user source and never overwrite modified
 managed files without an explicit resolution.
 
-### Session 16A — Upgrade planner
+### Session 19A — Upgrade planner
 
 1. Read the old manifest, hash current files, and compare old template, working
    tree, and new template as a three-way ownership decision.
@@ -963,7 +1108,7 @@ managed files without an explicit resolution.
    default until the user passes an explicit apply flag.
 4. Validate manifest schema/version and refuse unknown newer formats.
 
-### Session 16B — Apply and recovery
+### Session 19B — Apply and recovery
 
 1. Apply conflict-free changes through temporary files and atomic renames; write
    the new manifest last.
@@ -982,14 +1127,14 @@ managed files without an explicit resolution.
 - A user-modified managed file produces a reviewable diff and conflict artifact.
 - Interrupted upgrades are detectable and safely repeatable.
 
-**Session boundary:** M; 16A and 16B.
+**Session boundary:** M; 19A and 19B.
 
-## Step 17 — MVP release gate
+## Step 20 — MVP release gate
 
 **Outcome:** both supported deployments satisfy the product flow, security
 requirements, and operational recovery promises.
 
-### Session 17A — Cross-runtime and browser suite
+### Session 20A — Cross-runtime and browser suite
 
 1. Run repository contracts against Node SQLite and local D1.
 2. Run API contracts against Node and Worker composition roots using the same
@@ -999,7 +1144,7 @@ requirements, and operational recovery promises.
 4. Build the Astro fixture from both runtime exports and compare canonical output
    data, routes, and media references.
 
-### Session 17B — Security and resilience pass
+### Session 20B — Security and resilience pass
 
 1. Review auth/session configuration, CSRF/origin behavior, permission checks,
    rate limits, upload parsing, URL/rich-text sanitization, token hashing, secret
@@ -1010,7 +1155,7 @@ requirements, and operational recovery promises.
 4. Audit dependency vulnerabilities and licenses; document accepted risks rather
    than silently suppressing them.
 
-### Session 17C — Operations and release documentation
+### Session 20C — Operations and release documentation
 
 1. Write local development, generated-project, VPS deployment, Cloudflare
    deployment, backup/restore, migration, key rotation, build recovery, and
@@ -1038,7 +1183,7 @@ From a clean machine/project template:
    successful static release throughout.
 9. Run an upgrade dry-run and prove user-owned site source is untouched.
 
-**Session boundary:** L; use 17A, 17B, and 17C. Do not combine the security pass
+**Session boundary:** L; use 20A, 20B, and 20C. Do not combine the security pass
 with the release-documentation session.
 
 ## 7. Recommended first delivery slices
@@ -1054,10 +1199,22 @@ best checkpoints for demonstrating useful progress are:
    draft, publish, and public read.
 4. **After step 10:** the first end-to-end headless CMS path builds a static Astro
    site.
-5. **After step 12:** the product is usable through the browser on Node.
-6. **After step 13:** the self-hosted VPS deployment is operationally complete.
-7. **After step 14:** Cloudflare reaches behavioral parity.
-8. **After step 17:** the MVP is release-ready.
+5. **After step 12:** the browser editor works for already synchronized models
+   on Node; the clean-checkout content workflow is completed in later steps.
+6. **After step 12.5:** both browser applications start locally, but content
+   models and live site data still need the next steps.
+7. **After step 13:** code-first models can be synchronized and edited in the
+   local admin.
+8. **After step 14:** published content reaches the local Astro site.
+9. **After step 15:** the local editorial workflow covers content, media,
+   users, and settings without fixture edits or direct content API calls.
+10. **After step 16:** the self-hosted VPS deployment works with the reference
+    site, including recoverable builds and build history in the admin; generated
+    projects are verified in Step 18.
+11. **After step 17:** Cloudflare reaches behavioral parity.
+12. **After step 18:** generated projects and full operational CLI commands pass
+    acceptance on the supported runtimes.
+13. **After step 20:** the MVP is release-ready.
 
 Steps 0–3 should be implemented in order. After step 5, SDK fixture work and
 some admin visual-foundation work may proceed in parallel, but persistence,
