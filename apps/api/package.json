@@ -23,7 +23,6 @@
     "@lacecms/server": "workspace:*"
   },
   "devDependencies": {
-    "@lacecms/application": "workspace:*",
     "@lacecms/config": "workspace:*",
     "@lacecms/domain": "workspace:*",
     "@types/node": "catalog:",

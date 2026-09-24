@@ -173,6 +173,10 @@ async function main() {
     await smoke();
     return;
   }
+  const syncArgs = command === "sync" ? process.argv.slice(3) : [];
+  if (syncArgs.length > 1 || (syncArgs.length === 1 && syncArgs[0] !== "--check")) {
+    throw new Error("Usage: pnpm content:sync [--check]");
+  }
   await requireLocalEnvironment();
   if (command === "start") {
     run(
@@ -198,6 +202,20 @@ async function main() {
         "api",
         "node",
         "scripts/dev-bootstrap.mjs",
+      ]),
+    );
+    return;
+  }
+  if (command === "sync") {
+    run(
+      "docker",
+      compose(localProject, localEnvironment, [
+        "exec",
+        "-T",
+        "api",
+        "node",
+        "apps/api/dist/content-sync-cli.js",
+        ...syncArgs,
       ]),
     );
     return;

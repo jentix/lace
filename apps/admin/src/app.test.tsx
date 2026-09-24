@@ -115,6 +115,65 @@ test("role-aware navigation and direct admin-only route behavior follow the role
   expect(screen.getByRole("link", { name: "Media" })).toBeInTheDocument();
 });
 
+test("content landing explains no configured models without hiding API errors", async () => {
+  renderRoute(
+    "/content",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ listModels: async () => ({ items: [] }) }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "No content models configured" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/pnpm content:sync/)).toBeInTheDocument();
+
+  document.body.replaceChildren();
+  renderRoute(
+    "/content",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({
+      listModels: async () => Promise.reject(new AdminClientError({ message: "API unavailable" })),
+    }),
+  );
+  expect(await screen.findByRole("heading", { name: "Something went wrong" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "No content models configured" }),
+  ).not.toBeInTheDocument();
+});
+
+test("content landing guides missing page sync and opens the synced page editor and collection", async () => {
+  const source = createStaticSessionSource({ id: "editor-1", role: "editor" });
+  renderRoute("/content", source, client({ listEntries: async () => ({ items: [] }) }));
+  expect(await screen.findByRole("heading", { name: "Page draft missing" })).toBeInTheDocument();
+  expect(screen.getByText(/pnpm content:sync/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "posts" })).toBeInTheDocument();
+
+  document.body.replaceChildren();
+  const synced = renderRoute(
+    "/content",
+    source,
+    client({
+      listEntries: async (key) =>
+        key === "home" ? { items: [{ ...entry, id: "home-1", modelKey: "home" }] } : { items: [] },
+      loadEntry: async () => ({
+        ...draftEntry,
+        id: "home-1",
+        model: { key: "home", kind: "page", path: "/" },
+        draft: { ...draftEntry.draft, entryId: "home-1" },
+      }),
+    }),
+  );
+  expect(await screen.findByRole("link", { name: "home" })).toBeInTheDocument();
+  await synced.navigate({ params: { modelKey: "posts" }, to: "/content/$modelKey" });
+  expect(await screen.findByRole("heading", { name: "posts" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Create entry/ })).toBeInTheDocument();
+  expect(screen.getByText(/run pnpm content:sync first/)).toBeInTheDocument();
+  await synced.navigate({
+    params: { entryId: "home-1", modelKey: "home" },
+    to: "/content/$modelKey/$entryId",
+  });
+  expect(await screen.findByRole("heading", { name: "Edit home" })).toBeInTheDocument();
+});
+
 test("typed route foundations render valid paths and reject malformed model keys", async () => {
   renderRoute(
     "/content/posts/entry-123",

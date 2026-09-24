@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
-    "content:sync": "node scripts/not-implemented.mjs content:sync failure",
+    "content:sync": "node scripts/dev-stack.mjs sync",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate:cloudflare": "node scripts/not-implemented.mjs db:migrate:cloudflare failure",
     "db:migrate:node": "pnpm --filter @lacecms/db run build && pnpm --filter @lacecms/platform-node run db:migrate",

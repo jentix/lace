@@ -94,10 +94,22 @@ pnpm dev:node
 The API imports and normalizes the file once before listening. A missing,
 unloadable, or invalid file fails startup. Neither a browser request nor an
 environment value selects a different TypeScript file. Restarting and running
-SQLite migrations do not synchronize models or create page drafts. Session
-13B adds the explicit local `content:sync` operation; until it is available,
-new or changed models cannot be assumed to appear in the admin. Collection
-entries remain CMS-managed after sync.
+SQLite migrations do not synchronize models or create page drafts. With the
+stack running, use `pnpm content:sync --check` to print a read-only plan. Its
+exit status is zero only when the plan is valid and there is no pending work;
+pending or invalid plans exit non-zero. Run `pnpm content:sync` to print the
+plan and apply valid changes. A newly synchronized page has one incomplete
+draft ready for editing; a new collection has no entries until an editor
+creates one in Admin or through the API. Open `/admin/content` after sync to
+find the page editor or collection list.
+
+An invalid plan names the affected model and reason. Stored snapshots can
+block structural changes even after a version increase; correct the config
+instead of resetting SQLite unless discarding local data is intentional. A
+stale-plan message means the persisted models changed between planning and
+apply; rerun the command to review the current plan. The command never syncs
+automatically during startup or migration, and it operates only on the fixed
+root project config and local Compose SQLite volume.
 
 `GET /health/live` only confirms that the HTTP process is serving. `GET
 /health/ready` performs one local SQLite `SELECT 1`; bucket reachability is

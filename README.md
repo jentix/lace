@@ -79,8 +79,20 @@ pnpm dev:node
 ```
 
 Loading a definition does not add or change a SQLite model or content entry.
-The explicit local sync command and the admin empty-state guidance arrive in
-Session 13B. Route validation also does not create Astro pages: add or update
+With the stack running and migrated, inspect the pending plan, then synchronize:
+
+```sh
+pnpm content:sync --check # read-only; exits 1 when work is pending or invalid
+pnpm content:sync         # prints the plan, then applies valid changes
+```
+
+The first sync creates one editable draft for each page. Collections appear in
+Admin with an empty entry list and a permitted create action. Repeating sync on
+unchanged configuration is a no-op. Invalid changes print model-specific
+diagnostics and leave SQLite content unchanged; fix the configuration and run
+the command again. A stale-plan message means another sync changed SQLite
+between planning and apply; rerun to review the current plan. Sync never runs
+as part of startup or migrations. Route validation also does not create Astro pages: add or update
 the matching route and renderer in `apps/site/src/pages/`. See
 [the Node configuration guide](./docs/node-api.md#editing-content-models) for
 key, version, rename, and route examples.
@@ -130,6 +142,9 @@ pnpm spec:validate
   Correct the named `.env` entry and start again.
 - A stale database or object-store state is never cleared automatically. Use
   the explicit reset only when discarding local development data is intended.
+- `content:sync` needs the running local API container and migrated SQLite;
+  start with `pnpm dev:node` first. If a page is shown without its draft in
+  Admin, run sync and reload the page.
 
 Detailed Node, authentication, and migration behavior is documented in
 [docs/node-api.md](./docs/node-api.md),
