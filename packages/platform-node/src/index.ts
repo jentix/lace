@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 export const packageName = "@lacecms/platform-node";
 
 export * from "./content-repository.js";
+export * from "./content-sync.js";
 export * from "./image-inspector.js";
 export * from "./minio-storage.js";
 export * from "./media-deletion-dispatcher.js";

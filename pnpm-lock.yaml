@@ -294,6 +294,13 @@ catalogs:
 importers:
 
   .:
+    dependencies:
+      '@lacecms/config':
+        specifier: workspace:*
+        version: link:packages/config
+      '@lacecms/content':
+        specifier: workspace:*
+        version: link:packages/content
     devDependencies:
       '@fission-ai/openspec':
         specifier: 'catalog:'
@@ -471,6 +478,9 @@ importers:
       '@lacecms/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@lacecms/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@lacecms/domain':
         specifier: workspace:*
         version: link:../../packages/domain

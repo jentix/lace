@@ -51,6 +51,66 @@ The full local environment list is in [`.env.example`](../.env.example); use
 inside the Compose network, and its persistent data is preserved unless the
 explicit root reset is requested.
 
+## Editing content models
+
+The repository-root [`lace.config.ts`](../lace.config.ts) is the editable source
+of content structure. Its `definePage` and `defineCollection` calls use the
+typed `@lacecms/config` API; `field` and `builtInBlocks` come from
+`@lacecms/content`. The examples define the singleton `home` page at `/` and
+the `posts` collection at `/blog/:slug`. A new page needs a stable lowercase
+kebab-case `key`, positive integer `version`, fixed canonical `path`, and any
+fields or allowed blocks. A collection uses a canonical `route` with exactly
+one `:slug` segment instead of `path`. All allowed block keys must be listed
+in the config's registered block definitions.
+
+Choose the site presentation alongside the model definition. The current
+`home` route is [`apps/site/src/pages/index.astro`](../apps/site/src/pages/index.astro)
+and `posts` uses
+[`apps/site/src/pages/blog/[slug].astro`](../apps/site/src/pages/blog/[slug].astro).
+For a page at `/about`, add `apps/site/src/pages/about.astro`; for a collection
+at `/news/:slug`, add `apps/site/src/pages/news/[slug].astro` with
+`getStaticPaths()`. The existing routes use
+[`BlockRenderer.astro`](../apps/site/src/components/BlockRenderer.astro) to
+render ordered blocks. Lace validates route definitions; it does not create
+Astro files or choose a layout. The reference site currently reads a fixture;
+Step 14 connects it to locally published content.
+
+Keep a model key stable once it has stored content. Increase `version` when a
+field, allowed block, path, route, or other structural definition changes; a
+structural change with stored snapshots can still be rejected by the sync
+planner. To deliberately rename a key, set `renamedFrom` to its old key while
+introducing the new key and increased version. The hint is temporary and
+requires the former stored key to exist; Lace never infers a rename from a
+removal and addition. A changed route alone does not rename a model.
+
+After editing the config, restart the development API through the supported
+stack lifecycle:
+
+```sh
+pnpm dev:stop
+pnpm dev:node
+```
+
+The API imports and normalizes the file once before listening. A missing,
+unloadable, or invalid file fails startup. Neither a browser request nor an
+environment value selects a different TypeScript file. Restarting and running
+SQLite migrations do not synchronize models or create page drafts. With the
+stack running, use `pnpm content:sync --check` to print a read-only plan. Its
+exit status is zero only when the plan is valid and there is no pending work;
+pending or invalid plans exit non-zero. Run `pnpm content:sync` to print the
+plan and apply valid changes. A newly synchronized page has one incomplete
+draft ready for editing; a new collection has no entries until an editor
+creates one in Admin or through the API. Open `/admin/content` after sync to
+find the page editor or collection list.
+
+An invalid plan names the affected model and reason. Stored snapshots can
+block structural changes even after a version increase; correct the config
+instead of resetting SQLite unless discarding local data is intentional. A
+stale-plan message means the persisted models changed between planning and
+apply; rerun the command to review the current plan. The command never syncs
+automatically during startup or migration, and it operates only on the fixed
+root project config and local Compose SQLite volume.
+
 `GET /health/live` only confirms that the HTTP process is serving. `GET
 /health/ready` performs one local SQLite `SELECT 1`; bucket reachability is
 checked once before startup, not on every readiness request.
@@ -82,6 +142,5 @@ followed by an atomic removal of its still-unreferenced `deleting` metadata.
 
 The cache always misses and the build trigger reports unavailable. The Node
 runtime streams verified MinIO media through authenticated previews and stable
-published-media URLs; external build dispatch and configuration-module loading
-remain later work. The test actor is a Vitest-only adapter and is never enabled
+published-media URLs; external build dispatch remains later work. The test actor is a Vitest-only adapter and is never enabled
 by a request header, query string, or production environment variable.

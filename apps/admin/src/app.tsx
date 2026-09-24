@@ -372,7 +372,13 @@ function ContentPage() {
           technicalDetails={technicalDetails(models.error)}
         />
       )}
-      {models.data === undefined ? undefined : (
+      {models.data?.items.length === 0 ? (
+        <EmptyState
+          description="Define a page or collection in lace.config.ts, restart the local API, then run pnpm content:sync. Models are defined in code."
+          title="No content models configured"
+        />
+      ) : undefined}
+      {models.data === undefined || models.data.items.length === 0 ? undefined : (
         <div className="lace-model-list">
           {models.data.items.map((model) =>
             model.kind === "page" ? (
@@ -405,9 +411,9 @@ function PageModelLink({ modelKey }: { readonly modelKey: string }) {
     );
   const entry = page.data.items[0];
   return entry === undefined ? (
-    <ErrorState
-      description="The configured page has no singleton entry."
-      title="Page unavailable"
+    <EmptyState
+      description="This page has no editable draft yet. Local synchronization may be pending: run pnpm content:sync, then reload."
+      title="Page draft missing"
     />
   ) : (
     <Link params={{ entryId: entry.id, modelKey }} to="/content/$modelKey/$entryId">
@@ -470,7 +476,11 @@ function CollectionEntries({
       {entries.error === null ? undefined : <RouteError error={entries.error} />}
       {entries.data !== undefined && items.length === 0 ? (
         <EmptyState
-          description="Create the first entry for this collection."
+          description={
+            canManage
+              ? "Create the first entry for this collection. If this is a new local model, run pnpm content:sync first."
+              : "There are no entries in this collection yet."
+          }
           title="No entries yet"
         />
       ) : undefined}

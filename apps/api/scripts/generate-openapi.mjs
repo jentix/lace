@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createNodeDevelopmentConfig } from "@lacecms/platform-node";
+import { loadProjectConfig } from "../dist/project-config.js";
 import { createLaceApp } from "@lacecms/server";
 
 function sortJson(value) {
@@ -14,7 +14,7 @@ function sortJson(value) {
   );
 }
 
-const config = await createNodeDevelopmentConfig();
+const config = await loadProjectConfig();
 const app = createLaceApp({
   actors: { resolve: async () => null },
   config,

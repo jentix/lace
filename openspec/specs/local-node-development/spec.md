@@ -7,6 +7,28 @@ contributor run and verify the complete Lace browser stack before VPS release wo
 
 ## Requirements
 
+### Requirement: Local configuration synchronization is an explicit guarded command
+The local development workflow SHALL provide `content:sync` against the configured local SQLite database and root project configuration. It SHALL print the complete human-readable plan before any mutation, reject invalid and stale plans with actionable diagnostics, and apply valid plans through the existing guarded atomic operation. `--check` SHALL make no writes and SHALL exit successfully only for a valid no-op plan. Startup and migration SHALL NOT synchronize models.
+
+#### Scenario: First local synchronization
+- **WHEN** a contributor runs `content:sync` against a migrated empty local database
+- **THEN** the command shows creates before applying them, creates exactly one editable draft for each page, and creates no collection entry
+
+#### Scenario: Repeat or changed configuration
+- **WHEN** the command is repeated without a change or run after a safe configuration change
+- **THEN** it reports respectively a no-op or the planned change, and applies only the latter
+
+#### Scenario: Check and invalid plan preserve data
+- **WHEN** `--check` finds pending operations or any invocation finds an invalid or stale plan
+- **THEN** the command exits unsuccessfully with the reason and leaves entries, snapshots, public state, and outbox unchanged
+
+### Requirement: Local sync instructions identify the contributor workflow
+The developer guide SHALL describe the local sync command, `--check` semantics, the required running migrated stack, page and collection results, unsafe-change diagnostics, and the separation from API restart and migrations.
+
+#### Scenario: Contributor defines another model
+- **WHEN** a contributor edits the root configuration and follows the local guide
+- **THEN** they can restart the API, inspect or apply synchronization, and find the resulting page draft or empty collection in Admin
+
 ### Requirement: One documented command starts the complete local Node stack
 The system SHALL provide a documented `dev:node` command that starts the Node
 API, applies already-committed SQLite migrations before the API becomes ready,
@@ -99,3 +121,14 @@ MinIO reachability, and clean up only the resources it created.
 - **THEN** only the named Lace development database and object-store data are
   removed, and the command clearly states that those local data cannot be
   recovered
+
+### Requirement: Contributors can edit code-owned models with route guidance
+The local developer guide SHALL identify the root configuration as the editable source of page and collection definitions, explain the stable key, version and explicit rename rules, and show how fixed page paths and collection route patterns relate to contributor-owned Astro route and rendering code. It SHALL instruct contributors to restart the development API after a configuration edit and SHALL make clear that configuration loading does not synchronize SQLite models or create content automatically.
+
+#### Scenario: Add a page or collection in a local checkout
+- **WHEN** a contributor follows the guide to define a model and its corresponding Astro route
+- **THEN** they can identify the required configuration fields, route ownership, restart step, and separate synchronization step
+
+#### Scenario: Configuration changes without synchronization
+- **WHEN** a contributor restarts the local API after editing configuration but has not synchronized the database
+- **THEN** the guide does not promise that the changed model is immediately editable in the admin
