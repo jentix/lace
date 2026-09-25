@@ -433,11 +433,29 @@ export function createLaceApp(input: LaceAppInput): Hono {
     maxSize: input.maxBodyBytes,
     onError: () => errorResponse(transportError("PAYLOAD_TOO_LARGE")),
   });
-  app.use((context, next) =>
-    context.req.path === "/api/v1/admin/media" && context.req.method === "POST"
-      ? next()
-      : jsonBodyLimit(context, next),
-  );
+  app.use((context, next) => {
+    const request = context.req.raw;
+    const hasBodyHeaders =
+      request.headers.has("content-length") || request.headers.has("transfer-encoding");
+    if (context.req.path === "/api/v1/admin/media" && context.req.method === "POST") return next();
+    if (request.headers.get("content-length") === "0" && !request.headers.has("transfer-encoding"))
+      return next();
+    if (!hasBodyHeaders) {
+      return (async () => {
+        const reader = request.clone().body?.getReader();
+        if (reader === undefined) return next();
+        let size = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > input.maxBodyBytes) return errorResponse(transportError("PAYLOAD_TOO_LARGE"));
+        }
+        return next();
+      })();
+    }
+    return jsonBodyLimit(context, next);
+  });
   app.use(async (context, next) => {
     const decision = await input.rateLimiter.check({
       request: context.req.raw,

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { createAdminRouter, navigationFor, safeReturnPath } from "./app.js";
@@ -45,6 +45,17 @@ const draftEntry = {
   id: "entry-1",
   model: { key: "posts", kind: "collection" as const, route: "/posts/:slug" },
 };
+const mediaItem = {
+  createdAt: "2026-09-20T00:00:00.000Z",
+  createdBy: "editor-1",
+  filename: "cover.png",
+  id: "media-1",
+  mimeType: "image/png",
+  size: 12,
+  status: "active" as const,
+  updatedAt: "2026-09-20T00:00:00.000Z",
+  url: "https://lace.test/api/v1/public/media/media-1",
+};
 
 function client(overrides: Partial<AdminClient> = {}): AdminClient {
   return {
@@ -56,6 +67,9 @@ function client(overrides: Partial<AdminClient> = {}): AdminClient {
         ? { items: [{ ...entry, id: "home-1", modelKey: "home", title: "Home" }] }
         : { items: [entry] },
     listMedia: async () => ({ items: [] }),
+    uploadMedia: async () => ({}) as never,
+    deleteMedia: async () => ({}) as never,
+    retryMediaDeletion: async () => ({}) as never,
     listModels: async () => models,
     publishEntry: async () => ({}) as never,
     signIn: async () => undefined,
@@ -113,6 +127,184 @@ test("role-aware navigation and direct admin-only route behavior follow the role
   await screen.findByRole("heading", { name: "Content" });
   expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Media" })).toBeInTheDocument();
+});
+
+test("media route distinguishes empty, failure, and paged results for a viewer", async () => {
+  const user = userEvent.setup();
+  const listMedia = vi.fn(async (cursor?: string) =>
+    cursor === undefined
+      ? { items: [mediaItem], nextCursor: "opaque+/=" }
+      : {
+          items: [
+            {
+              ...mediaItem,
+              filename: "later.png",
+              id: "media-2",
+              status: "delete_failed" as const,
+            },
+          ],
+        },
+  );
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "viewer-1", role: "viewer" }),
+    client({ listMedia }),
+  );
+  await screen.findByRole("heading", { name: "Media" });
+  expect(await screen.findByText("cover.png")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Upload image")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Delete cover/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Load more media" }));
+  expect(await screen.findByText("later.png")).toBeInTheDocument();
+  expect(screen.getByText("Deletion failed")).toBeInTheDocument();
+  expect(listMedia).toHaveBeenCalledWith("opaque+/=");
+  await user.click(screen.getByRole("button", { name: "Preview cover.png" }));
+  expect(screen.getByRole("img", { name: "Preview of cover.png" })).toHaveAttribute(
+    "src",
+    "/api/v1/admin/media/media-1/preview",
+  );
+
+  document.body.replaceChildren();
+  renderRoute("/media", createStaticSessionSource({ id: "viewer-1", role: "viewer" }), client());
+  expect(await screen.findByRole("heading", { name: "No media yet" })).toBeInTheDocument();
+
+  document.body.replaceChildren();
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "viewer-1", role: "viewer" }),
+    client({
+      listMedia: async () => {
+        throw new AdminClientError({ message: "Media unavailable" });
+      },
+    }),
+  );
+  expect(await screen.findByText("Media unavailable")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "No media yet" })).not.toBeInTheDocument();
+});
+
+test("media upload shows rejection, pending state, and confirmed result", async () => {
+  let finish: (item: typeof mediaItem) => void = () => undefined;
+  const pending = new Promise<typeof mediaItem>((resolve) => {
+    finish = resolve;
+  });
+  const uploadMedia = vi.fn(async () => pending);
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({ uploadMedia }),
+  );
+  await screen.findByRole("heading", { name: "No media yet" });
+  const input = screen.getByLabelText("Upload image");
+  fireEvent.change(input, {
+    target: { files: [new File(["bad"], "bad.txt", { type: "text/plain" })] },
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent("Choose a JPEG");
+  expect(uploadMedia).not.toHaveBeenCalled();
+  fireEvent.change(input, {
+    target: { files: [new File(["png"], "cover.png", { type: "image/png" })] },
+  });
+  expect(screen.getByText("Uploading image…")).toBeInTheDocument();
+  finish(mediaItem);
+  expect(await screen.findByText("cover.png")).toBeInTheDocument();
+  expect(screen.getByText(/Uploaded cover.png/)).toBeInTheDocument();
+});
+
+test("media deletion keeps failed items and labels accepted work as pending", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const deleteMedia = vi.fn(async () => {
+    throw new AdminClientError({
+      code: "CONTENT_INVALID_STATE",
+      message: "The requested content operation is invalid.",
+      status: 422,
+    });
+  });
+  const retryMediaDeletion = vi.fn(async () => ({
+    ...mediaItem,
+    id: "failed-1",
+    filename: "failed.png",
+    status: "deleting" as const,
+  }));
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      deleteMedia,
+      listMedia: async () => ({
+        items: [
+          mediaItem,
+          {
+            ...mediaItem,
+            id: "failed-1",
+            filename: "failed.png",
+            status: "delete_failed" as const,
+          },
+        ],
+      }),
+      retryMediaDeletion,
+    }),
+  );
+  await screen.findByText("failed.png");
+  await user.click(screen.getByRole("button", { name: "Delete cover.png" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("may be referenced by content");
+  expect(screen.getByText("cover.png")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry deletion of failed.png" }));
+  await waitFor(() => expect(retryMediaDeletion).toHaveBeenCalledWith("failed-1"));
+  expect(await screen.findByText("Deletion pending")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry deletion of failed.png" }),
+  ).not.toBeInTheDocument();
+});
+
+test("keyboard deletion confirmation shows pending state only after API acceptance", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  const deleteMedia = vi.fn(async () => ({ ...mediaItem, status: "deleting" as const }));
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({
+      deleteMedia,
+      listMedia: async () => ({ items: [mediaItem] }),
+    }),
+  );
+  await screen.findByText("cover.png");
+  const button = screen.getByRole("button", { name: "Delete cover.png" });
+  button.focus();
+  await user.keyboard("{Enter}");
+  expect(deleteMedia).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(deleteMedia).toHaveBeenCalledWith("media-1"));
+  expect(await screen.findByText("Deletion pending")).toBeInTheDocument();
+});
+
+test("server-rejected and interrupted uploads retain a usable library", async () => {
+  const uploadMedia = vi
+    .fn()
+    .mockRejectedValueOnce(
+      new AdminClientError({ message: "Image bytes are invalid", status: 422 }),
+    )
+    .mockRejectedValueOnce(new AdminClientError({ message: "The Lace API could not be reached." }));
+  renderRoute(
+    "/media",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listMedia: async () => ({ items: [mediaItem] }),
+      uploadMedia,
+    }),
+  );
+  await screen.findByText("cover.png");
+  const input = screen.getByLabelText("Upload image");
+  fireEvent.change(input, {
+    target: { files: [new File(["bad"], "bad.png", { type: "image/png" })] },
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Image bytes are invalid");
+  expect(screen.getByText("cover.png")).toBeInTheDocument();
+  fireEvent.change(input, {
+    target: { files: [new File(["retry"], "retry.png", { type: "image/png" })] },
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("could not be reached");
+  expect(uploadMedia).toHaveBeenCalledTimes(2);
 });
 
 test("content landing explains no configured models without hiding API errors", async () => {
@@ -619,6 +811,146 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
   );
   expect(saved.blocks.some((block) => block.data.image === "media-1")).toBe(true);
   expect(await screen.findByText("Saved revision 3")).toBeInTheDocument();
+});
+
+test("model media picker reuses a later page and preserves an unresolved selection", async () => {
+  const user = userEvent.setup();
+  const model: ContentModelDto = {
+    blocks: [],
+    fields: { hero: { required: false, type: "media" } },
+    key: "posts",
+    kind: "collection",
+    route: "/posts/:slug",
+    version: 1,
+  };
+  const saveDraft = vi.fn(async () => ({}) as never);
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listMedia: async (cursor) =>
+        cursor === undefined
+          ? { items: [], nextCursor: "next" }
+          : { items: [{ ...mediaItem, id: "media-2", filename: "later.png" }] },
+      listModels: async () => ({ items: [model] }),
+      loadEntry: async () => ({
+        ...draftEntry,
+        draft: { ...draftEntry.draft, fields: { hero: "missing-1" } },
+      }),
+      saveDraft,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Choose media for Hero" }));
+  expect(screen.getByText("Selection not found in loaded pages yet.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Load more media" }));
+  expect(
+    await screen.findByText("Selected media is unavailable or inaccessible."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Selected: missing-1")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "later.png" }));
+  expect(screen.getByText("Selected: media-2")).toBeInTheDocument();
+  expect(saveDraft).not.toHaveBeenCalled();
+});
+
+test("block media picker uploads only into choices and preserves draft on list failure", async () => {
+  const user = userEvent.setup();
+  const model: ContentModelDto = {
+    blockDefinitions: [
+      { fields: { image: { required: false, type: "media" } }, type: "hero", version: 1 },
+    ],
+    blocks: ["hero"],
+    fields: {},
+    key: "posts",
+    kind: "collection",
+    route: "/posts/:slug",
+    version: 1,
+  };
+  const uploadMedia = vi.fn(async () => mediaItem);
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listMedia: async () => {
+        throw new AdminClientError({ message: "Media list failed" });
+      },
+      listModels: async () => ({ items: [model] }),
+      uploadMedia,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Add Hero" }));
+  await user.click(screen.getByRole("button", { name: "Choose media for Image" }));
+  expect(await screen.findByText("Media list failed")).toBeInTheDocument();
+  expect(screen.getByText("No media selected")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Upload image"), {
+    target: { files: [new File(["png"], "cover.png", { type: "image/png" })] },
+  });
+  expect(await screen.findByRole("button", { name: "cover.png" })).toBeInTheDocument();
+  expect(screen.getByText("No media selected")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  expect(screen.getByText("Selected: media-1")).toBeInTheDocument();
+});
+
+test("a server-normalized media draft becomes clean after save", async () => {
+  const user = userEvent.setup();
+  const model: ContentModelDto = {
+    blockDefinitions: [
+      {
+        fields: {
+          alt: { required: true, type: "text" },
+          caption: { required: false, type: "text" },
+          media: { required: true, type: "media" },
+        },
+        type: "image",
+        version: 1,
+      },
+    ],
+    blocks: ["image"],
+    fields: {
+      heroImage: { required: false, type: "media" },
+      publishedAt: { required: true, type: "date" },
+    },
+    key: "posts",
+    kind: "collection",
+    route: "/posts/:slug",
+    version: 1,
+  };
+  const saveDraft = vi.fn(async (_id: string, input: Parameters<AdminClient["saveDraft"]>[1]) => ({
+    ...draftEntry,
+    draft: {
+      ...draftEntry.draft,
+      blocks: input.blocks.map((block) => ({
+        ...block,
+        data: { alt: "Test image", media: mediaItem.id },
+      })),
+      fields: { heroImage: mediaItem.id, publishedAt: "2026-09-25" },
+      revision: 3,
+      slug: "media-reuse-test",
+    },
+  })) as unknown as AdminClient["saveDraft"];
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listMedia: async () => ({ items: [mediaItem] }),
+      listModels: async () => ({ items: [model] }),
+      saveDraft,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(screen.getByRole("button", { name: "Choose media for Hero Image" }));
+  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  await user.click(screen.getByRole("button", { name: "Add Image" }));
+  await user.type(screen.getByRole("textbox", { name: "Alt" }), "Test image");
+  await user.click(screen.getByRole("button", { name: "Choose media for Media" }));
+  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  await user.type(screen.getByRole("textbox", { name: "Slug" }), "media-reuse-test");
+  fireEvent.change(screen.getByLabelText("Published At"), { target: { value: "2026-09-25" } });
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText("Saved revision 3")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
 });
 
 test("server block validation stays on the nested editable block field", async () => {

@@ -346,9 +346,8 @@ test("MinIO storage streams objects, distinguishes missing keys, and sanitizes f
         return { Body: Readable.from([Buffer.from("media-bytes")]) };
       }
       if (command.constructor.name === "PutObjectCommand") {
-        for await (const _chunk of command.input.Body) {
-          // A real S3 client consumes the request stream before resolving.
-        }
+        expect(command.input.Body).toEqual(Buffer.from([1, 2, 3]));
+        expect(command.input.ContentLength).toBe(3);
       }
       return {};
     },

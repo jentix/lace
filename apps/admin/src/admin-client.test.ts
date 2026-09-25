@@ -59,6 +59,69 @@ test("lists validated media through the credentialed admin API", async () => {
   ).rejects.toBeInstanceOf(AdminClientError);
 });
 
+test("uploads and requests media deletion with validated credentialed responses", async () => {
+  const item = {
+    createdAt: "2026-09-20T00:00:00.000Z",
+    createdBy: "admin-1",
+    filename: "hero.png",
+    id: "media-1",
+    mimeType: "image/png",
+    size: 12,
+    status: "active",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    url: "https://lace.test/api/v1/public/media/media-1",
+  };
+  const fetcher = vi.fn(async () => Response.json(item, { status: 201 }));
+  const client = createAdminClient(fetcher);
+  const file = new File(["image"], "hero.png", { type: "image/png" });
+  await expect(client.uploadMedia(file)).resolves.toEqual(item);
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/media",
+    expect.objectContaining({
+      body: expect.any(FormData),
+      credentials: "same-origin",
+      method: "POST",
+    }),
+  );
+  const uploadRequest = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  expect(uploadRequest[1].body).toBeInstanceOf(FormData);
+  expect((uploadRequest[1].body as FormData).get("file")).toEqual(file);
+  await expect(client.deleteMedia("media/1")).resolves.toEqual(item);
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/media/media%2F1",
+    expect.objectContaining({ credentials: "same-origin", method: "DELETE" }),
+  );
+  await expect(client.retryMediaDeletion("media-1")).resolves.toEqual(item);
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/media/media-1/retry-deletion",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  await expect(
+    createAdminClient(async () => Response.json({ id: "invalid" })).uploadMedia(file),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
+test("media mutations preserve API failures and map transport failure safely", async () => {
+  const denied = createAdminClient(async () =>
+    Response.json({ error: { code: "FORBIDDEN", message: "Forbidden" } }, { status: 403 }),
+  );
+  await expect(denied.deleteMedia("media-1")).rejects.toMatchObject({ status: 403 });
+  const rejected = createAdminClient(async () =>
+    Response.json(
+      { error: { code: "VALIDATION_FAILED", message: "Invalid image" } },
+      { status: 422 },
+    ),
+  );
+  await expect(rejected.uploadMedia(new File(["bad"], "bad.png"))).rejects.toMatchObject({
+    code: "VALIDATION_FAILED",
+  });
+  await expect(
+    createAdminClient(async () => {
+      throw new Error("sensitive transport detail");
+    }).retryMediaDeletion("media-1"),
+  ).rejects.toMatchObject({ message: "The Lace API could not be reached." });
+});
+
 test("rejects malformed responses and maps API errors with their request ID", async () => {
   await expect(
     createAdminClient(async () => Response.json({ unexpected: true })).listModels(),

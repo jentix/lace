@@ -247,6 +247,30 @@ test("renders stable body-limit and rate-limit envelopes", async () => {
   });
 });
 
+test("bodyless media lifecycle requests reach the use case without bypassing body limits elsewhere", async () => {
+  const { app } = await fixture();
+  const emptyBody = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    });
+  for (const [method, path] of [
+    ["DELETE", "/api/v1/admin/media/missing"],
+    ["POST", "/api/v1/admin/media/missing/retry-deletion"],
+  ]) {
+    const response = await app.fetch(
+      new Request(`https://lace.test${path}`, {
+        body: emptyBody(),
+        duplex: "half",
+        method,
+      }),
+    );
+    expect(response.status).toBe(422);
+    expect((await response.json()).error.code).toBe("CONTENT_INVALID_STATE");
+  }
+});
+
 test("keeps media uploads, previews, and draft-only public reads separate", async () => {
   const { app, storage } = await fixture();
   const form = new FormData();

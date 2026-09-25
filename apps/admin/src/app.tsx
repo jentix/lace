@@ -12,6 +12,8 @@ import type {
   ContentEntryDto,
   ContentEntryListDto,
   ContentModelDto,
+  MediaListDto,
+  MediaMetadataDto,
 } from "@lacecms/contracts";
 import { canonicalizeJson, type JsonValue } from "@lacecms/content";
 import {
@@ -29,7 +31,7 @@ import {
   useRouter,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Controller, useFieldArray, useForm, type Control } from "react-hook-form";
 import {
   DndContext,
@@ -73,6 +75,7 @@ import {
 } from "./components/ui.js";
 import type { AdminRole, AdminSession, AdminSessionSource } from "./session.js";
 import { RichTextEditor } from "./rich-text-editor.js";
+import { MediaPreview } from "./media-preview.js";
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -87,6 +90,11 @@ function errorDescription(error: unknown): string {
 }
 function technicalDetails(error: unknown): string | undefined {
   return error instanceof AdminClientError ? error.requestId : undefined;
+}
+function mediaDeletionDescription(error: unknown): string {
+  return error instanceof AdminClientError && error.code === "CONTENT_INVALID_STATE"
+    ? "Deletion was refused. This media may be referenced by content or no longer active. Remove references and refresh before retrying."
+    : errorDescription(error);
 }
 
 const rootRoute = createRootRouteWithContext<AdminRouterContext>()({
@@ -153,12 +161,7 @@ const entryRoute = createRoute({
   path: "/content/$modelKey/$entryId",
 });
 const mediaRoute = createRoute({
-  component: () => (
-    <RoutePlaceholder
-      description="Media browsing and upload are connected in a later session."
-      title="Media"
-    />
-  ),
+  component: MediaPage,
   getParentRoute: () => protectedRoute,
   path: "/media",
 });
@@ -623,7 +626,19 @@ function DeleteEntryDialog({
 
 function draftValues(model: ContentModelDto, entry: ContentEntryDto): DraftEditorValues {
   return {
-    blocks: [...entry.draft.blocks],
+    blocks: entry.draft.blocks.map((block) => {
+      const definition = model.blockDefinitions?.find((item) => item.type === block.type);
+      if (definition === undefined) return block;
+      return {
+        ...block,
+        data: Object.fromEntries(
+          Object.entries(definition.fields).map(([key, field]) => [
+            key,
+            block.data[key] ?? ("defaultValue" in field ? field.defaultValue : undefined),
+          ]),
+        ) as ContentBlockDto["data"],
+      };
+    }),
     fields: initialModelFieldValues(model, entry.draft.fields),
     ...(entry.draft.slug === undefined ? {} : { slug: entry.draft.slug }),
     title: entry.draft.title,
@@ -676,18 +691,9 @@ function MediaPicker({
   readonly onChange: (value: string | undefined) => void;
   readonly value: unknown;
 }) {
-  const { client } = useRouteContext({ from: rootRoute.id });
   const [open, setOpen] = useState(false);
-  const media = useQuery({
-    enabled: open,
-    queryFn: () => client.listMedia(),
-    queryKey: adminQueryKeys.media(),
-  });
   return (
     <div className="lace-media-picker">
-      <p aria-live="polite">
-        {typeof value === "string" ? `Selected: ${value}` : "No media selected"}
-      </p>
       <Button
         aria-expanded={open}
         onClick={() => setOpen((visible) => !visible)}
@@ -696,35 +702,240 @@ function MediaPicker({
       >
         Choose media for {fieldLabel(fieldKey, undefined)}
       </Button>
-      {!open ? undefined : media.isPending ? <p role="status">Loading media…</p> : undefined}
-      {!open || media.error === null ? undefined : <p role="alert">Media could not be loaded.</p>}
-      {!open || media.data === undefined ? undefined : media.data.items.filter(
-          (item) => item.status === "active",
-        ).length === 0 ? (
-        <p>No active media is available.</p>
+      {open ? (
+        <MediaSurface
+          onSelect={(id) => {
+            onChange(id);
+            setOpen(false);
+          }}
+          selectionLabel={fieldLabel(fieldKey, undefined)}
+          value={typeof value === "string" ? value : undefined}
+        />
       ) : (
+        <p aria-live="polite">
+          {typeof value === "string" ? `Selected: ${value}` : "No media selected"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const maxMediaBytes = 10 * 1024 * 1024;
+const mediaTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+
+function MediaPage() {
+  return (
+    <section className="lace-page" aria-labelledby="media-title">
+      <h1 id="media-title">Media</h1>
+      <MediaSurface />
+    </section>
+  );
+}
+
+function MediaSurface({
+  onSelect,
+  selectionLabel,
+  value,
+}: {
+  readonly onSelect?: (id: string | undefined) => void;
+  readonly selectionLabel?: string;
+  readonly value?: string | undefined;
+}) {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const { session } = useRouteContext({ from: protectedRoute.id });
+  const uploadId = useId();
+  const queryClient = useQueryClient();
+  const [recent, setRecent] = useState<MediaMetadataDto | undefined>();
+  const [updates, setUpdates] = useState<Record<string, MediaMetadataDto>>({});
+  const [previewId, setPreviewId] = useState<string | undefined>();
+  const [uploadError, setUploadError] = useState<string | undefined>();
+  const media = useInfiniteQuery<
+    MediaListDto,
+    Error,
+    InfiniteData<MediaListDto>,
+    ReturnType<typeof adminQueryKeys.media>,
+    string | undefined
+  >({
+    getNextPageParam: (page) => page.nextCursor,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => client.listMedia(pageParam),
+    queryKey: adminQueryKeys.media(),
+  });
+  const upload = useMutation({
+    mutationFn: (file: File) => client.uploadMedia(file),
+    onSuccess: async (item) => {
+      setRecent(item);
+      setUploadError(undefined);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+    },
+  });
+  const deletion = useMutation({
+    mutationFn: ({ id, retry }: { id: string; retry: boolean }) =>
+      retry ? client.retryMediaDeletion(id) : client.deleteMedia(id),
+    onSuccess: async (item) => {
+      setUpdates((current) => ({ ...current, [item.id]: item }));
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+    },
+  });
+  useSessionRecovery(media.error ?? upload.error ?? deletion.error);
+  const listed = media.data?.pages.flatMap((page) => page.items) ?? [];
+  const items = (
+    recent === undefined || listed.some((item) => item.id === recent.id)
+      ? listed
+      : [recent, ...listed]
+  ).map((item) => updates[item.id] ?? item);
+  const visible = onSelect === undefined ? items : items.filter((item) => item.status === "active");
+  const current = items.find((item) => item.id === value);
+  const canWrite = session.role !== "viewer";
+  return (
+    <div className="lace-media-surface">
+      {onSelect === undefined ? undefined : (
+        <div aria-live="polite">
+          <p>{value === undefined ? "No media selected" : `Selected: ${value}`}</p>
+          {value !== undefined && current === undefined ? (
+            <p>
+              {media.hasNextPage || media.isPending
+                ? "Selection not found in loaded pages yet."
+                : "Selected media is unavailable or inaccessible."}
+            </p>
+          ) : current !== undefined && current.status !== "active" ? (
+            <p>Selected media is unavailable or inaccessible.</p>
+          ) : undefined}
+          {value === undefined ? undefined : (
+            <Button onClick={() => onSelect(undefined)} type="button" variant="secondary">
+              Clear selection
+            </Button>
+          )}
+        </div>
+      )}
+      {canWrite ? (
+        <div className="lace-media-upload">
+          <label htmlFor={uploadId}>Upload image</label>
+          <p>JPEG, PNG, WebP, or AVIF. Maximum 10 MiB.</p>
+          <input
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            disabled={upload.isPending}
+            id={uploadId}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file === undefined) return;
+              if (file.size > maxMediaBytes || (file.type !== "" && !mediaTypes.has(file.type))) {
+                setUploadError("Choose a JPEG, PNG, WebP, or AVIF image no larger than 10 MiB.");
+                return;
+              }
+              setUploadError(undefined);
+              upload.mutate(file);
+            }}
+            type="file"
+          />
+          {upload.isPending ? <p role="status">Uploading image…</p> : undefined}
+          {uploadError === undefined && upload.error === null ? undefined : (
+            <p role="alert">{uploadError ?? errorDescription(upload.error)}</p>
+          )}
+          {recent === undefined ? undefined : (
+            <p role="status">
+              Uploaded {recent.filename}.{onSelect === undefined ? "" : " Select it to use it."}
+            </p>
+          )}
+        </div>
+      ) : undefined}
+      {media.isPending ? <Skeleton label="Loading media" lines={3} /> : undefined}
+      {media.error === null ? undefined : (
+        <ErrorState
+          description={errorDescription(media.error)}
+          technicalDetails={technicalDetails(media.error)}
+        />
+      )}
+      {media.data !== undefined && visible.length === 0 ? (
+        <EmptyState
+          title={onSelect === undefined ? "No media yet" : "No active media is available"}
+          description={
+            canWrite ? "Upload an image to get started." : "No images are available to select."
+          }
+        />
+      ) : undefined}
+      {visible.length === 0 ? undefined : (
         <ul
-          aria-label={`Media choices for ${fieldLabel(fieldKey, undefined)}`}
+          aria-label={
+            selectionLabel === undefined ? "Media library" : `Media choices for ${selectionLabel}`
+          }
           className="lace-media-list"
         >
-          {media.data.items
-            .filter((item) => item.status === "active")
-            .map((item) => (
-              <li key={item.id}>
-                <button
-                  aria-pressed={value === item.id}
-                  onClick={() => {
-                    onChange(item.id);
-                    setOpen(false);
-                  }}
-                  type="button"
-                >
-                  {item.filename}
-                </button>
-              </li>
-            ))}
+          {visible.map((item) => (
+            <li className="lace-media-item" key={item.id}>
+              <div>
+                <strong>{item.filename}</strong>
+                <span>
+                  {item.mimeType} · {item.size} bytes
+                </span>
+                <span>
+                  {item.status === "deleting"
+                    ? "Deletion pending"
+                    : item.status === "delete_failed"
+                      ? "Deletion failed"
+                      : "Active"}
+                </span>
+              </div>
+              <div className="lace-actions">
+                {item.status === "active" ? (
+                  <Button
+                    onClick={() => setPreviewId(previewId === item.id ? undefined : item.id)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {previewId === item.id ? "Hide preview" : `Preview ${item.filename}`}
+                  </Button>
+                ) : undefined}
+                {onSelect === undefined || item.status !== "active" ? undefined : (
+                  <button
+                    aria-pressed={value === item.id}
+                    onClick={() => onSelect(item.id)}
+                    type="button"
+                  >
+                    {item.filename}
+                  </button>
+                )}
+                {onSelect !== undefined || !canWrite || item.status === "deleting" ? undefined : (
+                  <Button
+                    disabled={deletion.isPending}
+                    onClick={() => {
+                      if (
+                        item.status === "active" &&
+                        !window.confirm(`Request deletion of ${item.filename}?`)
+                      )
+                        return;
+                      deletion.mutate({ id: item.id, retry: item.status === "delete_failed" });
+                    }}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {item.status === "delete_failed"
+                      ? `Retry deletion of ${item.filename}`
+                      : `Delete ${item.filename}`}
+                  </Button>
+                )}
+              </div>
+              {previewId === item.id ? (
+                <MediaPreview filename={item.filename} mediaId={item.id} />
+              ) : undefined}
+            </li>
+          ))}
         </ul>
       )}
+      {deletion.error === null ? undefined : (
+        <p role="alert">{mediaDeletionDescription(deletion.error)}</p>
+      )}
+      {media.hasNextPage ? (
+        <Button
+          disabled={media.isFetchingNextPage}
+          onClick={() => media.fetchNextPage()}
+          type="button"
+          variant="secondary"
+        >
+          {media.isFetchingNextPage ? "Loading more media…" : "Load more media"}
+        </Button>
+      ) : undefined}
     </div>
   );
 }
@@ -1128,12 +1339,9 @@ function EntryEditor() {
     onSuccess: async (saved) => {
       const savedModel = modelRef.current;
       if (savedModel === undefined) return;
-      const values = draftValues(savedModel, saved);
       queryClient.setQueryData(adminQueryKeys.entry(entryId), saved);
       setSavedEntry(saved);
-      loaded.current = `${saved.id}:${saved.draft.revision}`;
       suggestingSlugRef.current = false;
-      form.reset(values);
       setSuggestingSlug(false);
       setSlugManuallyEdited(false);
       setConflict(undefined);

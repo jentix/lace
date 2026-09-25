@@ -5,6 +5,7 @@ import {
   contractValidationIssueSchema,
   errorEnvelopeSchema,
   mediaListSchema,
+  mediaMetadataSchema,
   publishContentEntryResultSchema,
   type ContentBlockDto,
   type ContractValidationIssue,
@@ -12,6 +13,7 @@ import {
   type ContentEntryListDto,
   type ContentModelListDto,
   type MediaListDto,
+  type MediaMetadataDto,
   type PublishContentEntryResultDto,
 } from "@lacecms/contracts";
 import * as v from "valibot";
@@ -53,6 +55,9 @@ export interface AdminClient {
   loadEntry(entryId: string): Promise<ContentEntryDto>;
   listEntries(modelKey: string, cursor?: string): Promise<ContentEntryListDto>;
   listMedia(cursor?: string): Promise<MediaListDto>;
+  uploadMedia(file: File): Promise<MediaMetadataDto>;
+  deleteMedia(mediaId: string): Promise<MediaMetadataDto>;
+  retryMediaDeletion(mediaId: string): Promise<MediaMetadataDto>;
   listModels(): Promise<ContentModelListDto>;
   publishEntry(
     entryId: string,
@@ -169,6 +174,32 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
       const query = cursor === undefined ? "" : `?after=${encodeURIComponent(cursor)}`;
       return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${query}`));
     },
+    uploadMedia: async (file: File) => {
+      const body = new FormData();
+      body.append("file", file);
+      return parse(
+        mediaMetadataSchema,
+        await request(fetcher, "/api/v1/admin/media", { body, method: "POST" }),
+      );
+    },
+    deleteMedia: async (mediaId: string) =>
+      parse(
+        mediaMetadataSchema,
+        await request(fetcher, `/api/v1/admin/media/${encodeURIComponent(mediaId)}`, {
+          method: "DELETE",
+        }),
+      ),
+    retryMediaDeletion: async (mediaId: string) =>
+      parse(
+        mediaMetadataSchema,
+        await request(
+          fetcher,
+          `/api/v1/admin/media/${encodeURIComponent(mediaId)}/retry-deletion`,
+          {
+            method: "POST",
+          },
+        ),
+      ),
     signIn: async (email: string, password: string) => {
       await request(fetcher, "/api/auth/sign-in/email", {
         body: JSON.stringify({ email, password }),
