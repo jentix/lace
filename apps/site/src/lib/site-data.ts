@@ -43,8 +43,10 @@ export interface SiteEntry {
 }
 
 export interface SiteData {
+  readonly about?: SiteEntry;
   readonly home: SiteEntry;
   readonly mediaUrl: (mediaId: string) => string;
+  readonly notes: readonly SiteEntry[];
   readonly posts: readonly SiteEntry[];
 }
 
@@ -78,6 +80,10 @@ function deriveSiteData(exported: BuildExport, mediaUrl: (mediaId: string) => st
       "The build export must contain exactly one published home entry at /. Run `pnpm content:sync`, then publish the home page in Admin.",
     );
   }
+  const aboutEntries = entries.filter((entry) => entry.modelKey === "about");
+  if (aboutEntries.some((entry) => entry.path !== "/about") || aboutEntries.length > 1) {
+    throw new TypeError("A published about page must have the unique canonical /about path.");
+  }
   const posts = entries.filter((entry) => {
     if (entry.modelKey !== "posts" || entry.slug === undefined) return false;
     return entry.path === `/blog/${entry.slug}`;
@@ -94,9 +100,27 @@ function deriveSiteData(exported: BuildExport, mediaUrl: (mediaId: string) => st
       throw new TypeError(`The build export contains duplicate post slug ${post.slug}.`);
     slugs.add(post.slug);
   }
+  const notes = entries.filter((entry) => {
+    if (entry.modelKey !== "notes" || entry.slug === undefined) return false;
+    return entry.path === `/notes/${entry.slug}`;
+  });
+  if (notes.length !== entries.filter((entry) => entry.modelKey === "notes").length) {
+    throw new TypeError(
+      "Every published note in the build export must have its canonical notes path.",
+    );
+  }
+  const noteSlugs = new Set<string>();
+  for (const note of notes) {
+    if (note.slug === undefined) throw new TypeError("Published note is missing a slug.");
+    if (noteSlugs.has(note.slug))
+      throw new TypeError(`The build export contains duplicate note slug ${note.slug}.`);
+    noteSlugs.add(note.slug);
+  }
   return {
+    ...(aboutEntries[0] === undefined ? {} : { about: aboutEntries[0] }),
     home: homes[0],
     mediaUrl,
+    notes: [...notes].sort((left, right) => left.path.localeCompare(right.path)),
     posts: [...posts].sort((left, right) => left.path.localeCompare(right.path)),
   };
 }

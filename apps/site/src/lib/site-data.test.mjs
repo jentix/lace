@@ -129,3 +129,32 @@ test("live loader retries a failed first export after the API becomes available"
   expect(await getSiteData()).toBe(recovered);
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+test("additional routes use published paths and ignore later draft values", async () => {
+  const site = await loadSiteData();
+  expect(site.about).toMatchObject({ path: "/about", title: "About Lace" });
+  expect(site.notes).toMatchObject([{ path: "/notes/first-note", title: "First published note" }]);
+  expect(site.notes[0].slug).toBe("first-note");
+
+  const draftOnly = structuredClone(fixture.entries[3]);
+  draftOnly.entry.id = "draft-note-entry";
+  delete draftOnly.entry.published;
+  draftOnly.path = "/notes/draft-only";
+  const withoutDraft = await loadSiteData({
+    fixture: { ...fixture, entries: [...fixture.entries.slice(0, 2), draftOnly] },
+  });
+  expect(withoutDraft.about).toBeUndefined();
+  expect(withoutDraft.notes).toEqual([]);
+});
+
+test("additional collection rejects duplicate slugs and noncanonical published paths", async () => {
+  const note = structuredClone(fixture.entries[3]);
+  await expect(
+    loadSiteData({ fixture: { ...fixture, entries: [...fixture.entries, note] } }),
+  ).rejects.toThrow(/duplicate note slug/);
+
+  note.path = "/wrong/first-note";
+  await expect(
+    loadSiteData({ fixture: { ...fixture, entries: [...fixture.entries.slice(0, 3), note] } }),
+  ).rejects.toThrow(/canonical notes path/);
+});

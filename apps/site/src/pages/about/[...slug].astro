@@ -1,0 +1,17 @@
+---
+import BlockRenderer from "../../components/BlockRenderer.astro";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getSiteData } from "../../lib/site-data.js";
+
+export async function getStaticPaths() {
+  const { about } = await getSiteData();
+  return about === undefined ? [] : [{ params: { slug: undefined }, props: { about } }];
+}
+
+const { about } = Astro.props;
+const { mediaUrl } = await getSiteData();
+---
+
+<BaseLayout title={about.title}>
+  <BlockRenderer entry={about} mediaUrl={mediaUrl} />
+</BaseLayout>

@@ -2,14 +2,19 @@ import { expect, test } from "vitest";
 import { ConfigurationError, defineConfig, definePage } from "@lacecms/config";
 import { loadProjectConfig } from "../dist/project-config.js";
 
-test("loads the root configuration with typed home and posts models", async () => {
+test("loads the root configuration with typed page and collection examples", async () => {
   const config = await loadProjectConfig();
   expect(config.public.content.map(({ key, kind, version }) => ({ key, kind, version }))).toEqual([
+    { key: "about", kind: "page", version: 1 },
     { key: "home", kind: "page", version: 2 },
+    { key: "notes", kind: "collection", version: 1 },
     { key: "posts", kind: "collection", version: 2 },
   ]);
   expect(config.runtime.blocks.get("hero")).toBeDefined();
-  expect(config.public.content[1].route).toBe("/blog/:slug");
+  expect(config.public.content[0].path).toBe("/about");
+  expect(config.public.content[2].route).toBe("/notes/:slug");
+  expect(config.public.content[2].fields.summary.type).toBe("text");
+  expect(config.public.content[3].route).toBe("/blog/:slug");
 });
 
 test("accepts a fresh normalized project configuration", async () => {

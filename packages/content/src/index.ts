@@ -1051,6 +1051,7 @@ export function validateModelFields(
 }
 
 const BLOCK_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9-]*$/u;
+const BLOCK_KEY_PATTERN = /^(?:[A-Za-z][A-Za-z0-9-]*|[0-7][0-9A-HJKMNP-TV-Z]{25})$/u;
 const FIELD_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/u;
 
 /** Thrown when a block definition or registry is not portable or internally consistent. */
@@ -1526,7 +1527,7 @@ export function validateEntryAggregate(
       invalid(path, "invalid_block", "must be an object.");
     }
     assertExactKeys(block, ["data", "key", "schemaVersion", "type"], [], path);
-    if (typeof block.key !== "string" || !BLOCK_TYPE_PATTERN.test(block.key)) {
+    if (typeof block.key !== "string" || !BLOCK_KEY_PATTERN.test(block.key)) {
       invalid([...path, "key"], "invalid_block_key", "must be a stable block key.");
     }
     if (keys.has(block.key)) {

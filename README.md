@@ -107,8 +107,9 @@ token through `DELETE /api/v1/admin/api-tokens/:tokenId`.
 ### Project content configuration
 
 Edit [`lace.config.ts`](./lace.config.ts) to define pages and collections in
-version-controlled code. The file contains `home` (`/`) and `posts`
-(`/blog/:slug`) examples with fields and allowed blocks. The Node API loads and
+version-controlled code. The file contains `home` (`/`), `about` (`/about`),
+`posts` (`/blog/:slug`), and `notes` (`/notes/:slug`) examples with fields and
+allowed blocks. The Node API loads and
 validates this file when it starts. After editing it, restart the local stack:
 
 ```sh
@@ -133,7 +134,8 @@ between planning and apply; rerun to review the current plan. Sync never runs
 as part of startup or migrations. Route validation also does not create Astro pages: add or update
 the matching route and renderer in `apps/site/src/pages/`. See
 [the Node configuration guide](./docs/node-api.md#editing-content-models) for
-key, version, rename, and route examples.
+key, version, field, block, and route examples, plus a repeatable
+sync–Admin–publication–public-site check.
 
 ### Normal operations
 

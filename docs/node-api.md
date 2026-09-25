@@ -67,8 +67,9 @@ content. There is no automatic build dispatch in the local workflow yet.
 The repository-root [`lace.config.ts`](../lace.config.ts) is the editable source
 of content structure. Its `definePage` and `defineCollection` calls use the
 typed `@lacecms/config` API; `field` and `builtInBlocks` come from
-`@lacecms/content`. The examples define the singleton `home` page at `/` and
-the `posts` collection at `/blog/:slug`. A new page needs a stable lowercase
+`@lacecms/content`. The examples define singleton `home` (`/`) and `about`
+(`/about`) pages plus `posts` (`/blog/:slug`) and `notes` (`/notes/:slug`)
+collections. A new page needs a stable lowercase
 kebab-case `key`, positive integer `version`, fixed canonical `path`, and any
 fields or allowed blocks. A collection uses a canonical `route` with exactly
 one `:slug` segment instead of `path`. All allowed block keys must be listed
@@ -78,16 +79,31 @@ Choose the site presentation alongside the model definition. The current
 `home` route is [`apps/site/src/pages/index.astro`](../apps/site/src/pages/index.astro)
 and `posts` uses
 [`apps/site/src/pages/blog/[slug].astro`](../apps/site/src/pages/blog/[slug].astro).
-For a page at `/about`, add `apps/site/src/pages/about.astro`; for a collection
-at `/news/:slug`, add `apps/site/src/pages/news/[slug].astro` with
-`getStaticPaths()`. The existing routes use
+The additional examples use
+[`apps/site/src/pages/about/[...slug].astro`](../apps/site/src/pages/about/[...slug].astro)
+and
+[`apps/site/src/pages/notes/[slug].astro`](../apps/site/src/pages/notes/[slug].astro).
+The `about` route uses `getStaticPaths()` so it emits no static page before
+publication. Further pages and collections need matching Astro route files;
+collections use `getStaticPaths()`. The existing routes use
 [`BlockRenderer.astro`](../apps/site/src/components/BlockRenderer.astro) to
 render ordered blocks. Lace validates route definitions; it does not create
 Astro files or choose a layout. The reference site reads the committed fixture
 until live mode is configured; live mode reads locally published content.
 
+To add a model, register a `definePage` or `defineCollection` call in
+`lace.config.ts`. Start a new model at `version: 1`; choose a unique key and
+path or route, then list its allowed blocks. `notes` demonstrates an optional
+text field with `fields: { summary: field.text() }`. Add further fields using
+typed `field` descriptors and render any field intended for public display in
+the Astro route. To add a block type, register its definition in the root
+`blocks` list, allow its key in the model, and add a rendering case to
+`BlockRenderer.astro`. A published block without a site renderer fails the
+build with its model, entry, and block keys.
+
 Keep a model key stable once it has stored content. Increase `version` when a
-field, allowed block, path, route, or other structural definition changes; a
+field, allowed block, path, route, or other structural definition changes. A
+display-only label or description change does not require a bump; a
 structural change with stored snapshots can still be rejected by the sync
 planner. To deliberately rename a key, set `renamedFrom` to its old key while
 introducing the new key and increased version. The hint is temporary and
@@ -113,6 +129,21 @@ plan and apply valid changes. A newly synchronized page has one incomplete
 draft ready for editing; a new collection has no entries until an editor
 creates one in Admin or through the API. Open `/admin/content` after sync to
 find the page editor or collection list.
+
+For a repeatable content check, synchronize the included `about` and `notes`
+examples. In `/admin/content`, edit the `About` draft and create a `Notes`
+entry with a title and lowercase slug such as `first-note`. Add a supported
+block to each and save. Before publication, check
+`GET /api/v1/public/pages/about` and
+`GET /api/v1/public/collections/notes/first-note`: draft content is absent.
+Publish both entries in Admin, then check those endpoints and
+`GET /api/v1/public/build-export` with the read-only build token. Configure
+live site mode as in the root README, restart the stack, and open `/about`
+and `/notes/first-note` in a browser. Their content must match the published
+API output. Save a later draft title or slug without publishing, restart the
+site again, and verify the previous published API values and public pages
+remain visible. The new draft is visible only in Admin. This sequence reads
+local SQLite through the live export; it does not edit the committed fixture.
 
 An invalid plan names the affected model and reason. Stored snapshots can
 block structural changes even after a version increase; correct the config
