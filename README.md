@@ -39,6 +39,11 @@ Open these URLs in the browser:
 | Admin | `http://127.0.0.1:3000/admin/` |
 | Astro site | `http://127.0.0.1:3000/` |
 
+The local admin also accepts `http://localhost:3000/admin/` on the same port.
+Browser sessions are scoped to the hostname, so switching between `localhost`
+and `127.0.0.1` may require signing in again. Restart the local API after
+changing authentication code.
+
 MinIO has no host port in this topology. The browser never receives its Docker
 hostname or object-store credentials. API and health paths stay in the Node
 application; `/admin/*` and site routes are proxied through the same origin,

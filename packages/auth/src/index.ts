@@ -28,6 +28,16 @@ function laceRole(value: unknown): Role | undefined {
   return value === "admin" || value === "editor" || value === "viewer" ? value : undefined;
 }
 
+function trustedOrigins(origin: URL, production: boolean): string[] {
+  const canonical = origin.origin;
+  if (production || (origin.hostname !== "localhost" && origin.hostname !== "127.0.0.1")) {
+    return [canonical];
+  }
+  const alternate = new URL(canonical);
+  alternate.hostname = origin.hostname === "localhost" ? "127.0.0.1" : "localhost";
+  return [canonical, alternate.origin];
+}
+
 /** Creates the Node Better Auth boundary without leaking provider types to HTTP routes. */
 export function createBetterAuthBoundary(input: CreateBetterAuthBoundaryInput): BetterAuthBoundary {
   const origin = input.origin.origin;
@@ -52,7 +62,7 @@ export function createBetterAuthBoundary(input: CreateBetterAuthBoundaryInput): 
       enabled: true,
     },
     secret: input.secret,
-    trustedOrigins: [origin],
+    trustedOrigins: trustedOrigins(input.origin, input.production),
     user: {
       additionalFields: {
         disabled: {
