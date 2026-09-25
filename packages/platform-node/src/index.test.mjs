@@ -218,7 +218,9 @@ test("security service completes bootstrap once, protects its final admin, and r
         token: setup.token,
       }),
     ).rejects.toThrow();
-    await expect(security.disableUser({ userId: first.user.id })).rejects.toThrow();
+    await expect(security.disableUser({ userId: first.user.id })).rejects.toMatchObject({
+      code: "LAST_ADMIN_PROTECTED",
+    });
     const build = await security.createBuildToken({ name: "builder", now: unixMilliseconds(now) });
     await expect(
       security.verifyBuildToken({ now: unixMilliseconds(now), token: build.token }),

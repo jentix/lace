@@ -52,7 +52,8 @@ inside the Compose network, and its persistent data is preserved unless the
 explicit root reset is requested.
 
 Astro starts in fixture mode for bootstrap. After an administrator creates a
-read-only build credential with `POST /api/v1/admin/api-tokens` and publishes
+read-only build credential in `/admin/settings` (or with
+`POST /api/v1/admin/api-tokens`) and publishes
 the `home` page, set `LACE_SITE_DATA_MODE=live` and `LACE_BUILD_TOKEN` in the
 ignored `.env` and restart the stack. The site process uses
 `LACE_API_BASE_URL=http://api:3000` inside Compose to read the export, while

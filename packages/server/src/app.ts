@@ -16,6 +16,7 @@ import {
   buildTokenCreatedSchema,
   buildTokenListSchema,
   buildTokenSchema,
+  adminSettingsStatusSchema,
   classifyError,
   contentEntryListSchema,
   contentEntrySchema,
@@ -544,6 +545,13 @@ export function createLaceApp(input: LaceAppInput): Hono {
   app.get("/api/v1/admin/users", async (context) => {
     await usersActor(context);
     return response(managedUserListSchema, { items: await security().listUsers() });
+  });
+  app.get("/api/v1/admin/settings/status", async (context) => {
+    await usersActor(context);
+    return response(adminSettingsStatusSchema, {
+      configuredModels: input.config.content.length,
+      ready: await input.readiness.isReady(),
+    });
   });
   app.post(
     "/api/v1/admin/users",

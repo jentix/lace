@@ -120,6 +120,19 @@ test("keeps liveness, readiness, request IDs, and logs separate", async () => {
   expect(JSON.stringify(logs)).not.toContain("authorization");
 });
 
+test("settings status exposes only useful read-only state to administrators", async () => {
+  const adminFixture = await fixture({ ready: false });
+  expect(await json(adminFixture.app, "/api/v1/admin/settings/status")).toMatchObject({
+    body: { configuredModels: 2, ready: false },
+    response: { status: 200 },
+  });
+  const editorFixture = await fixture({ actor: editor });
+  expect(await json(editorFixture.app, "/api/v1/admin/settings/status")).toMatchObject({
+    body: { error: { code: "AUTHORIZATION_DENIED" } },
+    response: { status: 403 },
+  });
+});
+
 test("serves public content and short-circuits matching build exports", async () => {
   const { app, content, exportLoads } = await fixture();
   const entry = await content.create({

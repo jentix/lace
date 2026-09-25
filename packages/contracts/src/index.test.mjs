@@ -321,6 +321,15 @@ describe("shared REST transport conventions", () => {
       },
       status: 409,
     });
+    expect(classifyError(new DomainError("LAST_ADMIN_PROTECTED", "private detail"))).toEqual({
+      body: {
+        error: {
+          code: "LAST_ADMIN_PROTECTED",
+          message: "The final active administrator cannot be disabled or demoted.",
+        },
+      },
+      status: 409,
+    });
     expect(JSON.stringify(classifyError(new Error("select * from secrets")))).not.toContain(
       "secrets",
     );

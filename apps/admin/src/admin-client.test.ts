@@ -33,6 +33,47 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
   expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
 });
 
+test("uses validated credentialed user, status, and token endpoints", async () => {
+  const account = { disabled: false, email: "editor@lace.test", id: "user-1", role: "editor" };
+  const token = {
+    capabilities: ["content:build:read"],
+    createdAt: "2026-09-20T00:00:00.000Z",
+    id: "token-1",
+    name: "Local site",
+    tokenPrefix: "lace_123",
+  };
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith("/settings/status"))
+      return Response.json({ configuredModels: 2, ready: true });
+    if (path.endsWith("/users") && init?.method === "POST")
+      return Response.json(account, { status: 201 });
+    if (path.endsWith("/users")) return Response.json({ items: [account] });
+    if (path.endsWith("/user-1")) return Response.json({ ...account, role: "admin" });
+    if (path.endsWith("/api-tokens") && init?.method === "POST")
+      return Response.json({ ...token, token: "secret" }, { status: 201 });
+    if (path.endsWith("/api-tokens")) return Response.json({ items: [token] });
+    return Response.json({ ...token, revokedAt: "2026-09-21T00:00:00.000Z" });
+  });
+  const client = createAdminClient(fetcher as typeof fetch);
+  await expect(client.listUsers()).resolves.toEqual({ items: [account] });
+  await expect(
+    client.createUser({ email: account.email, password: "long-password", role: "editor" }),
+  ).resolves.toEqual(account);
+  await expect(client.updateUser("user-1", { role: "admin" })).resolves.toMatchObject({
+    role: "admin",
+  });
+  await expect(client.loadSettingsStatus()).resolves.toEqual({ configuredModels: 2, ready: true });
+  await expect(client.listTokens()).resolves.toEqual({ items: [token] });
+  await expect(client.createToken("Local site")).resolves.toMatchObject({ token: "secret" });
+  await expect(client.revokeToken("token-1")).resolves.toMatchObject({
+    revokedAt: "2026-09-21T00:00:00.000Z",
+  });
+  expect(fetcher.mock.calls.every(([, init]) => init?.credentials === "same-origin")).toBe(true);
+  await expect(
+    createAdminClient(async () => Response.json({ items: [{ token: "secret" }] })).listTokens(),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
 test("lists validated media through the credentialed admin API", async () => {
   const item = {
     createdAt: "2026-09-20T00:00:00.000Z",

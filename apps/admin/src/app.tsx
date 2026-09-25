@@ -14,6 +14,8 @@ import type {
   ContentModelDto,
   MediaListDto,
   MediaMetadataDto,
+  ManagedUserDto,
+  BuildTokenCreatedDto,
 } from "@lacecms/contracts";
 import { canonicalizeJson, type JsonValue } from "@lacecms/content";
 import {
@@ -130,6 +132,13 @@ const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "_protected",
 });
+const adminIndexRoute = createRoute({
+  beforeLoad: () => {
+    throw redirect({ to: "/content" });
+  },
+  getParentRoute: () => protectedRoute,
+  path: "/",
+});
 const contentRoute = createRoute({
   component: ContentPage,
   getParentRoute: () => protectedRoute,
@@ -190,6 +199,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   loginRoute,
   protectedRoute.addChildren([
+    adminIndexRoute,
     contentRoute,
     modelRoute,
     entryRoute,
@@ -335,20 +345,22 @@ function AdminShell({
             </Link>
           ))}
         </nav>
-        <Button disabled={signOut.isPending} onClick={() => signOut.mutate()} variant="quiet">
-          {signOut.isPending ? "Signing out…" : "Sign out"}
-        </Button>
       </aside>
       <main className="lace-main">
-        <button
-          aria-controls="admin-navigation"
-          aria-expanded={navOpen}
-          className="lace-button lace-button--secondary lace-menu-button"
-          onClick={() => setNavOpen((open) => !open)}
-          type="button"
-        >
-          Menu
-        </button>
+        <div className="lace-shell-header">
+          <button
+            aria-controls="admin-navigation"
+            aria-expanded={navOpen}
+            className="lace-button lace-button--secondary lace-menu-button"
+            onClick={() => setNavOpen((open) => !open)}
+            type="button"
+          >
+            Menu
+          </button>
+          <Button disabled={signOut.isPending} onClick={() => signOut.mutate()} variant="quiet">
+            {signOut.isPending ? "Signing out…" : "Log out"}
+          </Button>
+        </div>
         {signOut.error === null ? undefined : (
           <ErrorState
             description={errorDescription(signOut.error)}
@@ -1669,22 +1681,408 @@ function AdminRoutePage({
 }
 function UsersPage() {
   const { permitted } = useRouteContext({ from: usersRoute.id });
-  return (
-    <AdminRoutePage
-      description="User administration is connected in a later session."
-      permitted={permitted}
-      title="Users"
-    />
+  return permitted ? (
+    <UsersManager />
+  ) : (
+    <AdminRoutePage description="" permitted={false} title="Users" />
   );
 }
 function SettingsPage() {
   const { permitted } = useRouteContext({ from: settingsRoute.id });
+  return permitted ? (
+    <SettingsManager />
+  ) : (
+    <AdminRoutePage description="" permitted={false} title="Settings" />
+  );
+}
+
+const roleOptions = ["admin", "editor", "viewer"] as const;
+
+function UsersManager() {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<(typeof roleOptions)[number]>("viewer");
+  const [notice, setNotice] = useState<string>();
+  const [roleReset, setRoleReset] = useState(0);
+  const users = useQuery({ queryKey: adminQueryKeys.users, queryFn: client.listUsers });
+  const creation = useMutation({
+    mutationFn: () => client.createUser({ email, password, role }),
+    onSuccess: async (created) => {
+      setPassword("");
+      setEmail("");
+      setNotice(`Created ${created.email}.`);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+  });
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      change,
+    }: {
+      id: string;
+      change: { disabled?: boolean; role?: (typeof roleOptions)[number] };
+    }) => client.updateUser(id, change),
+    onSuccess: async (changed) => {
+      setNotice(`Updated ${changed.email}.`);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+    onError: () => setRoleReset((value) => value + 1),
+  });
+  useSessionRecovery(users.error ?? creation.error ?? update.error);
   return (
-    <AdminRoutePage
-      description="Settings are connected in a later session."
-      permitted={permitted}
-      title="Settings"
-    />
+    <section className="lace-page">
+      <h1>Users</h1>
+      <p>
+        Manage access to this Lace site. The final active administrator cannot be disabled or
+        demoted.
+      </p>
+      <form
+        className="lace-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setNotice(undefined);
+          creation.mutate();
+        }}
+      >
+        <h2>Create user</h2>
+        <Input
+          autoComplete="email"
+          label="Email"
+          onChange={(event) => setEmail(event.target.value)}
+          required
+          type="email"
+          value={email}
+        />
+        <Input
+          autoComplete="new-password"
+          label="Password"
+          minLength={12}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+          type="password"
+          value={password}
+        />
+        <label className="lace-field">
+          Role
+          <select
+            onChange={(event) => setRole(event.target.value as (typeof roleOptions)[number])}
+            value={role}
+          >
+            {roleOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button disabled={creation.isPending} type="submit">
+          {creation.isPending ? "Creating…" : "Create user"}
+        </Button>
+      </form>
+      {creation.error === null ? undefined : (
+        <ErrorState
+          description={errorDescription(creation.error)}
+          technicalDetails={technicalDetails(creation.error)}
+        />
+      )}
+      {update.error === null ? undefined : (
+        <ErrorState
+          description={
+            update.error instanceof AdminClientError && update.error.code === "LAST_ADMIN_PROTECTED"
+              ? "The final active administrator cannot be disabled or demoted."
+              : errorDescription(update.error)
+          }
+          technicalDetails={technicalDetails(update.error)}
+        />
+      )}
+      {notice === undefined ? undefined : <p role="status">{notice}</p>}
+      <h2>Accounts</h2>
+      {users.isPending ? (
+        <Skeleton label="Loading users" />
+      ) : users.error !== null ? (
+        <ErrorState
+          description={errorDescription(users.error)}
+          technicalDetails={technicalDetails(users.error)}
+        />
+      ) : users.data?.items.length === 0 ? (
+        <EmptyState
+          description="Create the first additional account above."
+          title="No users found"
+        />
+      ) : (
+        <Table label="Users">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.data?.items.map((account) => (
+              <UserRow
+                account={account}
+                key={account.id}
+                onUpdate={(change) => {
+                  setNotice(undefined);
+                  update.mutate({ id: account.id, change });
+                }}
+                pending={update.isPending}
+                roleReset={roleReset}
+              />
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
+function UserRow({
+  account,
+  onUpdate,
+  pending,
+  roleReset,
+}: {
+  readonly account: ManagedUserDto;
+  readonly onUpdate: (change: { disabled?: boolean; role?: (typeof roleOptions)[number] }) => void;
+  readonly pending: boolean;
+  readonly roleReset: number;
+}) {
+  const [selectedRole, setSelectedRole] = useState(account.role);
+  useEffect(() => setSelectedRole(account.role), [account.role, roleReset]);
+  return (
+    <tr>
+      <td>{account.email}</td>
+      <td>
+        <label className="lace-field">
+          Role for {account.email}
+          <select
+            disabled={pending || account.disabled}
+            onChange={(event) =>
+              setSelectedRole(event.target.value as (typeof roleOptions)[number])
+            }
+            value={selectedRole}
+          >
+            {roleOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      </td>
+      <td>
+        <Badge tone={account.disabled ? "warning" : "positive"}>
+          {account.disabled ? "Disabled" : "Active"}
+        </Badge>
+      </td>
+      <td>
+        <div className="lace-actions">
+          <Button
+            disabled={pending || account.disabled || selectedRole === account.role}
+            onClick={() => onUpdate({ role: selectedRole })}
+            variant="secondary"
+          >
+            Save role
+          </Button>
+          <Button
+            disabled={pending || account.disabled}
+            onClick={() => {
+              if (window.confirm(`Disable ${account.email}?`)) onUpdate({ disabled: true });
+            }}
+            variant="quiet"
+          >
+            Disable
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function SettingsManager() {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [issued, setIssued] = useState<BuildTokenCreatedDto>();
+  const [notice, setNotice] = useState<string>();
+  const status = useQuery({
+    queryKey: adminQueryKeys.settingsStatus,
+    queryFn: client.loadSettingsStatus,
+  });
+  const tokens = useQuery({ queryKey: adminQueryKeys.tokens, queryFn: client.listTokens });
+  const creation = useMutation({
+    mutationFn: async () => {
+      setIssued(await client.createToken(name));
+    },
+    onSuccess: async () => {
+      setName("");
+      setNotice(undefined);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.tokens });
+    },
+  });
+  const revocation = useMutation({
+    mutationFn: client.revokeToken,
+    onSuccess: async () => {
+      setNotice("Token revoked.");
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.tokens });
+    },
+  });
+  useSessionRecovery(status.error ?? tokens.error ?? creation.error ?? revocation.error);
+  return (
+    <section className="lace-page">
+      <h1>Settings</h1>
+      <p>Inspect the local API and manage read-only build credentials.</p>
+      <section className="lace-state" aria-label="Site status">
+        <div className="lace-page-heading">
+          <h2>Site status</h2>
+          <Button
+            onClick={() => {
+              void status.refetch();
+            }}
+            variant="secondary"
+          >
+            Refresh status
+          </Button>
+        </div>
+        {status.isPending ? (
+          <Skeleton label="Loading site status" />
+        ) : status.error !== null ? (
+          <ErrorState
+            description={errorDescription(status.error)}
+            technicalDetails={technicalDetails(status.error)}
+          />
+        ) : (
+          <p>
+            API: {status.data?.ready ? "Ready" : "Not ready"} · Configured models:{" "}
+            {status.data?.configuredModels}
+          </p>
+        )}
+      </section>
+      <section aria-label="Build tokens">
+        <h2>Build tokens</h2>
+        <p>
+          Build tokens can read published content. Store new values in the server-side site
+          configuration; they cannot be shown again.
+        </p>
+        <form
+          className="lace-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setIssued(undefined);
+            setNotice(undefined);
+            creation.mutate();
+          }}
+        >
+          <Input
+            label="Token name"
+            maxLength={120}
+            onChange={(event) => setName(event.target.value)}
+            required
+            value={name}
+          />
+          <Button disabled={creation.isPending} type="submit">
+            {creation.isPending ? "Creating…" : "Create build token"}
+          </Button>
+        </form>
+        {creation.error === null ? undefined : (
+          <ErrorState
+            description={errorDescription(creation.error)}
+            technicalDetails={technicalDetails(creation.error)}
+          />
+        )}
+        {issued === undefined ? undefined : (
+          <div className="lace-state" role="status">
+            <h3>Copy this token now</h3>
+            <p>It will not be shown again.</p>
+            <code className="lace-token-value">{issued.token}</code>
+            <div className="lace-actions">
+              <Button
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(issued.token)
+                    .then(() => setNotice("Token copied."))
+                    .catch(() => setNotice("Copy failed. Select the token text manually."));
+                }}
+                variant="secondary"
+              >
+                Copy token
+              </Button>
+              <Button onClick={() => setIssued(undefined)} variant="quiet">
+                Dismiss token
+              </Button>
+            </div>
+          </div>
+        )}
+        {revocation.error === null ? undefined : (
+          <ErrorState
+            description={errorDescription(revocation.error)}
+            technicalDetails={technicalDetails(revocation.error)}
+          />
+        )}
+        {notice === undefined ? undefined : <p role="status">{notice}</p>}
+        {tokens.isPending ? (
+          <Skeleton label="Loading tokens" />
+        ) : tokens.error !== null ? (
+          <ErrorState
+            description={errorDescription(tokens.error)}
+            technicalDetails={technicalDetails(tokens.error)}
+          />
+        ) : tokens.data?.items.length === 0 ? (
+          <EmptyState
+            description="Create a token to connect the local Astro site."
+            title="No build tokens"
+          />
+        ) : (
+          <Table label="Build tokens">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Prefix</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tokens.data?.items.map((token) => (
+                <tr key={token.id}>
+                  <td>{token.name}</td>
+                  <td>
+                    <code>{token.tokenPrefix}</code>
+                  </td>
+                  <td>{new Date(token.createdAt).toLocaleString()}</td>
+                  <td>
+                    {token.lastUsedAt === undefined
+                      ? "Never"
+                      : new Date(token.lastUsedAt).toLocaleString()}
+                  </td>
+                  <td>{token.revokedAt === undefined ? "Active" : "Revoked"}</td>
+                  <td>
+                    {token.revokedAt === undefined ? (
+                      <Button
+                        disabled={revocation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Revoke ${token.name}?`)) revocation.mutate(token.id);
+                        }}
+                        variant="quiet"
+                      >
+                        Revoke {token.name}
+                      </Button>
+                    ) : undefined}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </section>
+    </section>
   );
 }
 const sharedNavigation = [

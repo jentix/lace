@@ -11,7 +11,7 @@ import {
   type SensitiveRateLimiter,
   type RateLimitDecision,
 } from "@lacecms/application";
-import { unixMilliseconds, type UnixMilliseconds } from "@lacecms/domain";
+import { DomainError, unixMilliseconds, type UnixMilliseconds } from "@lacecms/domain";
 import type Database from "better-sqlite3";
 
 const setupExpiryMs = 60 * 60 * 1000;
@@ -226,7 +226,8 @@ export class NodeSecurityService implements SecurityService {
         const count = this.connection
           .prepare("select count(*) as count from user where role = 'admin' and disabled = 0")
           .get() as { count: number };
-        if (count.count <= 1) throw new Error("Last administrator cannot be changed.");
+        if (count.count <= 1)
+          throw new DomainError("LAST_ADMIN_PROTECTED", "Last administrator cannot be changed.");
       }
       this.connection
         .prepare(

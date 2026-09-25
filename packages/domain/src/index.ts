@@ -34,7 +34,8 @@ export type DomainErrorCode =
   | "CONTENT_MODEL_CARDINALITY_CONFLICT"
   | "CONTENT_PUBLISHED_IMMUTABLE"
   | "CONTENT_REVISION_CONFLICT"
-  | "CONTENT_ROUTE_CONFLICT";
+  | "CONTENT_ROUTE_CONFLICT"
+  | "LAST_ADMIN_PROTECTED";
 
 /** A portable error with a stable code suitable for later transport mapping. */
 export class DomainError extends Error {

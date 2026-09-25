@@ -1,4 +1,8 @@
 import {
+  adminSettingsStatusSchema,
+  buildTokenCreatedSchema,
+  buildTokenListSchema,
+  buildTokenSchema,
   contentEntryListSchema,
   contentEntrySchema,
   contentModelListSchema,
@@ -6,19 +10,30 @@ import {
   errorEnvelopeSchema,
   mediaListSchema,
   mediaMetadataSchema,
+  managedUserListSchema,
+  managedUserSchema,
   publishContentEntryResultSchema,
   type ContentBlockDto,
+  type AdminSettingsStatusDto,
+  type BuildTokenCreatedDto,
+  type BuildTokenDto,
+  type BuildTokenListDto,
   type ContractValidationIssue,
   type ContentEntryDto,
   type ContentEntryListDto,
   type ContentModelListDto,
   type MediaListDto,
   type MediaMetadataDto,
+  type ManagedUserDto,
+  type ManagedUserListDto,
   type PublishContentEntryResultDto,
 } from "@lacecms/contracts";
 import * as v from "valibot";
 
 export const adminQueryKeys = Object.freeze({
+  settingsStatus: ["admin", "settings", "status"] as const,
+  tokens: ["admin", "tokens"] as const,
+  users: ["admin", "users"] as const,
   entry: (entryId: string) => ["admin", "entry", entryId] as const,
   entries: (modelKey: string, cursor?: string) =>
     ["admin", "entries", modelKey, cursor ?? null] as const,
@@ -50,6 +65,20 @@ export class AdminClientError extends Error {
 }
 
 export interface AdminClient {
+  createUser(input: {
+    email: string;
+    password: string;
+    role: "admin" | "editor" | "viewer";
+  }): Promise<ManagedUserDto>;
+  updateUser(
+    userId: string,
+    input: { disabled?: boolean; role?: "admin" | "editor" | "viewer" },
+  ): Promise<ManagedUserDto>;
+  listUsers(): Promise<ManagedUserListDto>;
+  loadSettingsStatus(): Promise<AdminSettingsStatusDto>;
+  listTokens(): Promise<BuildTokenListDto>;
+  createToken(name: string): Promise<BuildTokenCreatedDto>;
+  revokeToken(tokenId: string): Promise<BuildTokenDto>;
   createEntry(modelKey: string, title: string): Promise<ContentEntryDto>;
   deleteEntry(entryId: string, expectedRevision: number): Promise<void>;
   loadEntry(entryId: string): Promise<ContentEntryDto>;
@@ -137,6 +166,46 @@ function parse<T>(schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, body: 
 /** Creates the credentialed browser client for the shared admin REST contracts. */
 export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
   return Object.freeze({
+    createUser: async (input: Parameters<AdminClient["createUser"]>[0]) =>
+      parse(
+        managedUserSchema,
+        await request(fetcher, "/api/v1/admin/users", {
+          body: JSON.stringify(input),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+      ),
+    updateUser: async (userId: string, input: Parameters<AdminClient["updateUser"]>[1]) =>
+      parse(
+        managedUserSchema,
+        await request(fetcher, `/api/v1/admin/users/${encodeURIComponent(userId)}`, {
+          body: JSON.stringify(input),
+          headers: { "content-type": "application/json" },
+          method: "PATCH",
+        }),
+      ),
+    listUsers: async () =>
+      parse(managedUserListSchema, await request(fetcher, "/api/v1/admin/users")),
+    loadSettingsStatus: async () =>
+      parse(adminSettingsStatusSchema, await request(fetcher, "/api/v1/admin/settings/status")),
+    listTokens: async () =>
+      parse(buildTokenListSchema, await request(fetcher, "/api/v1/admin/api-tokens")),
+    createToken: async (name: string) =>
+      parse(
+        buildTokenCreatedSchema,
+        await request(fetcher, "/api/v1/admin/api-tokens", {
+          body: JSON.stringify({ name }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+      ),
+    revokeToken: async (tokenId: string) =>
+      parse(
+        buildTokenSchema,
+        await request(fetcher, `/api/v1/admin/api-tokens/${encodeURIComponent(tokenId)}`, {
+          method: "DELETE",
+        }),
+      ),
     createEntry: async (modelKey: string, title: string) =>
       parse(
         contentEntrySchema,

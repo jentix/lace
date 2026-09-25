@@ -59,6 +59,13 @@ const mediaItem = {
 
 function client(overrides: Partial<AdminClient> = {}): AdminClient {
   return {
+    createUser: async () => ({}) as never,
+    updateUser: async () => ({}) as never,
+    listUsers: async () => ({ items: [] }),
+    loadSettingsStatus: async () => ({ configuredModels: 0, ready: true }),
+    listTokens: async () => ({ items: [] }),
+    createToken: async () => ({}) as never,
+    revokeToken: async () => ({}) as never,
     createEntry: async () => ({}) as never,
     deleteEntry: async () => undefined,
     loadEntry: async () => draftEntry,
@@ -127,6 +134,155 @@ test("role-aware navigation and direct admin-only route behavior follow the role
   await screen.findByRole("heading", { name: "Content" });
   expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Media" })).toBeInTheDocument();
+});
+
+test("admin user screen creates accounts and keeps confirmed state on last-admin rejection", async () => {
+  const user = userEvent.setup();
+  const soleAdmin = {
+    disabled: false,
+    email: "admin@lace.test",
+    id: "admin-1",
+    role: "admin" as const,
+  };
+  const listUsers = vi.fn(async () => ({ items: [soleAdmin] }));
+  const createUser = vi.fn(async () => ({
+    disabled: false,
+    email: "new@lace.test",
+    id: "new-1",
+    role: "viewer" as const,
+  }));
+  const updateUser = vi.fn(async () => {
+    throw new AdminClientError({
+      code: "LAST_ADMIN_PROTECTED",
+      message: "The final active administrator cannot be disabled or demoted.",
+      status: 409,
+    });
+  });
+  renderRoute(
+    "/users",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ createUser, listUsers, updateUser }),
+  );
+  await screen.findByText("admin@lace.test");
+  await user.type(screen.getByLabelText("Email"), "new@lace.test");
+  await user.type(screen.getByLabelText("Password"), "long-password-123");
+  await user.click(screen.getByRole("button", { name: "Create user" }));
+  await waitFor(() =>
+    expect(createUser).toHaveBeenCalledWith({
+      email: "new@lace.test",
+      password: "long-password-123",
+      role: "viewer",
+    }),
+  );
+  expect(await screen.findByText("Created new@lace.test.")).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Role for admin@lace.test"), "editor");
+  await user.click(screen.getByRole("button", { name: "Save role" }));
+  expect(
+    await screen.findByText("The final active administrator cannot be disabled or demoted."),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Role for admin@lace.test")).toHaveValue("admin");
+  expect(screen.getByText("Active")).toBeInTheDocument();
+  expect(listUsers).toHaveBeenCalled();
+});
+
+test("settings shows status, dismisses a once-shown token, and preserves metadata on revoke failure", async () => {
+  const user = userEvent.setup();
+  const token = {
+    capabilities: ["content:build:read"] as ["content:build:read"],
+    createdAt: "2026-09-20T00:00:00.000Z",
+    id: "token-1",
+    name: "Local",
+    tokenPrefix: "lace_123",
+  };
+  const createToken = vi.fn(async () => ({ ...token, token: "only-once-secret" }));
+  const revokeToken = vi.fn(async () => {
+    throw new AdminClientError({ message: "Revocation failed", status: 500 });
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  renderRoute(
+    "/settings",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({
+      createToken,
+      listTokens: async () => ({ items: [token] }),
+      loadSettingsStatus: async () => ({ configuredModels: 2, ready: true }),
+      revokeToken,
+    }),
+  );
+  expect(await screen.findByText(/Configured models: 2/)).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Token name"), "Local");
+  await user.click(screen.getByRole("button", { name: "Create build token" }));
+  expect(await screen.findByText("only-once-secret")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Dismiss token" }));
+  expect(screen.queryByText("only-once-secret")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Revoke Local" }));
+  expect(await screen.findByText("Revocation failed")).toBeInTheDocument();
+  expect(screen.getByText("Active")).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Token name"), "Another");
+  await user.click(screen.getByRole("button", { name: "Create build token" }));
+  expect(await screen.findByText("only-once-secret")).toBeInTheDocument();
+  await user.click(screen.getByRole("link", { name: "Content" }));
+  await screen.findByRole("heading", { name: "Content" });
+  await user.click(screen.getByRole("link", { name: "Settings" }));
+  await screen.findByRole("heading", { name: "Settings" });
+  expect(screen.queryByText("only-once-secret")).not.toBeInTheDocument();
+});
+
+test("expired user request returns to login without stale management content", async () => {
+  let current: { id: string; role: "admin" } | null = { id: "admin-1", role: "admin" };
+  const source: AdminSessionSource = { get: async () => current, invalidate: () => undefined };
+  renderRoute(
+    "/users",
+    source,
+    client({
+      listUsers: async () => {
+        current = null;
+        throw new AdminClientError({ message: "Session expired", status: 401 });
+      },
+    }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Sign in" }, { timeout: 5000 }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Users" })).not.toBeInTheDocument();
+});
+
+test("non-admin management routes issue no protected requests", async () => {
+  const listUsers = vi.fn(async () => ({ items: [] }));
+  const listTokens = vi.fn(async () => ({ items: [] }));
+  renderRoute(
+    "/users",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({ listUsers }),
+  );
+  await screen.findByRole("heading", { name: "Access denied" });
+  expect(listUsers).not.toHaveBeenCalled();
+  document.body.replaceChildren();
+  renderRoute(
+    "/settings",
+    createStaticSessionSource({ id: "viewer-1", role: "viewer" }),
+    client({ listTokens }),
+  );
+  await screen.findByRole("heading", { name: "Access denied" });
+  expect(listTokens).not.toHaveBeenCalled();
+});
+
+test("admin root redirects through the session guard and header logout clears the session", async () => {
+  const user = userEvent.setup();
+  let current: { id: string; role: "admin" } | null = { id: "admin-1", role: "admin" };
+  const source: AdminSessionSource = { get: async () => current, invalidate: () => undefined };
+  const signOut = vi.fn(async () => {
+    current = null;
+  });
+  renderRoute("/", source, client({ signOut }));
+  expect(await screen.findByRole("heading", { name: "Content" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Log out" }));
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  expect(signOut).toHaveBeenCalledOnce();
+  document.body.replaceChildren();
+  renderRoute("/", createStaticSessionSource(null));
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Content" })).not.toBeInTheDocument();
 });
 
 test("media route distinguishes empty, failure, and paged results for a viewer", async () => {
@@ -1204,7 +1360,7 @@ test("sign-in returns to a safe route and sign-out clears the session", async ()
   await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   expect(await screen.findByRole("heading", { name: "posts" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  await user.click(screen.getByRole("button", { name: "Log out" }));
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 

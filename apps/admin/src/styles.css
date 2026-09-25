@@ -369,6 +369,16 @@ input:focus-visible,
   min-width: 0;
   padding: clamp(var(--lace-space-4), 4vw, var(--lace-space-8));
 }
+.lace-shell-header {
+  display: flex;
+  gap: var(--lace-space-3);
+  justify-content: flex-end;
+  margin-bottom: var(--lace-space-4);
+}
+.lace-token-value {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .lace-page {
   display: grid;
   gap: var(--lace-space-6);
