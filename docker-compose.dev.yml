@@ -132,9 +132,13 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     command: >-
-      sh -ec 'pnpm --filter @lacecms/app-site... install --frozen-lockfile && pnpm --filter @lacecms/app-site run dev:container'
+      sh -ec 'pnpm --filter @lacecms/app-site... install --frozen-lockfile && cd apps/site && exec env ASTRO_DEV_BACKGROUND=1 ASTRO_TELEMETRY_DISABLED=1 node_modules/.bin/astro dev --force --host 0.0.0.0 --port 4321 --strictPort'
     environment:
       CHOKIDAR_USEPOLLING: "true"
+      LACE_API_BASE_URL: http://api:3000
+      LACE_BUILD_TOKEN: ${LACE_BUILD_TOKEN:-}
+      LACE_PUBLIC_BASE_URL: ${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}
+      LACE_SITE_DATA_MODE: ${LACE_SITE_DATA_MODE:-fixture}
     healthcheck:
       interval: 5s
       retries: 18

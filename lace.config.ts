@@ -17,6 +17,13 @@ export default await defineConfig({
       path: "/",
       blocks: ["hero", "richText", "image", "quote", "cta"],
     }),
+    definePage({
+      key: "about",
+      version: 1,
+      label: "About",
+      path: "/about",
+      blocks: ["hero", "richText", "image", "quote", "cta"],
+    }),
     defineCollection({
       key: "posts",
       version: 2,
@@ -27,6 +34,14 @@ export default await defineConfig({
         category: field.select({ options: ["engineering", "design", "news"] }),
         publishedAt: field.date({ required: true }),
       },
+      blocks: ["hero", "richText", "image", "quote", "cta"],
+    }),
+    defineCollection({
+      key: "notes",
+      version: 1,
+      label: "Notes",
+      route: "/notes/:slug",
+      fields: { summary: field.text() },
       blocks: ["hero", "richText", "image", "quote", "cta"],
     }),
   ],

@@ -66,11 +66,50 @@ The token expires after one hour. The setup endpoint closes permanently after
 the first administrator is created. The local stack applies migrations only;
 configuration synchronization remains a deliberate operator operation.
 
+### Show published content on the local site
+
+The initial Astro site uses its committed fixture so the stack can start before
+an administrator or build credential exists. After first-admin setup, run
+`pnpm content:sync`, open `/admin/content`, and publish the `home` page. The
+local site needs a published home entry to enter live mode.
+
+Sign in as an administrator at `/admin/`. Until Settings adds token management,
+open that page's browser developer console and create a read-only build token
+through the existing same-origin admin API:
+
+```js
+const response = await fetch("/api/v1/admin/api-tokens", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "local-astro-site" }),
+});
+const credential = await response.json();
+if (!response.ok) throw new Error(`Token creation failed (${response.status})`);
+credential.token; // Copy the once-shown value; do not save it in site source.
+```
+
+In the ignored `.env` created by `pnpm dev:env`, set
+`LACE_SITE_DATA_MODE=live` and paste that value as `LACE_BUILD_TOKEN`. Restart
+the stack to pass the new environment to Astro:
+
+```sh
+pnpm dev:stop
+pnpm dev:node
+```
+
+The site at `http://127.0.0.1:3000/` now reads the published export through
+the SDK. After each publication, repeat the two restart commands and reload the
+browser to refresh Astro's cached export and routes. Saving a draft alone does
+not change the public site, even after a restart. Automated build dispatch is
+not part of this local workflow yet. Keep `.env` private and revoke a lost
+token through `DELETE /api/v1/admin/api-tokens/:tokenId`.
+
 ### Project content configuration
 
 Edit [`lace.config.ts`](./lace.config.ts) to define pages and collections in
-version-controlled code. The file contains `home` (`/`) and `posts`
-(`/blog/:slug`) examples with fields and allowed blocks. The Node API loads and
+version-controlled code. The file contains `home` (`/`), `about` (`/about`),
+`posts` (`/blog/:slug`), and `notes` (`/notes/:slug`) examples with fields and
+allowed blocks. The Node API loads and
 validates this file when it starts. After editing it, restart the local stack:
 
 ```sh
@@ -95,7 +134,8 @@ between planning and apply; rerun to review the current plan. Sync never runs
 as part of startup or migrations. Route validation also does not create Astro pages: add or update
 the matching route and renderer in `apps/site/src/pages/`. See
 [the Node configuration guide](./docs/node-api.md#editing-content-models) for
-key, version, rename, and route examples.
+key, version, field, block, and route examples, plus a repeatable
+sync–Admin–publication–public-site check.
 
 ### Normal operations
 
@@ -145,6 +185,11 @@ pnpm spec:validate
 - `content:sync` needs the running local API container and migrated SQLite;
   start with `pnpm dev:node` first. If a page is shown without its draft in
   Admin, run sync and reload the page.
+- A live site error about `LACE_BUILD_TOKEN` means the token is missing or was
+  rejected. Create a replacement through the admin API, update ignored `.env`,
+  and restart. If the API is unavailable, check `pnpm dev:logs` and
+  `LACE_API_BASE_URL` inside the site container. If `home` is unpublished,
+  synchronize configuration and publish it in Admin before restarting.
 
 Detailed Node, authentication, and migration behavior is documented in
 [docs/node-api.md](./docs/node-api.md),

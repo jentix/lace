@@ -104,7 +104,12 @@ test("serves the seeded lifecycle through an actual Node listener", async () => 
   try {
     const models = await json(value.server, "/api/v1/admin/content-models?config=ignored.ts");
     expect(models.response.status).toBe(200);
-    expect(models.body.items.map((model) => model.key)).toEqual(["home", "posts"]);
+    expect(models.body.items.map((model) => model.key)).toEqual([
+      "about",
+      "home",
+      "notes",
+      "posts",
+    ]);
     const created = await json(value.server, "/api/v1/admin/models/posts/entries", {
       body: JSON.stringify({
         blocks: [],

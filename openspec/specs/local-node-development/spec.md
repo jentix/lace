@@ -132,3 +132,44 @@ The local developer guide SHALL identify the root configuration as the editable 
 #### Scenario: Configuration changes without synchronization
 - **WHEN** a contributor restarts the local API after editing configuration but has not synchronized the database
 - **THEN** the guide does not promise that the changed model is immediately editable in the admin
+
+### Requirement: Local site can enter published-content development mode
+The local Node stack SHALL support an explicit live site mode that reads the local published build export through the existing read-only build credential. The credential SHALL be available only to the server-side site process and SHALL not be embedded in browser output. A fresh stack without a build credential SHALL still support the first-admin and credential-creation workflow. Fixture mode SHALL remain available for isolated tests and setup.
+
+#### Scenario: Contributor configures live mode
+- **WHEN** a contributor supplies a valid local build credential and starts the site in live mode
+- **THEN** the same-origin site renders only the content in the local published export through the existing SDK
+
+#### Scenario: Fresh installation has no credential
+- **WHEN** a contributor starts a fresh local stack before creating the first administrator or build credential
+- **THEN** the stack remains usable for bootstrap and credential creation without exposing a default build credential
+
+#### Scenario: Browser requests the site
+- **WHEN** a browser opens a local site route in live mode
+- **THEN** the browser response contains neither the build credential nor a client-side request bearing it
+
+### Requirement: Local publication refresh and credential setup are documented
+The developer guide SHALL explain how an administrator creates a read-only build token through the existing admin API, configures the local server-side site process without committing the plaintext token, and refreshes or restarts the site after publication. It SHALL explain that saving a draft does not change public site content and that automated build dispatch is not yet part of this workflow.
+
+#### Scenario: Contributor publishes a changed draft
+- **WHEN** a contributor follows the guide after publishing an edited entry
+- **THEN** the documented refresh or restart step displays the new published content without editing the fixture
+
+#### Scenario: Contributor saves without publishing
+- **WHEN** a contributor saves a draft and follows the same refresh or restart step
+- **THEN** the public site continues displaying the prior published content
+
+### Requirement: Contributor workflow proves code-owned content end to end
+The local developer workflow SHALL demonstrate adding a page and collection in code, explicitly synchronizing their models, editing drafts in Admin, publishing entries, reading published-only API output, and refreshing the Astro site to observe the corresponding URLs. It SHALL state the field and block registration steps and distinguish structural model changes that require a version increase from display-only metadata changes that do not.
+
+#### Scenario: Contributor adds and publishes a page and collection entry
+- **WHEN** a contributor follows the local workflow from a migrated stack with the matching Astro route files present
+- **THEN** Admin exposes the synchronized page and collection, and publication followed by the documented site refresh displays their published content at the configured URLs
+
+#### Scenario: Contributor saves a later draft
+- **WHEN** a contributor saves changed content or a slug without publishing and performs the documented site refresh
+- **THEN** published-only API output and the site continue showing the previous published content and route
+
+#### Scenario: Contributor changes model structure
+- **WHEN** a contributor changes fields, allowed blocks, a page path, or a collection route
+- **THEN** the guide instructs them to increase that model's version before explicit synchronization and explains that stored content can still make the plan invalid

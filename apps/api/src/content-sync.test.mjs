@@ -151,7 +151,7 @@ test("local flow syncs migrated SQLite once, changes safely, and preserves block
   }
 });
 
-test("the checked-in project configuration creates an editable home draft", async () => {
+test("the checked-in project configuration creates editable page drafts", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-project-sync-"));
   try {
     const path = join(directory, "lace.sqlite");
@@ -172,7 +172,9 @@ test("the checked-in project configuration creates an editable home draft", asyn
         }),
       ).toBe(0);
       expect(await repository.readConfigurationSyncState()).toMatchObject([
-        { key: "home", entryCount: 1 },
+        { key: "about", entryCount: 1, draftSnapshotCount: 1 },
+        { key: "home", entryCount: 1, draftSnapshotCount: 1 },
+        { key: "notes", entryCount: 0 },
         { key: "posts", entryCount: 0 },
       ]);
     } finally {

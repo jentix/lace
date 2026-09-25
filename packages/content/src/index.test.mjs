@@ -334,6 +334,38 @@ test("registers public-DSL built-ins and validates ordered entry aggregates", ()
     schemaVersion: 1,
     type: "hero",
   });
+  const ulidAggregate = validateEntryAggregate(
+    {
+      blocks: [
+        {
+          data: { heading: "Welcome" },
+          key: "01M3BW3ZJNKNHQT9VD5SNGEFPV",
+          schemaVersion: 1,
+          type: "hero",
+        },
+      ],
+      fields: {},
+      kind: "page",
+      title: "Home",
+    },
+    { blocks: ["hero"], fields: {}, kind: "page" },
+    registry,
+    "publish",
+  );
+  expect(ulidAggregate.blocks[0].key).toBe("01M3BW3ZJNKNHQT9VD5SNGEFPV");
+  expect(() =>
+    validateEntryAggregate(
+      {
+        blocks: [{ data: { heading: "No" }, key: "01INVALID", schemaVersion: 1, type: "hero" }],
+        fields: {},
+        kind: "page",
+        title: "Home",
+      },
+      { blocks: ["hero"], fields: {}, kind: "page" },
+      registry,
+      "draft",
+    ),
+  ).toThrow(/\$\.blocks\[0\]\.key/u);
   expect(() =>
     validateEntryAggregate(
       {

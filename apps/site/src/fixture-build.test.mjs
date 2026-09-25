@@ -18,11 +18,18 @@ test("the fixture build emits published static routes without CMS access", () =>
 
   const home = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8");
   const post = readFileSync(new URL("../dist/blog/first-post/index.html", import.meta.url), "utf8");
+  const about = readFileSync(new URL("../dist/about/index.html", import.meta.url), "utf8");
+  const note = readFileSync(
+    new URL("../dist/notes/first-note/index.html", import.meta.url),
+    "utf8",
+  );
 
   expect(home).toContain("The static Lace starter");
   expect(home).toContain("https://unreachable.example/lace/api/v1/public/media/hero-media");
   expect(post).toContain("First published post");
   expect(post).toContain("Content belongs in the CMS");
-  expect(`${home}${post}`).not.toContain("DRAFT ONLY");
-  expect(`${home}${post}`).not.toContain("javascript:");
+  expect(about).toContain("Built with Lace");
+  expect(note).toContain("Notes render from the published export.");
+  expect(`${home}${post}${about}${note}`).not.toContain("DRAFT ONLY");
+  expect(`${home}${post}${about}${note}`).not.toContain("javascript:");
 });

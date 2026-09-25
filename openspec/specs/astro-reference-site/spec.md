@@ -84,3 +84,45 @@ SHALL not be emitted as executable or raw HTML content.
   unsafe link value
 - **THEN** the generated output contains no executable markup or unsafe URL
   derived from that input
+
+### Requirement: Live local site failures provide actionable diagnostics
+Live development SHALL report a clear corrective action when the build token is missing or rejected, the configured API cannot be reached, or the published export lacks the starter home page. Diagnostics and site output SHALL not reveal the plaintext build token. Fixture mode SHALL continue to build without an API request.
+
+#### Scenario: Live mode has no token
+- **WHEN** the site starts in live mode without a build token
+- **THEN** its local error identifies the missing configuration and how to create and provide a token
+
+#### Scenario: The API rejects the token
+- **WHEN** the build-export endpoint rejects a missing, invalid, expired, or revoked build token
+- **THEN** the local error identifies credential setup or replacement as the corrective action without echoing the credential
+
+#### Scenario: The API is unavailable
+- **WHEN** the site cannot reach the configured API while reading the build export
+- **THEN** the local error identifies the API endpoint and the local stack as the items to check
+
+#### Scenario: The API recovers after an initial failure
+- **WHEN** the first live export read fails before the local API is ready and a later read succeeds
+- **THEN** the site retries the export instead of retaining the failed result
+
+#### Scenario: No home page is published
+- **WHEN** an otherwise valid published export contains no published `home` entry at `/`
+- **THEN** the local error directs the contributor to synchronize and publish the home page
+
+### Requirement: Reference site serves additional code-owned published routes
+The reference site SHALL provide an `about` page at `/about` and one `/notes/:slug` route per published `notes` entry. These routes SHALL use the existing ordered block renderer and SHALL derive content from the same validated build export used by the home and blog routes. A route SHALL NOT be emitted solely because its model or draft exists. The CMS SHALL NOT create or select Astro route files.
+
+#### Scenario: Additional page and collection are published
+- **WHEN** the build export contains a published `about` entry at `/about` and published `notes` entries with canonical paths
+- **THEN** the static site emits `/about` and each corresponding `/notes/:slug` page with its published title and blocks
+
+#### Scenario: Model or entry exists only as a draft
+- **WHEN** the `about` page or a `notes` entry has no published snapshot
+- **THEN** the corresponding route is absent from the generated site
+
+#### Scenario: A later draft differs from publication
+- **WHEN** a previously published entry has a subsequently saved draft with different content or slug
+- **THEN** the generated route and HTML retain the current published path and content until the entry is published again
+
+#### Scenario: Additional route has an unsupported block
+- **WHEN** a published `about` or `notes` entry contains a block without a site renderer
+- **THEN** the build fails with its model key, entry identifier, and block key
