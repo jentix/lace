@@ -1,4 +1,4 @@
-import { createLaceClient } from "@lacecms/sdk";
+import { createLaceClient, LaceHttpError, LaceTransportError } from "@lacecms/sdk";
 import type { LaceFetch } from "@lacecms/sdk";
 import fixtureExport from "../fixtures/published-export.json" with { type: "json" };
 
@@ -74,7 +74,9 @@ function deriveSiteData(exported: BuildExport, mediaUrl: (mediaId: string) => st
   });
   const homes = entries.filter((entry) => entry.modelKey === "home" && entry.path === "/");
   if (homes.length !== 1 || homes[0] === undefined) {
-    throw new TypeError("The build export must contain exactly one published home entry at /.");
+    throw new TypeError(
+      "The build export must contain exactly one published home entry at /. Run `pnpm content:sync`, then publish the home page in Admin.",
+    );
   }
   const posts = entries.filter((entry) => {
     if (entry.modelKey !== "posts" || entry.slug === undefined) return false;
@@ -116,41 +118,69 @@ async function loadFixtureExport(value: unknown, baseUrl: string): Promise<Build
 
 async function loadExport(
   options: SiteDataLoaderOptions,
-): Promise<{ exported: BuildExport; baseUrl: string }> {
+): Promise<{ exported: BuildExport; mediaBaseUrl: string }> {
   const environment = options.environment ?? environmentFromProcess();
   const mode = environment.LACE_SITE_DATA_MODE ?? "fixture";
   const baseUrl = environment.LACE_API_BASE_URL ?? DEFAULT_API_BASE_URL;
+  const mediaBaseUrl = environment.LACE_PUBLIC_BASE_URL ?? baseUrl;
   if (mode === "fixture") {
     return {
-      baseUrl,
+      mediaBaseUrl,
       exported: await loadFixtureExport(options.fixture ?? fixtureExport, baseUrl),
     };
   }
   if (mode !== "live") throw new TypeError("LACE_SITE_DATA_MODE must be fixture or live.");
-  if (environment.LACE_BUILD_TOKEN === undefined || environment.LACE_BUILD_TOKEN.length === 0) {
-    throw new TypeError("LACE_BUILD_TOKEN is required in live mode.");
+  if (
+    environment.LACE_BUILD_TOKEN === undefined ||
+    environment.LACE_BUILD_TOKEN.trim().length === 0
+  ) {
+    throw new TypeError(
+      "LACE_BUILD_TOKEN is required in live mode. Create a read-only build token through POST /api/v1/admin/api-tokens, then set it in the ignored .env and restart the site.",
+    );
   }
+  if (environment.LACE_API_BASE_URL === undefined || environment.LACE_API_BASE_URL.length === 0)
+    throw new TypeError(
+      "LACE_API_BASE_URL is required in live mode; set it to the local API origin.",
+    );
   const client = createLaceClient({
     baseUrl,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     token: environment.LACE_BUILD_TOKEN,
   });
-  const result = await client.getBuildExport();
+  let result;
+  try {
+    result = await client.getBuildExport();
+  } catch (error) {
+    if (error instanceof LaceHttpError && (error.status === 401 || error.status === 403)) {
+      throw new Error(
+        "The local API rejected LACE_BUILD_TOKEN. Create or replace the read-only build token through POST /api/v1/admin/api-tokens, update the ignored .env, and restart the site.",
+      );
+    }
+    if (error instanceof LaceTransportError) {
+      throw new Error(
+        "The local published-content API is unavailable. Check LACE_API_BASE_URL and that `pnpm dev:node` has started the API.",
+      );
+    }
+    throw error;
+  }
   if (!result.changed)
     throw new TypeError("A live build without an ETag must receive a build export.");
-  return { baseUrl, exported: result.export };
+  return { mediaBaseUrl, exported: result.export };
 }
 
 export async function loadSiteData(options: SiteDataLoaderOptions = {}): Promise<SiteData> {
-  const { baseUrl, exported } = await loadExport(options);
-  const client = createLaceClient({ baseUrl });
+  const { mediaBaseUrl, exported } = await loadExport(options);
+  const client = createLaceClient({ baseUrl: mediaBaseUrl });
   return deriveSiteData(exported, (mediaId) => client.getPublicMediaUrl(mediaId));
 }
 
 export function createSiteDataLoader(options: SiteDataLoaderOptions = {}): () => Promise<SiteData> {
   let siteData: Promise<SiteData> | undefined;
   return () => {
-    siteData ??= loadSiteData(options);
+    siteData ??= loadSiteData(options).catch((error: unknown) => {
+      siteData = undefined;
+      throw error;
+    });
     return siteData;
   };
 }

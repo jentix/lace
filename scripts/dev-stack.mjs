@@ -61,6 +61,8 @@ async function createEnvironment(destination, apiPort) {
     LACE_MINIO_SECRET_KEY: minioSecretKey,
     LACE_MINIO_TIMEOUT_MS: "5000",
     LACE_PUBLIC_BASE_URL: `http://127.0.0.1:${apiPort}/`,
+    LACE_SITE_DATA_MODE: "fixture",
+    LACE_BUILD_TOKEN: "",
     LACE_SITE_DEV_ORIGIN: "http://site:4321",
   };
   await writeFile(
@@ -131,6 +133,19 @@ async function smoke() {
     await fetchOk(`${origin}/health/ready`);
     await fetchOk(`${origin}/admin/`);
     await fetchOk(`${origin}/`);
+    const bootstrap = spawnSync(
+      "docker",
+      compose(project, environment, [
+        "exec",
+        "-T",
+        "api",
+        "node",
+        "apps/api/src/dev-bootstrap.mjs",
+      ]),
+      { cwd: root, encoding: "utf8" },
+    );
+    if (bootstrap.status !== 0)
+      throw new Error("The isolated first-admin bootstrap command failed.");
     if (
       run(
         "docker",
@@ -201,7 +216,7 @@ async function main() {
         "-T",
         "api",
         "node",
-        "scripts/dev-bootstrap.mjs",
+        "apps/api/src/dev-bootstrap.mjs",
       ]),
     );
     return;

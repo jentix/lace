@@ -51,6 +51,17 @@ The full local environment list is in [`.env.example`](../.env.example); use
 inside the Compose network, and its persistent data is preserved unless the
 explicit root reset is requested.
 
+Astro starts in fixture mode for bootstrap. After an administrator creates a
+read-only build credential with `POST /api/v1/admin/api-tokens` and publishes
+the `home` page, set `LACE_SITE_DATA_MODE=live` and `LACE_BUILD_TOKEN` in the
+ignored `.env` and restart the stack. The site process uses
+`LACE_API_BASE_URL=http://api:3000` inside Compose to read the export, while
+`LACE_PUBLIC_BASE_URL` supplies browser-reachable media URLs. The token is not
+available to browser code. See the [README](../README.md#show-published-content-on-the-local-site)
+for the admin-console request and refresh commands. A draft save alone does not
+change the site; restart Astro after publication to refresh cached routes and
+content. There is no automatic build dispatch in the local workflow yet.
+
 ## Editing content models
 
 The repository-root [`lace.config.ts`](../lace.config.ts) is the editable source
@@ -72,8 +83,8 @@ at `/news/:slug`, add `apps/site/src/pages/news/[slug].astro` with
 `getStaticPaths()`. The existing routes use
 [`BlockRenderer.astro`](../apps/site/src/components/BlockRenderer.astro) to
 render ordered blocks. Lace validates route definitions; it does not create
-Astro files or choose a layout. The reference site currently reads a fixture;
-Step 14 connects it to locally published content.
+Astro files or choose a layout. The reference site reads the committed fixture
+until live mode is configured; live mode reads locally published content.
 
 Keep a model key stable once it has stored content. Increase `version` when a
 field, allowed block, path, route, or other structural definition changes; a
