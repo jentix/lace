@@ -34,7 +34,7 @@ export function DeleteEntryDialog({
   const remove = useMutation({
     mutationFn: () => client.deleteEntry(entryId, expectedRevision),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.models });
       setOpen(false);
     },

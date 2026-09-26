@@ -26,7 +26,7 @@ export function CreateEntryDialog({ modelKey }: { readonly modelKey: string }) {
   const create = useMutation({
     mutationFn: () => client.createEntry(modelKey, title),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.models });
       setOpen(false);
       setTitle("");

@@ -144,7 +144,7 @@ export function EntryPage() {
       setSuggestingSlug(false);
       setSlugManuallyEdited(false);
       setConflict(undefined);
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
     },
   });
   const publish = useMutation({
@@ -173,7 +173,7 @@ export function EntryPage() {
       setConflict(undefined);
       setPublishAttempt(undefined);
       setPublishMessage(buildDispatchDescription(result.build.status));
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.entries(modelKey) });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
     },
   });
   const reloadServerDraft = useMutation({

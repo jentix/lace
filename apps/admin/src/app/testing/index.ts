@@ -10,7 +10,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import type { ContentEntryListDto } from "@lacecms/contracts";
 import { createElement, type ReactElement } from "react";
 import {
@@ -184,4 +185,14 @@ export function renderInRouter(
   });
   const queryClient = renderWithProviders(router as never);
   return { queryClient, router };
+}
+
+/** Signs out through the desktop sidebar's user menu, as a keyboard user would. */
+export async function logOut(user: UserEvent) {
+  const aside = await screen.findByRole("complementary", { name: "Admin navigation" });
+  within(aside)
+    .getByRole("button", { name: /account menu/ })
+    .focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Log out" }));
 }

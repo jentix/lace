@@ -1326,6 +1326,8 @@ Primary routes:
 
 The content-model response drives navigation and field forms. Pages open their singleton editor directly; collections open a paginated entry list.
 
+The shell groups its sidebar into Pages, Collections (with entry totals from the entry-list API), Library (Media and Builds, all roles), and Admin (Users and Settings, administrators only), shows the signed-in user's display name and role in a user menu, and locates each screen with breadcrumbs. Below the medium breakpoint the same navigation opens in a sheet. Shell surfaces never show internal entry or user IDs.
+
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
 
 ### Component source and design tokens

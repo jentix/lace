@@ -189,13 +189,13 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
   await expect(empty.getByRole("status", { name: "Loading content models" })).toBeVisible();
   releaseModels?.();
   await expect(empty.getByText("No content models configured")).toBeVisible();
-  await empty.getByRole("button", { name: "Menu" }).focus();
-  await expect(empty.getByRole("button", { name: "Menu" })).toBeFocused();
+  await empty.getByRole("button", { name: "Open navigation" }).focus();
+  await expect(empty.getByRole("button", { name: "Open navigation" })).toBeFocused();
   const focus = await empty
-    .getByRole("button", { name: "Menu" })
+    .getByRole("button", { name: "Open navigation" })
     .evaluate((element) => getComputedStyle(element).outlineStyle);
   expect(focus).not.toBe("none");
-  await empty.getByRole("button", { name: "Menu" }).press("Enter");
+  await empty.getByRole("button", { name: "Open navigation" }).press("Enter");
   await expect(empty.getByRole("link", { name: "Media" })).toBeVisible();
   for (const [route, message] of [
     ["media", "No media yet"],

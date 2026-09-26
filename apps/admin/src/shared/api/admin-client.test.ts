@@ -31,6 +31,10 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
     "opaque+/=",
   ]);
   expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
+  expect(adminQueryKeys.entryOverview("posts")).toEqual(["admin", "entries", "posts", "overview"]);
+  const prefix = adminQueryKeys.modelEntries("posts");
+  for (const key of [adminQueryKeys.entries("posts"), adminQueryKeys.entryOverview("posts")])
+    expect(key.slice(0, prefix.length)).toEqual(prefix);
 });
 
 test("lists entries with an opaque cursor and optional server-side query", async () => {
@@ -65,6 +69,11 @@ test("lists entries with an opaque cursor and optional server-side query", async
   });
   expect(fetcher).toHaveBeenLastCalledWith(
     "/api/v1/admin/models/posts/entries?after=opaque%2B%2F%3D&q=launch&status=draft&sort=-title",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  await client.listEntries("posts", undefined, { limit: 1 });
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/models/posts/entries?limit=1",
     expect.objectContaining({ credentials: "same-origin" }),
   );
   await expect(

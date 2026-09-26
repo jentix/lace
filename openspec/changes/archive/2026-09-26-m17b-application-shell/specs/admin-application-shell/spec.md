@@ -1,90 +1,4 @@
-# admin-application-shell Specification
-
-## Purpose
-
-Defines the browser-admin foundation so authenticated Lace users can navigate
-an accessible, responsive shell without exposing protected content or controls
-before their session and role have been resolved.
-
-## Requirements
-
-### Requirement: The admin application provides a coherent accessible UI system
-The admin application SHALL provide Lace-owned Button, Input, Textarea, Select,
-Dialog, Sheet, DropdownMenu, Popover, Tooltip, Toaster, Table, Tabs, Badge,
-Skeleton, Calendar, ScrollArea, EmptyState, and ErrorState controls, styled
-only through the `admin-design-system` color, typography, spacing, radius,
-shadow, focus, and motion tokens using utility classes rather than hand-written
-component CSS. Interactive controls SHALL have an accessible name, visible
-keyboard focus indication, and contrast suitable for their state. The
-application SHALL honour reduced-motion preferences and remain usable at narrow
-viewport widths without requiring a horizontal page scroll.
-
-#### Scenario: A keyboard user operates an owned control
-- **WHEN** a keyboard-only user reaches an enabled owned control
-- **THEN** the control exposes its accessible name, receives a visible focus
-  indication drawn from the focus token, and can be operated without a pointing
-  device
-
-#### Scenario: Motion reduction is requested
-- **WHEN** the browser reports a reduced-motion preference
-- **THEN** the application suppresses non-essential transitions and animation
-
-#### Scenario: The shell is viewed on a narrow screen
-- **WHEN** an authenticated user opens the admin shell at a narrow viewport
-- **THEN** navigation and route content remain reachable without horizontal
-  page scrolling
-
-#### Scenario: Owned controls are restyled through tokens
-- **WHEN** a theme token value changes
-- **THEN** every owned control using that token reflects the new value without
-  a component source change
-
-#### Scenario: A notification is raised
-- **WHEN** admin code raises a notification through the Toaster
-- **THEN** the notification is rendered in a polite live region and offers a
-  dismiss control with an accessible name
-
-### Requirement: Typed client routes cover the Session 11A admin surface
-The admin application SHALL provide typed client routes for `/login`,
-`/content`, `/content/:modelKey`, `/content/:modelKey/:entryId`, `/media`,
-`/builds`, `/users`, and `/settings`. Refreshing one of these client routes
-through the configured API/admin composition SHALL render the corresponding
-admin client route rather than an API or health fallback response. The content
-landing, and content-model routes SHALL present their Session 11B remote-state
-behavior; resource screens outside Session 11B may retain their foundation
-placeholders.
-
-#### Scenario: A model-entry route is refreshed
-- **WHEN** a browser refreshes `/content/posts/entry-123` through the admin
-  deployment
-- **THEN** the admin application renders the entry-route foundation and does
-  not treat the path as an unknown API resource
-
-#### Scenario: An invalid model key is presented
-- **WHEN** a browser opens a content-model route whose parameter does not match
-  the route's model-key grammar
-- **THEN** the application renders its client not-found state without issuing a
-  request for protected model data
-
-### Requirement: Session guards prevent protected-content flashes
-Before rendering a protected route or protected navigation affordance, the
-admin application SHALL resolve the current same-origin browser session. While
-that resolution is pending, it SHALL render only a neutral loading state. When
-there is no valid session, it SHALL redirect to `/login` while retaining a safe
-post-login return location; it SHALL not briefly render protected route content
-or actions. An authenticated visitor to `/login` SHALL be redirected to the
-safe content landing route.
-
-#### Scenario: An anonymous visitor opens a protected entry URL
-- **WHEN** a browser without a valid session opens `/content/posts/entry-123`
-- **THEN** it sees no entry content or protected controls and is redirected to
-  the login route with a safe return location
-
-#### Scenario: A session is still being checked
-- **WHEN** a browser opens a protected route and session resolution has not
-  completed
-- **THEN** it sees a neutral loading state and no protected route content or
-  navigation affordance
+## MODIFIED Requirements
 
 ### Requirement: Role-gated shell navigation is enforced at the route boundary
 The admin shell SHALL group its navigation into Pages, Collections, Library,
@@ -111,17 +25,6 @@ authority.
 - **WHEN** a session with the `admin` role opens `/settings`
 - **THEN** it receives the settings-route foundation within the shared shell
   and the Admin navigation group with Users and Settings
-
-### Requirement: Admin entry redirects to the content home
-The admin application SHALL redirect the `/admin/` entry path to `/admin/content` and apply the usual session guard before showing protected content.
-
-#### Scenario: Anonymous visitor opens admin entry
-- **WHEN** an unauthenticated visitor opens `/admin/`
-- **THEN** the visitor reaches sign-in with a safe return location and sees no protected content
-
-#### Scenario: Authenticated visitor opens admin entry
-- **WHEN** an authenticated visitor opens `/admin/`
-- **THEN** the visitor reaches the content landing screen
 
 ### Requirement: Admin shell exposes logout
 The authenticated shell SHALL expose a user menu that shows the signed-in
@@ -151,6 +54,8 @@ a failed logout SHALL show an error and leave the user signed in.
 #### Scenario: Logout fails
 - **WHEN** the auth endpoint rejects the logout request
 - **THEN** the shell shows the error and keeps the protected route rendered
+
+## ADDED Requirements
 
 ### Requirement: Shell navigation reflects configured content
 Each page model in the Pages group SHALL link directly to its singleton entry

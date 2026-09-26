@@ -39,6 +39,10 @@ export const adminQueryKeys = Object.freeze({
   entry: (entryId: string) => ["admin", "entry", entryId] as const,
   entries: (modelKey: string, cursor?: string) =>
     ["admin", "entries", modelKey, cursor ?? null] as const,
+  /** First-page summary (singleton and totals) shared by the shell and content overview. */
+  entryOverview: (modelKey: string) => ["admin", "entries", modelKey, "overview"] as const,
+  /** Invalidation prefix covering every entry query of one model. */
+  modelEntries: (modelKey: string) => ["admin", "entries", modelKey] as const,
   media: (cursor?: string) => ["admin", "media", cursor ?? null] as const,
   models: ["admin", "models"] as const,
   session: ["admin", "session"] as const,
@@ -114,6 +118,7 @@ export interface AdminClient {
 
 /** Server-side search, status filter, and sort for an admin entry list. */
 export interface EntryListQuery {
+  readonly limit?: number;
   readonly q?: string;
   readonly sort?: ContentEntrySortDto;
   readonly status?: ContentEntryStatusDto;
@@ -246,6 +251,7 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
       if (query.q !== undefined && query.q.trim().length > 0) search.set("q", query.q.trim());
       if (query.status !== undefined) search.set("status", query.status);
       if (query.sort !== undefined) search.set("sort", query.sort);
+      if (query.limit !== undefined) search.set("limit", String(query.limit));
       const suffix = search.size === 0 ? "" : `?${search.toString()}`;
       return parse(
         contentEntryListSchema,
