@@ -6,6 +6,14 @@ const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
 
 type Role = "admin" | "editor";
 
+async function addBlock(page: Page, label: string) {
+  await page.getByRole("button", { name: "Add block" }).click();
+  await page
+    .getByRole("dialog", { name: "Add block" })
+    .getByRole("button", { name: label })
+    .click();
+}
+
 const model = {
   blockDefinitions: [
     {
@@ -103,12 +111,52 @@ test("authors, reorders, and saves blocks through the browser", async ({ page })
   });
   await page.goto("/admin/content/posts/entry-1");
   await page.getByRole("heading", { name: "Edit posts" }).waitFor();
-  await page.getByRole("button", { name: "Add Hero" }).click();
-  await page.getByRole("button", { name: "Add Quote" }).click();
-  await page.getByRole("button", { name: "Move up" }).nth(1).click();
+  await addBlock(page, "Hero");
+  await addBlock(page, "Quote");
+  await page.getByRole("button", { name: "Actions for Quote block" }).click();
+  await page.getByRole("menuitem", { name: "Move up" }).click();
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Quote");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText("Saved revision 3")).toBeVisible();
   expect(savedTypes).toEqual(["quote", "hero"]);
+});
+
+test("inserts between blocks and reorders with the keyboard drag handle", async ({ page }) => {
+  let savedTypes: string[] = [];
+  await mockEditor(page, "editor", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/api/v1/admin/entries/entry-1/draft")
+      return false;
+    savedTypes = (route.request().postDataJSON() as { blocks: Array<{ type: string }> }).blocks.map(
+      (block) => block.type,
+    );
+    return false;
+  });
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  await addBlock(page, "Hero");
+  await addBlock(page, "Hero");
+  await page.getByRole("button", { name: "Insert block at position 2" }).click();
+  const menu = page.getByRole("dialog", { name: "Add block" });
+  await menu.getByRole("searchbox", { name: "Filter blocks" }).fill("quo");
+  await page.keyboard.press("Enter");
+  const cards = page.getByRole("article");
+  await expect(cards.nth(1)).toHaveAccessibleName("Quote");
+  await expect(cards.nth(1)).toBeFocused();
+  await expect(cards.nth(1)).toHaveAttribute("data-active", "true");
+
+  const handle = page.getByRole("button", { name: "Reorder Quote block" });
+  await handle.focus();
+  await page.keyboard.press("Space");
+  await expect(handle).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("ArrowUp");
+  const live = page.locator("[id^=DndLiveRegion]");
+  await expect(live).toHaveText("Quote block moved to position 1 of 3.");
+  await page.keyboard.press("Space");
+  await expect(live).toHaveText("Quote block dropped at position 1 of 3.");
+  await expect(cards.first()).toHaveAccessibleName("Quote");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Saved revision 3")).toBeVisible();
+  expect(savedTypes).toEqual(["quote", "hero", "hero"]);
 });
 
 test("saves with the keyboard shortcut while header actions stay visible", async ({ page }) => {
@@ -121,8 +169,7 @@ test("saves with the keyboard shortcut while header actions stay visible", async
   await page.setViewportSize({ height: 600, width: 1280 });
   await page.goto("/admin/content/posts/entry-1");
   await page.getByRole("heading", { name: "Edit posts" }).waitFor();
-  for (let index = 0; index < 6; index += 1)
-    await page.getByRole("button", { name: "Add Hero" }).click();
+  for (let index = 0; index < 6; index += 1) await addBlock(page, "Hero");
   const header = page.getByRole("banner");
   await expect(header.getByRole("status")).toHaveText("Unsaved changes");
   await page.mouse.wheel(0, 4000);
@@ -506,7 +553,7 @@ test("uploads in the picker dialog and reuses images in a block from the keyboar
 
   await page.goto("/admin/content/posts/entry-1");
   await page.getByRole("heading", { name: "Edit posts" }).waitFor();
-  await page.getByRole("button", { name: "Add Hero" }).click();
+  await addBlock(page, "Hero");
   const choose = page.getByRole("button", { name: "Choose media for Image" });
   await choose.focus();
   await page.keyboard.press("Enter");

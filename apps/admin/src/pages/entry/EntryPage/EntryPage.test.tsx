@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ContentModelDto } from "@lacecms/contracts";
 import {
+  addBlock,
   draftEntry,
   mediaItem,
   models,
@@ -426,7 +427,7 @@ test("a server-normalized media draft becomes clean after save", async () => {
   expect(
     await screen.findByRole("button", { name: "Replace media for Hero Image" }),
   ).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Add Image" }));
+  await addBlock(user, "Image");
   await user.type(screen.getByRole("textbox", { name: "Alt" }), "Test image");
   await user.click(screen.getByRole("button", { name: "Choose media for Media" }));
   await user.click(

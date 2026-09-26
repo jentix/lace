@@ -324,7 +324,12 @@ export function EntryPage() {
                   </p>
                 )}
               </div>
-              <BlockEditor control={form.control} errors={blockErrors} model={model} />
+              <BlockEditor
+                control={form.control}
+                errors={blockErrors}
+                getValues={form.getValues}
+                model={model}
+              />
             </div>
             <aside aria-label="Entry details" className="grid min-w-0 content-start gap-4">
               <EntryPublicationDetails entry={currentEntry} latestBuild={latestBuild} model={model}>

@@ -313,6 +313,35 @@ test("registers public-DSL built-ins and validates ordered entry aggregates", ()
   expect(builtInBlocks.hero.fields.heading.required).toBe(true);
   expect(builtInBlocks.image.fields.media.required).toBe(true);
   expect(builtInBlocks.richText.fields.content.type).toBe("richText");
+  expect(
+    toBlockRegistryMetadata(registry).map(({ description, label, type }) => ({
+      description,
+      label,
+      type,
+    })),
+  ).toEqual([
+    {
+      description: "A heading and a link that prompts the reader to act.",
+      label: "Call to action",
+      type: "cta",
+    },
+    {
+      description: "Large heading with optional text, image, and action.",
+      label: "Hero",
+      type: "hero",
+    },
+    {
+      description: "A single image with alt text and an optional caption.",
+      label: "Image",
+      type: "image",
+    },
+    { description: "A quotation with optional attribution.", label: "Quote", type: "quote" },
+    {
+      description: "Formatted text with headings, lists, and links.",
+      label: "Rich text",
+      type: "richText",
+    },
+  ]);
   expect(() => defineBlockRegistry([builtInBlocks.hero, builtInBlocks.hero])).toThrow(
     BlockConfigurationError,
   );

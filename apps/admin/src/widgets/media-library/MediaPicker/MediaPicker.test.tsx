@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ContentModelDto, MediaMetadataDto } from "@lacecms/contracts";
 import {
+  addBlock,
   draftEntry,
   mediaItem,
   renderRoute,
@@ -183,7 +184,7 @@ test("a block picker uploads several files, reports each, and uses an upload exp
     },
   });
   await screen.findByRole("heading", { name: "Edit posts" });
-  await user.click(screen.getByRole("button", { name: "Add Hero" }));
+  await addBlock(user, "Hero");
   await user.click(screen.getByRole("button", { name: "Choose media for Image" }));
   const dialog = screen.getByRole("dialog", { name: "Choose media for Image" });
   expect(await within(dialog).findByText("Media list failed")).toBeInTheDocument();

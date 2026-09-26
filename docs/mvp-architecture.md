@@ -934,6 +934,8 @@ and arbitrary style attributes are rejected. The reference Astro renderer
 escapes text and renders only this allowlist; custom sites receive structured
 JSON and remain responsible for using an equally safe renderer.
 
+Each block definition may carry an optional one-sentence description next to its label. Both are display metadata: they reach the admin through the block projection, change the configuration projection hash, and never change the structural hash. The built-in blocks ship with labels and descriptions. Block icons are not configuration. The admin maps the built-in types to icons and gives any other block type a default icon.
+
 The initial admin editor should render block forms from serializable field metadata. Exact site rendering and custom React admin editors are not required for every block in the MVP.
 
 ## 12. REST API
@@ -1368,6 +1370,20 @@ Until the Builds screen reads persisted builds in Step 21, the latest build stat
 - URL can open http(s) values in a new tab.
 
 Controls hold a cleared value as `null` in form state, because React Hook Form would show the loaded default again for `undefined`. The editor strips those values before it saves or copies a draft. Viewers see the editor read-only: native controls sit in a disabled fieldset, rich text is not editable, media fields show their item without picker actions, and there is no Save or Publish. Publication is confirmed in a dialog that names the revision and path and can be cancelled. The discard-changes prompt is a modal alert dialog.
+
+Blocks render as cards. A card header shows the following:
+
+- a drag handle;
+- the block's icon and label;
+- a one-line summary of its data: the first text value, then rich-text plain text, then a URL or select value, then "Media selected", otherwise "Empty block".
+
+Collapsing hides only the fields, so a collapsed card stays recognizable. A block with a validation error stays expanded. The block that focus or a pointer last entered is highlighted. A block that has just been added, inserted, or duplicated is highlighted, expanded, and focused.
+
+Each card's actions menu offers Move up, Move down, Duplicate, and Remove. Removal leaves an inline notice with Undo, which restores the same key and data at the same place. The next structural action makes the removal final.
+
+An insert control between adjacent blocks and an Add block button after the list open the same popover. It lists the model's allowed blocks with icon, label, and description, and it has a text filter.
+
+Keyboard and pointer drag reordering stay on dnd-kit. The screen-reader announcements name blocks by label and position, never by key.
 
 ### Component source and design tokens
 

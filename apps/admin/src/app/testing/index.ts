@@ -198,3 +198,11 @@ export async function logOut(user: UserEvent) {
   await user.keyboard("{Enter}");
   await user.click(await screen.findByRole("menuitem", { name: "Log out" }));
 }
+
+/** Adds a block through the editor's Add block menu, as a writer would. */
+export async function addBlock(user: UserEvent, label: string) {
+  await user.click(screen.getByRole("button", { name: "Add block" }));
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Add block" })).getByRole("button", { name: label }),
+  );
+}
