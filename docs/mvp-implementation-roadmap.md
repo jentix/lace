@@ -138,6 +138,7 @@ foundation
   -> local code-first configuration + sync
   -> live local Astro content
   -> complete browser-admin workflows
+  -> admin redesign (design system, shell, media, editor)
   -> outbox + builder
   -> Cloudflare runtime
   -> generator + upgrade
@@ -163,13 +164,18 @@ foundation
 | 13 | Local code-first configuration and sync | M | 13A, 13B |
 | 14 | Live local Astro site | M | 14A, 14B |
 | 15 | Complete browser-admin workflows | L | 15A, 15B, 15C |
-| 16 | Outbox, builds, and VPS builder | L | 16A, 16B, 16C |
-| 17 | Cloudflare runtime | L | 17A, 17B, 17C |
-| 18 | CLI generator and operational commands | L | 18A, 18B, 18C |
-| 19 | Upgrade safety | M | 19A, 19B |
-| 20 | MVP release gate | L | 20A, 20B, 20C |
+| 16 | Admin design foundation and structure | M | 16A, 16B |
+| 17 | Shell and collection lists | L | 17A, 17B, 17C |
+| 18 | Media library | L | 18A, 18B, 18C |
+| 19 | Block editor | L | 19A, 19B, 19C |
+| 20 | Remaining screens and redesign acceptance | M | 20A, 20B |
+| 21 | Outbox, builds, and VPS builder | L | 21A, 21B, 21C |
+| 22 | Cloudflare runtime | L | 22A, 22B, 22C |
+| 23 | CLI generator and operational commands | L | 23A, 23B, 23C |
+| 24 | Upgrade safety | M | 24A, 24B |
+| 25 | MVP release gate | L | 25A, 25B, 25C |
 
-The roadmap is therefore **51 recommended session units**. Small neighboring
+The roadmap is therefore **64 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
@@ -807,7 +813,7 @@ begins the local content workflow.
 **Outcome:** a contributor can define a page or collection in version-controlled
 configuration, synchronize it with local SQLite, and immediately find it in the
 browser admin. Model structure remains code-first; content values remain
-admin-managed. This advances the local Node portion of Step 18B without replacing
+admin-managed. This advances the local Node portion of Step 23B without replacing
 its cross-environment operational CLI.
 
 ### Session 13A — Project configuration entry point
@@ -931,19 +937,232 @@ The server remains authoritative for permissions and validation.
 - An administrator can complete the local editorial flow without modifying a
   fixture or calling the content API by hand.
 - Content, Media, Users, and Settings have useful behavior or an explicit,
-  justified operational state; Builds gains its history/retry screen in Step 16.
+  justified operational state; Builds gains its history/retry screen in Step 21.
   Viewer and editor permissions remain enforced by the API.
 - A local product walkthrough can be repeated before any VPS, Cloudflare, or
   generated-project work starts.
 
 **Session boundary:** L; use 15A, 15B, and 15C.
 
-## Step 16 — Outbox, build tracking, and VPS builder
+## Step 16 — Admin design foundation and structure
+
+**Outcome:** the admin has an owned design system, a layered source structure,
+and the existing behavior running unchanged inside it, so later steps can
+rebuild screens one at a time.
+
+The visual reference for Steps 16–20 is direction A of the admin redesign
+canvas: a neutral inset-panel shell, indigo accent, Inter, 13px base text,
+stacked collapsible block cards, and a right-hand editor column that holds
+publication status and entry fields. Dark mode, a command palette, site-wide
+search, and an activity feed are deferred beyond the MVP; the token structure
+must allow dark mode later without rewriting components.
+
+### Session 16A — Architecture, tooling, and tokens
+
+1. Update architecture §17 and §19 and record an ADR: shadcn/ui generated on
+   Radix as Lace-owned source (not a themed dependency), `lucide-react`,
+   `sonner`, `@tanstack/react-table`, `react-dropzone`, `react-day-picker`, and
+   self-hosted Inter through `@fontsource-variable/inter`.
+2. Document the admin source layers and their import direction:
+   `app → pages → widgets → features → entities → shared`. Slices in one layer
+   do not import each other, every slice exposes only its `index.ts`, and every
+   React component lives in its own PascalCase folder with its test and
+   `index.ts`.
+3. Define color, typography, spacing, radius, shadow, focus, and motion tokens
+   as CSS variables in the shadcn convention. Ship the light theme only, with a
+   theme selector structure that can add dark values later. Replace hand-written
+   component CSS with Tailwind utilities over those tokens.
+4. Add a lint check that rejects raw color literals in admin components.
+
+### Session 16B — Layered skeleton and code migration
+
+1. Create `app/`, `pages/`, `widgets/`, `features/`, `entities/`, and `shared/`
+   under `apps/admin/src`, and extend `scripts/check-boundaries.mjs` so layer
+   direction and slice public APIs are enforced by `pnpm lint`.
+2. Generate the shadcn primitives (Button, Input, Textarea, Select, Dialog,
+   Sheet, DropdownMenu, Popover, Tooltip, Badge, Table, Tabs, Skeleton, Toaster,
+   Calendar, ScrollArea) and move each into `shared/ui/<Component>/`.
+3. Move the admin client, error mapper, session, editor form, field renderer
+   registry, and rich-text editor into `shared` and `entities`. Move each route
+   screen out of `app.tsx` into its `pages/<route>/` folder without behavior
+   changes; keep the code-based TanStack route tree in `app/router/`.
+4. Move Playwright specs to `apps/admin/e2e/`. Existing component and browser
+   tests pass unchanged in intent.
+
+### Acceptance
+
+- `pnpm lint` fails on an upward or cross-slice import.
+- Every existing admin workflow still passes its tests after the move.
+- No component in the new structure uses a raw color literal.
+
+**Session boundary:** M; 16A and 16B.
+
+## Step 17 — Shell and collection lists
+
+**Outcome:** navigation and collection lists show what exists, its state, and
+who changed it, without exposing internal identifiers.
+
+### Session 17A — List fields and list contracts
+
+1. Add optional `listFields` to `defineCollection`. Configuration validation
+   rejects unknown and non-scalar fields; the admin configuration projection
+   carries the list.
+2. Extend the entry summary DTO with `slug`, a derived `status`
+   (`draft`, `published`, or `changed`), `publishedAt`, `updatedBy` with
+   `id` and `displayName`, and the values of the model's `listFields`.
+3. Add entry-list query parameters `q` (title or slug), `status`, and `sort`,
+   plus per-status totals. The full entry DTO also exposes the last editor's
+   display name so viewers never need the users API to render it.
+4. Cover the contracts, OpenAPI output, repositories, and negative cases.
+
+### Session 17B — Application shell
+
+1. Build the inset-panel shell: sidebar grouped into Pages, Collections,
+   Library, and Admin with icons, counts, and role-aware items; a user menu with
+   name, role, and log out; and a header with breadcrumbs.
+2. Collapse the sidebar into a sheet on narrow screens and keep keyboard order
+   and focus return correct.
+3. Rebuild `/content` as an overview of pages and collections with status
+   summaries.
+
+### Session 17C — Collection list
+
+1. Rebuild the collection route with TanStack Table: title with slug, status
+   badge, `listFields` columns, published date, and relative edit time.
+2. Keep search, status filter, and sort in router search parameters; paginate
+   with the API cursor.
+3. Restyle create and delete entry dialogs and add empty, loading, and error
+   states.
+
+### Acceptance
+
+- A viewer, editor, and admin see the same list data with role-appropriate
+  actions only.
+- Reloading a filtered list URL restores the same filters.
+- No list or shell surface shows a raw user or entry ID.
+
+**Session boundary:** L; use 17A, 17B, and 17C.
+
+## Step 18 — Media library
+
+**Outcome:** editors browse, upload, inspect, and reuse images visually.
+
+### Session 18A — Media contracts
+
+1. Add media-list query parameters `q` (filename), `type`, and `sort`.
+2. Record image width and height on the server at upload.
+3. Expose where an item is used (entries and blocks), reusing existing reference
+   data when it exists and adding it otherwise; deletion guidance uses the same
+   data.
+
+### Session 18B — Library screen
+
+1. Rebuild `/media` as a tile grid with lazily loaded previews, type filters,
+   search, sort, and a grid/list toggle.
+2. Add a drop zone over the library plus multi-file upload with per-file
+   progress, client-side type and size checks, and per-file server errors.
+3. Add a details side panel with preview, type, dimensions, size, uploader,
+   usage, copy URL, and confirmed deletion that respects recoverable deletion.
+
+### Session 18C — Media picker
+
+1. Replace the inline picker with a dialog that reuses the library grid, search,
+   and in-dialog upload.
+2. Show selected media in fields and blocks as a thumbnail with filename,
+   Replace, and Remove, with explicit states for deleted or inaccessible items.
+
+### Acceptance
+
+- An editor can upload several images, see failures per file, and reuse an
+  uploaded image in a block without leaving the editor.
+- Keyboard users can open, choose, and close the picker and details panel.
+- Object-storage credentials never reach the browser.
+
+**Session boundary:** L; use 18A, 18B, and 18C.
+
+## Step 19 — Block editor
+
+**Outcome:** editing a page or entry is clear at a glance: the active block is
+obvious, collapsed blocks stay recognizable, and publication state reads as
+plain language.
+
+### Session 19A — Editor layout and fields
+
+1. Add a sticky header with breadcrumbs, unsaved-changes indicator, Save with
+   `⌘S`/`Ctrl+S`, and Publish; render the title as a large input.
+2. Add the right-hand column: publication status, live and draft revisions,
+   last editor and relative time, public URL, latest build state, and the
+   entry's slug and model fields.
+3. Rebuild field renderers on the new primitives, including Select, a date
+   picker, URL, boolean, and number fields. Restyle the publish confirmation and
+   revision-conflict dialogs without changing their semantics.
+
+### Session 19B — Block cards
+
+1. Add optional `description` to block definitions and carry it in the block
+   projection. The admin maps built-in block types to icons and uses a default
+   icon for other blocks.
+2. Render each block as a card with drag handle, icon, type, and a summary
+   derived from its data; support collapse and expand, highlight the block being
+   edited, and fix overlapping header text.
+3. Add an actions menu (move up, move down, duplicate, remove with undo), an
+   insert control between blocks, and an Add block menu with filter, icons, and
+   descriptions. Keep keyboard and drag reordering.
+
+### Session 19C — Rich text and validation
+
+1. Add a fixed Tiptap toolbar for paragraph and heading level, bold, italic,
+   strike, code, lists, quote, and links; links use a URL popover validated
+   against the shared allowlist.
+2. Add keyboard shortcuts and placeholders.
+3. Show validation errors on fields and blocks plus a summary that links to the
+   first invalid block; server rejections map to the same locations.
+
+### Acceptance
+
+- Adding, collapsing, reordering, and editing blocks keeps stable block keys and
+  saves one revision per Save.
+- Publication, build, and conflict states are shown without raw IDs or ISO
+  timestamps.
+- Every editor action is reachable by keyboard.
+
+**Session boundary:** L; use 19A, 19B, and 19C.
+
+## Step 20 — Remaining screens and redesign acceptance
+
+**Outcome:** every admin route uses the new design system and structure, and the
+legacy admin code is gone.
+
+### Session 20A — Login, users, and settings
+
+1. Rebuild login, users (table, role change, disable, create dialog), and
+   settings (status cards, API token table, once-shown token dialog).
+2. Add a not-found route and consistent empty, loading, and error states.
+
+### Session 20B — Redesign acceptance
+
+1. Add automated accessibility checks with `@axe-core/playwright` on every
+   route, and complete a keyboard-only walkthrough.
+2. Verify narrow-screen layouts, including the editor column stacking below the
+   blocks, and confirm no component bypasses the theme tokens.
+3. Repeat the Step 15C local product walkthrough on the redesigned admin.
+4. Delete `app.tsx` and the legacy `components/ui.tsx`, and update admin and
+   acceptance documentation.
+
+### Acceptance
+
+- No admin source remains outside the layered structure.
+- Accessibility checks pass on every route.
+- The local editorial walkthrough succeeds without fixture edits.
+
+**Session boundary:** M; 20A and 20B.
+
+## Step 21 — Outbox, build tracking, and VPS builder
 
 **Outcome:** publication reliably causes a coalesced static build and operators
 can see/retry failures.
 
-### Session 16A — Site-build dispatch
+### Session 21A — Site-build dispatch
 
 1. Extend the generic dispatcher for `site.build.requested`. Use the architecture
    defaults: 5-second debounce, 60-second leases, full-jitter exponential backoff
@@ -956,7 +1175,7 @@ can see/retry failures.
 4. Add manual admin build request and retry semantics; both still coalesce through
    the outbox.
 
-### Session 16B — Fixed-command builder
+### Session 21B — Fixed-command builder
 
 1. Build `apps/builder` as a private service accepting only an authenticated
    trigger containing build ID and target version. Reject command, path, env, or
@@ -964,21 +1183,22 @@ can see/retry failures.
 2. Copy the read-only mounted site project into a temporary work directory,
    install with frozen lockfile using an image-pinned toolchain, run the fixed
    Astro build, and write to a new release directory. Use the reference project
-   until Step 18 supplies the generated-project template; the generated project
+   until Step 23 supplies the generated-project template; the generated project
    must then pass the same builder contract.
 3. Atomically switch the static-output `current` release only after success; keep
    the previous successful release and clean older releases by fixed retention.
 4. Return sanitized logs/status to the API without secrets or full environment
    dumps. Authenticate API-to-builder with a dedicated secret and no public port.
 
-### Session 16C — VPS composition and build UI
+### Session 21C — VPS composition and build UI
 
 1. Complete Docker Compose with API, MinIO, builder, and static reverse proxy,
    named database/object/output volumes, health checks, and internal networks.
 2. Run a recovery dispatcher loop in a separate process/service so API restarts
    do not abandon events.
 3. Implement `/builds` history/detail/retry UI with target version, provider ID,
-   timestamps, and sanitized errors.
+   timestamps, and sanitized errors, using the Step 16 design system and layered
+   admin structure.
 4. Add an integration test that publishes several entries rapidly, observes one
    normal build, serves the new release, then verifies a failed build leaves the
    previous release online and can be retried.
@@ -989,14 +1209,14 @@ can see/retry failures.
 - Recovery after process termination dispatches the leased event after expiry.
 - No HTTP input can choose a shell command or filesystem target.
 
-**Session boundary:** L; use 16A, 16B, and 16C.
+**Session boundary:** L; use 21A, 21B, and 21C.
 
-## Step 17 — Cloudflare runtime
+## Step 22 — Cloudflare runtime
 
 **Outcome:** the same contracts and application behavior run locally and in a
 Cloudflare Worker with D1 and R2.
 
-### Session 17A — D1 persistence
+### Session 22A — D1 persistence
 
 1. Implement D1 read repositories and specialized atomic mutations using
    prepared statements and `batch()`. Never emulate an interactive transaction
@@ -1010,7 +1230,7 @@ Cloudflare Worker with D1 and R2.
 4. Run the reusable repository contract suite against local D1/Miniflare and add
    targeted tests for route-conflict rollback and concurrent revisions.
 
-### Session 17B — R2, Worker, and scheduled recovery
+### Session 22B — R2, Worker, and scheduled recovery
 
 1. Implement native R2 storage without the AWS SDK and the same media semantics
    as MinIO.
@@ -1021,7 +1241,7 @@ Cloudflare Worker with D1 and R2.
 4. Implement scheduled outbox recovery and event leasing. `waitUntil` may improve
    latency after commit but is never the only recovery path.
 
-### Session 17C — Cloudflare development and deploy hook
+### Session 22C — Cloudflare development and deploy hook
 
 1. Implement `pnpm dev:cloudflare` with persisted local D1/R2 state and same-origin
    admin/API proxying.
@@ -1038,14 +1258,14 @@ Cloudflare Worker with D1 and R2.
 - Worker bundle contains no Node-only SQLite, S3, filesystem, or secret material.
 - Correctness is unchanged when KV is absent or stale.
 
-**Session boundary:** L; use 17A, 17B, and 17C.
+**Session boundary:** L; use 22A, 22B, and 22C.
 
-## Step 18 — CLI generator and operational commands
+## Step 23 — CLI generator and operational commands
 
 **Outcome:** a user can create an upgrade-aware Lace project and operate either
 runtime without editing engine source.
 
-### Session 18A — Generator
+### Session 23A — Generator
 
 1. Implement `create-lace` commands `create <dir>` and `init .`. Resolve and
    validate the target path; allow only `.git`, `README.md`, and `LICENSE` in an
@@ -1060,7 +1280,7 @@ runtime without editing engine source.
    atomic final rename where possible. On failure, leave the original target
    unchanged and report cleanup instructions.
 
-### Session 18B — Migrate, sync, and bootstrap commands
+### Session 23B — Migrate, sync, and bootstrap commands
 
 1. Implement one CLI environment loader with named Node and Cloudflare targets;
    redact secret values in errors.
@@ -1073,7 +1293,7 @@ runtime without editing engine source.
 4. Make migrations explicit deployment steps; API startup reports an outdated
    schema and fails readiness rather than auto-migrating production.
 
-### Session 18C — Generated-project acceptance
+### Session 23C — Generated-project acceptance
 
 1. Pack workspace packages locally and generate a project using the tarballs so
    tests do not accidentally resolve source-workspace imports.
@@ -1091,14 +1311,14 @@ runtime without editing engine source.
 - Commands never print passwords, tokens after their one allowed reveal, or
   complete environment values.
 
-**Session boundary:** L; use 18A, 18B, and 18C.
+**Session boundary:** L; use 23A, 23B, and 23C.
 
-## Step 19 — Upgrade safety
+## Step 24 — Upgrade safety
 
 **Outcome:** engine upgrades preserve user source and never overwrite modified
 managed files without an explicit resolution.
 
-### Session 19A — Upgrade planner
+### Session 24A — Upgrade planner
 
 1. Read the old manifest, hash current files, and compare old template, working
    tree, and new template as a three-way ownership decision.
@@ -1108,7 +1328,7 @@ managed files without an explicit resolution.
    default until the user passes an explicit apply flag.
 4. Validate manifest schema/version and refuse unknown newer formats.
 
-### Session 19B — Apply and recovery
+### Session 24B — Apply and recovery
 
 1. Apply conflict-free changes through temporary files and atomic renames; write
    the new manifest last.
@@ -1127,14 +1347,14 @@ managed files without an explicit resolution.
 - A user-modified managed file produces a reviewable diff and conflict artifact.
 - Interrupted upgrades are detectable and safely repeatable.
 
-**Session boundary:** M; 19A and 19B.
+**Session boundary:** M; 24A and 24B.
 
-## Step 20 — MVP release gate
+## Step 25 — MVP release gate
 
 **Outcome:** both supported deployments satisfy the product flow, security
 requirements, and operational recovery promises.
 
-### Session 20A — Cross-runtime and browser suite
+### Session 25A — Cross-runtime and browser suite
 
 1. Run repository contracts against Node SQLite and local D1.
 2. Run API contracts against Node and Worker composition roots using the same
@@ -1144,7 +1364,7 @@ requirements, and operational recovery promises.
 4. Build the Astro fixture from both runtime exports and compare canonical output
    data, routes, and media references.
 
-### Session 20B — Security and resilience pass
+### Session 25B — Security and resilience pass
 
 1. Review auth/session configuration, CSRF/origin behavior, permission checks,
    rate limits, upload parsing, URL/rich-text sanitization, token hashing, secret
@@ -1155,7 +1375,7 @@ requirements, and operational recovery promises.
 4. Audit dependency vulnerabilities and licenses; document accepted risks rather
    than silently suppressing them.
 
-### Session 20C — Operations and release documentation
+### Session 25C — Operations and release documentation
 
 1. Write local development, generated-project, VPS deployment, Cloudflare
    deployment, backup/restore, migration, key rotation, build recovery, and
@@ -1183,7 +1403,7 @@ From a clean machine/project template:
    successful static release throughout.
 9. Run an upgrade dry-run and prove user-owned site source is untouched.
 
-**Session boundary:** L; use 20A, 20B, and 20C. Do not combine the security pass
+**Session boundary:** L; use 25A, 25B, and 25C. Do not combine the security pass
 with the release-documentation session.
 
 ## 7. Recommended first delivery slices
@@ -1208,13 +1428,15 @@ best checkpoints for demonstrating useful progress are:
 8. **After step 14:** published content reaches the local Astro site.
 9. **After step 15:** the local editorial workflow covers content, media,
    users, and settings without fixture edits or direct content API calls.
-10. **After step 16:** the self-hosted VPS deployment works with the reference
+10. **After step 20:** the admin runs on its owned design system and layered
+    structure, with a visual media library and a readable block editor.
+11. **After step 21:** the self-hosted VPS deployment works with the reference
     site, including recoverable builds and build history in the admin; generated
-    projects are verified in Step 18.
-11. **After step 17:** Cloudflare reaches behavioral parity.
-12. **After step 18:** generated projects and full operational CLI commands pass
+    projects are verified in Step 23.
+12. **After step 22:** Cloudflare reaches behavioral parity.
+13. **After step 23:** generated projects and full operational CLI commands pass
     acceptance on the supported runtimes.
-13. **After step 20:** the MVP is release-ready.
+14. **After step 25:** the MVP is release-ready.
 
 Steps 0–3 should be implemented in order. After step 5, SDK fixture work and
 some admin visual-foundation work may proceed in parallel, but persistence,

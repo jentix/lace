@@ -136,7 +136,7 @@ and `/notes/<published-slug>` at the acceptance origin. Save a changed title
 and slug without publishing, restart the site again, and confirm the old public
 route and content remain. Content, Media, Users, and Settings have actionable
 empty and error states. **Builds** explicitly describes its current state;
-history and retry controls arrive in Step 16. Finish with
+history and retry controls arrive in Step 21. Finish with
 `pnpm acceptance:stop`, which removes only the named acceptance project and its
 volumes. Do not use `pnpm dev:reset` for acceptance cleanup.
 
