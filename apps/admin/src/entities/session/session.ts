@@ -1,6 +1,8 @@
 export type AdminRole = "admin" | "editor" | "viewer";
 
 export interface AdminSession {
+  /** Presentation-only name for the shell; never used for route policy. */
+  readonly displayName?: string;
   readonly id: string;
   readonly role: AdminRole;
 }
@@ -14,15 +16,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function parseSession(value: unknown): AdminSession | null {
-  if (!isRecord(value) || !isRecord(value.user)) return null;
-  const { id, role } = value.user;
-  if (typeof id !== "string" || id.length === 0) return null;
-  if (role !== "admin" && role !== "editor" && role !== "viewer") return null;
-  return Object.freeze({ id, role });
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-/** Reads only the identity data required by route policy from the same-origin auth boundary. */
+function parseSession(value: unknown): AdminSession | null {
+  if (!isRecord(value) || !isRecord(value.user)) return null;
+  const { email, id, name, role } = value.user;
+  if (typeof id !== "string" || id.length === 0) return null;
+  if (role !== "admin" && role !== "editor" && role !== "viewer") return null;
+  const displayName = nonEmpty(name) ?? nonEmpty(email);
+  return Object.freeze({ ...(displayName === undefined ? {} : { displayName }), id, role });
+}
+
+/** Reads route-policy identity and a display name from the same-origin auth boundary. */
 export function createBrowserSessionSource(fetcher: typeof fetch = fetch): AdminSessionSource {
   let pending: Promise<AdminSession | null> | undefined;
   return Object.freeze({

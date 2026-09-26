@@ -1,5 +1,7 @@
 import {
+  actorDisplayName,
   DISPATCHER_LEASE_DURATION_MS,
+  foldAscii,
   dispatcherLeaseId,
   opaqueCursor,
   opaqueTokenVerifier,
@@ -7,6 +9,7 @@ import {
   renderConfigurationSyncPlanJson,
 } from "@lacecms/application";
 import type {
+  ActorSummary,
   ApplyConfigurationSynchronizationInput,
   ApplyConfigurationSynchronizationResult,
   BuildContentExport,
@@ -18,7 +21,11 @@ import type {
   CompleteDispatcherLeaseInput,
   ContentCommandResult,
   ContentEntryCommandPort,
+  ContentEntryListPage,
+  ContentEntryListValues,
   ContentEntryReadPort,
+  ContentEntrySort,
+  ContentEntryStatus,
   ContentEntrySummary,
   CreateMediaMetadataInput,
   ConfigurationSyncApplyPort,
@@ -70,6 +77,7 @@ import {
   unixMilliseconds,
 } from "@lacecms/domain";
 import type {
+  ActorId,
   ContentEntry,
   DraftMediaReference,
   MediaMetadata,
@@ -393,15 +401,54 @@ export class InMemoryDispatcherLeasePort implements DispatcherLeasePort {
   }
 }
 
-function summarize(entry: ContentEntry): ContentEntrySummary {
-  return Object.freeze({
-    draftRevision: entry.draft.revision,
-    id: entry.id,
-    modelKey: entry.model.key,
-    ...(entry.published === undefined ? {} : { publishedSnapshotId: entry.published.id }),
-    title: entry.draft.title,
-    updatedAt: entry.draft.updatedAt,
-  });
+function entryStatus(entry: ContentEntry): ContentEntryStatus {
+  if (entry.published === undefined) return "draft";
+  return entry.published.revision === entry.draft.revision ? "published" : "changed";
+}
+
+function listValues(entry: ContentEntry, listFields: readonly string[]): ContentEntryListValues {
+  const values: Record<string, boolean | number | string> = {};
+  for (const key of listFields) {
+    const value = Object.hasOwn(entry.draft.fields, key) ? entry.draft.fields[key] : undefined;
+    if (
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+    ) {
+      values[key] = value;
+    }
+  }
+  return Object.freeze(values);
+}
+
+function matchesSearch(entry: ContentEntry, q: string | undefined): boolean {
+  if (q === undefined) return true;
+  const term = foldAscii(q);
+  return foldAscii(entry.draft.title).includes(term) || (entry.draft.slug ?? "").includes(term);
+}
+
+/** Mirrors SQLite `COLLATE NOCASE`, which folds only ASCII letters before binary comparison. */
+function compareNoCase(left: string, right: string): number {
+  const foldedLeft = foldAscii(left);
+  const foldedRight = foldAscii(right);
+  return foldedLeft < foldedRight ? -1 : foldedLeft > foldedRight ? 1 : 0;
+}
+
+function compareSummaries(
+  left: ContentEntrySummary,
+  right: ContentEntrySummary,
+  sort: ContentEntrySort,
+): number {
+  const field = sort.startsWith("-") ? sort.slice(1) : sort;
+  const direction = sort.startsWith("-") ? -1 : 1;
+  const primary =
+    field === "title"
+      ? compareNoCase(left.title, right.title)
+      : field === "publishedAt"
+        ? (left.publishedAt ?? -1) - (right.publishedAt ?? -1)
+        : left.updatedAt - right.updatedAt;
+  const tieBreaker = left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  return direction * (primary === 0 ? tieBreaker : primary);
 }
 
 /**
@@ -421,6 +468,7 @@ export class InMemoryContentStore
 {
   public readonly configurationSyncBuildRequests: number[] = [];
   public readonly mediaDeletionRequests: string[] = [];
+  private readonly actorNames = new Map<string, string>();
   private entries = new Map<string, ContentEntry>();
   private modelStates = new Map<string, StoredContentModelState>();
   private readonly media = new Map<string, MediaMetadata>();
@@ -602,11 +650,37 @@ export class InMemoryContentStore
     return entry?.published ?? null;
   }
 
-  public async list(input: ListContentEntriesInput): Promise<CursorPage<ContentEntrySummary>> {
-    const entries = [...this.entries.values()]
-      .filter((entry) => entry.model.key === input.modelKey)
-      .sort((left, right) => left.id.localeCompare(right.id));
-    return this.page(entries.map(summarize), input.after, input.limit, `entries:${input.modelKey}`);
+  /** Seeds stored user names used to resolve audit-actor display names. */
+  public setActorDisplayNames(names: Readonly<Record<string, string>>): void {
+    this.actorNames.clear();
+    for (const [id, name] of Object.entries(names)) this.actorNames.set(id, name);
+  }
+
+  public async describeActors(ids: readonly ActorId[]): Promise<readonly ActorSummary[]> {
+    return Object.freeze(ids.map((id) => this.actorSummary(id)));
+  }
+
+  public async list(input: ListContentEntriesInput): Promise<ContentEntryListPage> {
+    const matching = [...this.entries.values()].filter(
+      (entry) => entry.model.key === input.modelKey && matchesSearch(entry, input.q),
+    );
+    const totals = { all: matching.length, changed: 0, draft: 0, published: 0 };
+    for (const entry of matching) totals[entryStatus(entry)] += 1;
+    const summaries = matching
+      .filter((entry) => input.status === undefined || entryStatus(entry) === input.status)
+      .map((entry) => this.summarize(entry, input.listFields))
+      .sort((left, right) => compareSummaries(left, right, input.sort));
+    const prefix = JSON.stringify([
+      "entries",
+      input.modelKey,
+      input.sort,
+      input.status ?? null,
+      input.q ?? null,
+    ]);
+    return Object.freeze({
+      ...this.page(summaries, input.after, input.limit, prefix),
+      totals: Object.freeze(totals),
+    });
   }
 
   public async saveCompleteDraft(input: SaveCompleteDraftInput): Promise<ContentCommandResult> {
@@ -818,6 +892,27 @@ export class InMemoryContentStore
         throw new DomainError("CONTENT_INVALID_STATE", "Media is unavailable for reference.");
       }
     }
+  }
+
+  private actorSummary(id: ActorId): ActorSummary {
+    return Object.freeze({ displayName: actorDisplayName(id, this.actorNames.get(id)), id });
+  }
+
+  private summarize(entry: ContentEntry, listFields: readonly string[]): ContentEntrySummary {
+    return Object.freeze({
+      draftRevision: entry.draft.revision,
+      id: entry.id,
+      listValues: listValues(entry, listFields),
+      modelKey: entry.model.key,
+      ...(entry.published === undefined
+        ? {}
+        : { publishedAt: entry.published.createdAt, publishedSnapshotId: entry.published.id }),
+      ...(entry.draft.slug === undefined ? {} : { slug: entry.draft.slug }),
+      status: entryStatus(entry),
+      title: entry.draft.title,
+      updatedAt: entry.draft.updatedAt,
+      updatedBy: this.actorSummary(entry.draft.updatedBy.id),
+    });
   }
 
   private page<Value>(

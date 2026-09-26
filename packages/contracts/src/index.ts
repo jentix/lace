@@ -157,6 +157,22 @@ function isBlockMetadata(value: unknown): value is BlockMetadata {
   }
 }
 
+function hasValidListFields<
+  Value extends {
+    readonly fields: FieldMetadataMapDto;
+    readonly kind: "collection" | "page";
+    readonly listFields?: readonly string[] | undefined;
+  },
+>(value: Value): boolean {
+  if (value.listFields === undefined) return true;
+  return (
+    value.kind === "collection" &&
+    value.listFields.length > 0 &&
+    new Set(value.listFields).size === value.listFields.length &&
+    value.listFields.every((key) => Object.hasOwn(value.fields, key))
+  );
+}
+
 function hasMatchingBlockDefinitions<
   Value extends {
     blockDefinitions?: BlockMetadata[] | undefined;
@@ -247,11 +263,23 @@ export const publishedSnapshotSchema = v.strictObject({
 });
 export const contentSnapshotSchema = v.union([draftSnapshotSchema, publishedSnapshotSchema]);
 
+/** A human-readable actor reference that lets clients avoid rendering raw IDs. */
+export const actorSummarySchema = v.strictObject({
+  displayName: v.pipe(v.string(), v.minLength(1), v.maxLength(320)),
+  id: identifierSchema,
+});
+
 export const contentEntrySchema = v.strictObject({
   draft: draftSnapshotSchema,
   id: identifierSchema,
   model: contentModelRouteSchema,
   published: v.optional(publishedSnapshotSchema),
+});
+
+/** Admin-only entry representation that also names the draft's last editor. */
+export const adminContentEntrySchema = v.strictObject({
+  ...contentEntrySchema.entries,
+  updatedBy: actorSummarySchema,
 });
 
 export const publicationOutcomeSchema = v.picklist(["published", "replayed"]);
@@ -263,18 +291,58 @@ export const buildDispatchOutcomeSchema = v.variant("status", [
 ]);
 export const publishContentEntryResultSchema = v.strictObject({
   build: buildDispatchOutcomeSchema,
-  entry: contentEntrySchema,
+  entry: adminContentEntrySchema,
   publication: publicationOutcomeSchema,
 });
 
-export const contentEntrySummarySchema = v.strictObject({
-  draftRevision: nonNegativeIntegerSchema,
-  id: identifierSchema,
-  modelKey: identifierSchema,
-  publishedSnapshotId: v.optional(identifierSchema),
-  title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
-  updatedAt: isoTimestampSchema,
-});
+export const contentEntryStatusSchema = v.picklist(["changed", "draft", "published"]);
+export const contentEntrySortSchema = v.picklist([
+  "-publishedAt",
+  "-title",
+  "-updatedAt",
+  "publishedAt",
+  "title",
+  "updatedAt",
+]);
+export const MAX_ENTRY_SEARCH_LENGTH = 200;
+
+export const listValueSchema = v.union([v.string(), v.pipe(v.number(), v.finite()), v.boolean()]);
+export const listValuesSchema = v.record(
+  v.pipe(v.string(), v.regex(/^[A-Za-z][A-Za-z0-9]*$/u)),
+  listValueSchema,
+);
+
+function hasConsistentPublicationState<
+  Value extends {
+    readonly publishedAt?: string | undefined;
+    readonly publishedSnapshotId?: string | undefined;
+    readonly status: "changed" | "draft" | "published";
+  },
+>(value: Value): boolean {
+  const published = value.publishedAt !== undefined && value.publishedSnapshotId !== undefined;
+  const unpublished = value.publishedAt === undefined && value.publishedSnapshotId === undefined;
+  return value.status === "draft" ? unpublished : published;
+}
+
+export const contentEntrySummarySchema = v.pipe(
+  v.strictObject({
+    draftRevision: nonNegativeIntegerSchema,
+    id: identifierSchema,
+    listValues: listValuesSchema,
+    modelKey: identifierSchema,
+    publishedAt: v.optional(isoTimestampSchema),
+    publishedSnapshotId: v.optional(identifierSchema),
+    slug: v.optional(identifierSchema),
+    status: contentEntryStatusSchema,
+    title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
+    updatedAt: isoTimestampSchema,
+    updatedBy: actorSummarySchema,
+  }),
+  v.check(
+    hasConsistentPublicationState,
+    "Entry status must agree with its publication snapshot and time.",
+  ),
+);
 
 export function cursorPageSchema<
   ItemSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
@@ -285,7 +353,26 @@ export function cursorPageSchema<
   });
 }
 
-export const contentEntryListSchema = cursorPageSchema(contentEntrySummarySchema);
+export const contentEntryStatusTotalsSchema = v.strictObject({
+  all: nonNegativeIntegerSchema,
+  changed: nonNegativeIntegerSchema,
+  draft: nonNegativeIntegerSchema,
+  published: nonNegativeIntegerSchema,
+});
+
+export const contentEntryListSchema = v.strictObject({
+  ...cursorPageSchema(contentEntrySummarySchema).entries,
+  totals: contentEntryStatusTotalsSchema,
+});
+
+/** Query parameters accepted by the admin entry list; unknown keys stay ignored. */
+export const contentEntryListQuerySchema = v.object({
+  after: v.optional(opaqueCursorSchema),
+  limit: v.optional(v.pipe(v.string(), v.regex(/^[1-9][0-9]{0,2}$/u))),
+  q: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(MAX_ENTRY_SEARCH_LENGTH))),
+  sort: v.optional(contentEntrySortSchema),
+  status: v.optional(contentEntryStatusSchema),
+});
 
 const editableDraftFields = {
   blocks: v.array(contentBlockSchema),
@@ -315,11 +402,13 @@ export const contentModelSchema = v.pipe(
     key: identifierSchema,
     kind: v.picklist(["collection", "page"]),
     label: v.optional(v.string()),
+    listFields: v.optional(v.array(identifierSchema)),
     path: v.optional(v.string()),
     route: v.optional(v.string()),
     version: v.pipe(v.number(), v.integer(), v.minValue(1)),
   }),
   v.check(hasMatchingBlockDefinitions, "Block definitions must match the model's allowed blocks."),
+  v.check(hasValidListFields, "List fields must name distinct fields of a collection."),
 );
 export const contentModelListSchema = v.strictObject({ items: v.array(contentModelSchema) });
 
@@ -439,6 +528,12 @@ export const errorEnvelopeSchema = v.strictObject({
 });
 
 export type ContentEntryDto = v.InferOutput<typeof contentEntrySchema>;
+export type AdminContentEntryDto = v.InferOutput<typeof adminContentEntrySchema>;
+export type ActorSummaryDto = v.InferOutput<typeof actorSummarySchema>;
+export type ContentEntryStatusDto = v.InferOutput<typeof contentEntryStatusSchema>;
+export type ContentEntrySortDto = v.InferOutput<typeof contentEntrySortSchema>;
+export type ContentEntryStatusTotalsDto = v.InferOutput<typeof contentEntryStatusTotalsSchema>;
+export type ContentEntryListQueryDto = v.InferOutput<typeof contentEntryListQuerySchema>;
 export type PublishContentEntryResultDto = v.InferOutput<typeof publishContentEntryResultSchema>;
 export type ContentEntryListDto = v.InferOutput<typeof contentEntryListSchema>;
 export type ContentEntrySummaryDto = v.InferOutput<typeof contentEntrySummarySchema>;
@@ -504,6 +599,17 @@ export function toContentEntryDto(entry: ContentEntry): ContentEntryDto {
   };
 }
 
+/** Maps an entry for admin responses, adding the draft's last editor display name. */
+export function toAdminContentEntryDto(
+  entry: ContentEntry,
+  updatedBy: { readonly displayName: string; readonly id: string },
+): AdminContentEntryDto {
+  return {
+    ...toContentEntryDto(entry),
+    updatedBy: { displayName: updatedBy.displayName, id: updatedBy.id },
+  };
+}
+
 /** Maps the portable publication command outcome without exposing application internals. */
 export function toPublishContentEntryResultDto(input: {
   readonly build:
@@ -511,6 +617,7 @@ export function toPublishContentEntryResultDto(input: {
     | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
   readonly entry: ContentEntry;
   readonly publication: "published" | "replayed";
+  readonly updatedBy: { readonly displayName: string; readonly id: string };
 }): PublishContentEntryResultDto {
   return {
     build:
@@ -520,7 +627,7 @@ export function toPublishContentEntryResultDto(input: {
             status: "accepted",
           }
         : { status: input.build.status },
-    entry: toContentEntryDto(input.entry),
+    entry: toAdminContentEntryDto(input.entry, input.updatedBy),
     publication: input.publication,
   };
 }
@@ -598,6 +705,7 @@ export interface ContentModelSource {
   readonly key: string;
   readonly kind: ContentModelKind;
   readonly label?: string;
+  readonly listFields?: readonly string[];
   readonly path?: string;
   readonly route?: string;
   readonly version: number;
@@ -616,6 +724,7 @@ export function toContentModelDto(
     key: model.key,
     kind: model.kind,
     ...(model.label === undefined ? {} : { label: model.label }),
+    ...(model.listFields === undefined ? {} : { listFields: [...model.listFields] }),
     ...(model.path === undefined ? {} : { path: model.path }),
     ...(model.route === undefined ? {} : { route: model.route }),
     version: model.version,

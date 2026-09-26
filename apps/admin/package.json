@@ -30,6 +30,7 @@
     "@radix-ui/react-tooltip": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
+    "@tanstack/react-table": "catalog:",
     "@tiptap/core": "catalog:",
     "@tiptap/extension-blockquote": "catalog:",
     "@tiptap/extension-bold": "catalog:",

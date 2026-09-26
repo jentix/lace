@@ -1,12 +1,16 @@
 import {
+  actorDisplayName,
   DISPATCHER_LEASE_DURATION_MS,
   dispatcherEventId,
+  foldAscii,
+  MAX_CONTENT_ENTRY_SEARCH_LENGTH,
   dispatcherLeaseId,
   opaqueCursor,
   planConfigurationSynchronization,
   renderConfigurationSyncPlanJson,
 } from "@lacecms/application";
 import type {
+  ActorSummary,
   ApplyConfigurationSynchronizationInput,
   ApplyConfigurationSynchronizationResult,
   BuildContentExport,
@@ -14,7 +18,12 @@ import type {
   CompleteDispatcherLeaseInput,
   ContentCommandResult,
   ContentEntryCommandPort,
+  ContentEntryListPage,
+  ContentEntryListValues,
   ContentEntryReadPort,
+  ContentEntrySort,
+  ContentEntryStatus,
+  ContentEntryStatusTotals,
   ContentEntrySummary,
   ConfigurationSyncApplyPort,
   ConfigurationSyncStateReadPort,
@@ -53,6 +62,7 @@ import {
 } from "@lacecms/domain";
 import type {
   Actor,
+  ActorId,
   ContentBlock,
   ContentEntry,
   ContentModelRoute,
@@ -132,12 +142,45 @@ interface StoredSnapshot {
 
 interface SummaryRow {
   readonly draft_revision: number;
+  readonly fields_json: string;
   readonly id: string;
   readonly model_key: string;
+  readonly published_at: number | null;
   readonly published_snapshot_id: string | null;
+  readonly slug: string | null;
+  readonly sort_value: number | string;
+  readonly status: string;
   readonly title: string;
   readonly updated_at: number;
+  readonly updated_by: string;
+  readonly updated_by_name: string | null;
 }
+
+interface TotalsRow {
+  readonly changed_count: number | null;
+  readonly draft_count: number | null;
+  readonly published_count: number | null;
+  readonly total_count: number;
+}
+
+interface DecodedEntryCursor {
+  readonly id: string;
+  readonly value: number | string;
+}
+
+const ENTRY_CURSOR_VERSION = 2;
+const ENTRY_SOURCE_SQL = `content_entries e
+  join content_snapshots d on d.id = e.draft_snapshot_id
+  left join content_snapshots p on p.id = e.published_snapshot_id`;
+const ENTRY_STATUS_SQL = `case when e.published_snapshot_id is null then 'draft'
+  when p.revision = d.revision then 'published' else 'changed' end`;
+const ENTRY_SEARCH_SQL = "(instr(lower(d.title), ?) > 0 or instr(coalesce(d.slug, ''), ?) > 0)";
+const ENTRY_SORT_SQL: Readonly<Record<string, { readonly order: string; readonly value: string }>> =
+  {
+    publishedAt: { order: "coalesce(p.created_at, -1)", value: "coalesce(p.created_at, -1)" },
+    title: { order: "d.title collate nocase", value: "d.title" },
+    updatedAt: { order: "e.updated_at", value: "e.updated_at" },
+  };
 
 interface PublicRow extends EntryRow {
   readonly path: string;
@@ -269,6 +312,87 @@ function decodeCursor(value: string, kind: CursorKind): DecodedCursor {
     if (error instanceof DomainError) throw error;
     failure("Cursor contains invalid JSON.");
   }
+}
+
+function entryCursorKind(input: ListContentEntriesInput): string {
+  return JSON.stringify([
+    "entries",
+    input.modelKey,
+    input.sort,
+    input.status ?? null,
+    input.q ?? null,
+  ]);
+}
+
+function encodeEntryCursor(
+  kind: string,
+  value: number | string,
+  id: string,
+): ReturnType<typeof opaqueCursor> {
+  return opaqueCursor(
+    Buffer.from(JSON.stringify({ id, kind, value, version: ENTRY_CURSOR_VERSION })).toString(
+      "base64url",
+    ),
+  );
+}
+
+function decodeEntryCursor(
+  value: string,
+  kind: string,
+  sort: ContentEntrySort,
+): DecodedEntryCursor {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) failure("Cursor is not base64url encoded.");
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 4
+    ) {
+      failure("Cursor has an invalid shape.");
+    }
+    const candidate = parsed as Record<string, unknown>;
+    if (
+      candidate.version !== ENTRY_CURSOR_VERSION ||
+      candidate.kind !== kind ||
+      typeof candidate.id !== "string" ||
+      candidate.id.length === 0
+    ) {
+      failure("Cursor is unsupported or belongs to a different list.");
+    }
+    const sortValue = candidate.value;
+    const validValue = sort.endsWith("title")
+      ? typeof sortValue === "string" && sortValue.length <= MAX_CONTENT_ENTRY_SEARCH_LENGTH
+      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= -1;
+    if (!validValue) failure("Cursor sort value is invalid.");
+    return { id: candidate.id, value: sortValue as number | string };
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    failure("Cursor contains invalid JSON.");
+  }
+}
+
+function entryStatus(value: string): ContentEntryStatus {
+  if (value === "changed" || value === "draft" || value === "published") return value;
+  failure("Entry status is invalid.");
+}
+
+function listValues(fieldsJson: string, listFields: readonly string[]): ContentEntryListValues {
+  const values: Record<string, boolean | number | string> = {};
+  if (listFields.length === 0) return Object.freeze(values);
+  const fields = parseObject(fieldsJson, "Snapshot fields");
+  for (const key of listFields) {
+    const value = Object.hasOwn(fields, key) ? fields[key] : undefined;
+    if (
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+    ) {
+      values[key] = value;
+    }
+  }
+  return Object.freeze(values);
 }
 
 function chunks<Value>(values: readonly Value[]): readonly (readonly Value[])[] {
@@ -951,40 +1075,109 @@ export class NodeContentRepository
     return this.loadEntry(input.entryId)?.published ?? null;
   }
 
-  public async list(input: ListContentEntriesInput): Promise<CursorPage<ContentEntrySummary>> {
+  public async describeActors(ids: readonly ActorId[]): Promise<readonly ActorSummary[]> {
+    const names = new Map<string, string>();
+    for (const group of chunks([...new Set(ids)])) {
+      const rows = this.connection
+        .prepare(`select id, name from user where id in (${group.map(() => "?").join(", ")})`)
+        .all(...group) as readonly { readonly id: string; readonly name: string }[];
+      for (const row of rows) names.set(row.id, row.name);
+    }
+    return Object.freeze(
+      ids.map((id) => Object.freeze({ displayName: actorDisplayName(id, names.get(id)), id })),
+    );
+  }
+
+  public async list(input: ListContentEntriesInput): Promise<ContentEntryListPage> {
     const limit = assertPageSize(input.limit);
-    const after = input.after === undefined ? undefined : decodeCursor(input.after, "admin");
+    const descending = input.sort.startsWith("-");
+    const sort = ENTRY_SORT_SQL[descending ? input.sort.slice(1) : input.sort];
+    if (sort === undefined) failure("Entry sort is unsupported.");
+    if (input.status !== undefined) entryStatus(input.status);
+    const kind = entryCursorKind(input);
+    const after =
+      input.after === undefined ? undefined : decodeEntryCursor(input.after, kind, input.sort);
+    const term = input.q === undefined ? undefined : foldAscii(input.q);
+    const searchBindings = term === undefined ? [] : [term, term];
+    const searchClause = term === undefined ? "" : `and ${ENTRY_SEARCH_SQL}`;
+    const comparison = descending ? "<" : ">";
+    const direction = descending ? "desc" : "asc";
     const rows = this.connection
       .prepare(
-        `select e.id, e.model_key, e.published_snapshot_id, d.revision as draft_revision,
-                d.title, e.updated_at
-           from content_entries e join content_snapshots d on d.id = e.draft_snapshot_id
-          where e.model_key = ?
-            ${after === undefined ? "" : "and (e.updated_at < ? or (e.updated_at = ? and e.id < ?))"}
-          order by e.updated_at desc, e.id desc limit ?`,
+        `select e.id, e.model_key, e.published_snapshot_id, e.updated_at,
+                d.revision as draft_revision, d.title, d.slug, d.fields_json, d.updated_by,
+                u.name as updated_by_name, p.created_at as published_at,
+                ${ENTRY_STATUS_SQL} as status, ${sort.value} as sort_value
+           from ${ENTRY_SOURCE_SQL}
+           left join user u on u.id = d.updated_by
+          where e.model_key = ? ${searchClause}
+            ${input.status === undefined ? "" : `and ${ENTRY_STATUS_SQL} = ?`}
+            ${
+              after === undefined
+                ? ""
+                : `and (${sort.order} ${comparison} ? or (${sort.order} = ? and e.id ${comparison} ?))`
+            }
+          order by ${sort.order} ${direction}, e.id ${direction} limit ?`,
       )
       .all(
-        ...(after === undefined
-          ? [input.modelKey, limit + 1]
-          : [input.modelKey, after.timestamp, after.timestamp, after.id, limit + 1]),
+        input.modelKey,
+        ...searchBindings,
+        ...(input.status === undefined ? [] : [input.status]),
+        ...(after === undefined ? [] : [after.value, after.value, after.id]),
+        limit + 1,
       ) as readonly SummaryRow[];
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((row) => ({
-      draftRevision: row.draft_revision,
-      id: contentEntryId(row.id),
-      modelKey: contentModelKey(row.model_key),
-      ...(row.published_snapshot_id === null
-        ? {}
-        : { publishedSnapshotId: contentSnapshotId(row.published_snapshot_id) }),
-      title: row.title,
-      updatedAt: unixMilliseconds(assertTimestamp(row.updated_at, "Entry timestamp")),
-    }));
+    const items = pageRows.map((row) => this.summary(row, input.listFields));
     const last = pageRows.at(-1);
     return Object.freeze({
       items: Object.freeze(items),
       ...(rows.length > limit && last !== undefined
-        ? { nextCursor: encodeCursor("admin", last.updated_at, last.id) }
+        ? { nextCursor: encodeEntryCursor(kind, last.sort_value, last.id) }
         : {}),
+      totals: this.entryTotals(input.modelKey, term),
+    });
+  }
+
+  private entryTotals(modelKey: string, term: string | undefined): ContentEntryStatusTotals {
+    const row = this.connection
+      .prepare(
+        `select count(*) as total_count,
+                sum(case when e.published_snapshot_id is null then 1 else 0 end) as draft_count,
+                sum(case when p.revision = d.revision then 1 else 0 end) as published_count,
+                sum(case when p.revision <> d.revision then 1 else 0 end) as changed_count
+           from ${ENTRY_SOURCE_SQL}
+          where e.model_key = ? ${term === undefined ? "" : `and ${ENTRY_SEARCH_SQL}`}`,
+      )
+      .get(modelKey, ...(term === undefined ? [] : [term, term])) as TotalsRow;
+    return Object.freeze({
+      all: assertNonNegativeInteger(row.total_count, "Entry total"),
+      changed: assertNonNegativeInteger(row.changed_count ?? 0, "Changed entry total"),
+      draft: assertNonNegativeInteger(row.draft_count ?? 0, "Draft entry total"),
+      published: assertNonNegativeInteger(row.published_count ?? 0, "Published entry total"),
+    });
+  }
+
+  private summary(row: SummaryRow, listFields: readonly string[]): ContentEntrySummary {
+    const status = entryStatus(row.status);
+    return Object.freeze({
+      draftRevision: row.draft_revision,
+      id: contentEntryId(row.id),
+      listValues: listValues(row.fields_json, listFields),
+      modelKey: contentModelKey(row.model_key),
+      ...(row.published_snapshot_id === null || row.published_at === null
+        ? {}
+        : {
+            publishedAt: unixMilliseconds(assertTimestamp(row.published_at, "Publication time")),
+            publishedSnapshotId: contentSnapshotId(row.published_snapshot_id),
+          }),
+      ...(row.slug === null ? {} : { slug: row.slug }),
+      status,
+      title: row.title,
+      updatedAt: unixMilliseconds(assertTimestamp(row.updated_at, "Entry timestamp")),
+      updatedBy: Object.freeze({
+        displayName: actorDisplayName(row.updated_by, row.updated_by_name),
+        id: actorId(row.updated_by),
+      }),
     });
   }
 

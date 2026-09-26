@@ -461,7 +461,11 @@ test("dirty entry navigation requires an explicit leave-or-stay choice without a
   );
   await screen.findByRole("heading", { name: "Edit posts" });
   await user.type(screen.getByLabelText("Summary"), "Keep this");
-  await user.click(screen.getByRole("link", { name: "Content" }));
+  await user.click(
+    within(screen.getByRole("complementary", { name: "Admin navigation" })).getByRole("link", {
+      name: "Content",
+    }),
+  );
   expect(
     await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" }),
   ).toBeInTheDocument();

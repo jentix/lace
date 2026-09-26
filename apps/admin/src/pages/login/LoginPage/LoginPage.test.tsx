@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { renderRoute, stubClient as client } from "../../../app/testing/index.js";
+import { logOut, renderRoute, stubClient as client } from "../../../app/testing/index.js";
 import { type AdminSessionSource } from "../../../entities/session/index.js";
 
 afterEach(() => {
@@ -32,6 +32,6 @@ test("sign-in returns to a safe route and sign-out clears the session", async ()
   await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   expect(await screen.findByRole("heading", { name: "posts" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Log out" }));
+  await logOut(user);
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });

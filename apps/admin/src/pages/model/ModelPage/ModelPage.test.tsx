@@ -1,8 +1,9 @@
-import { screen } from "@testing-library/react";
-import { expect, test } from "vitest";
-import { renderRoute, stubClient } from "../../../app/testing/index.js";
+import { screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { expect, test, vi } from "vitest";
+import { entry, entryList, renderRoute, stubClient } from "../../../app/testing/index.js";
 import { createStaticSessionSource } from "../../../entities/session/index.js";
-import { AdminClientError } from "../../../shared/api/index.js";
+import { AdminClientError, type EntryListQuery } from "../../../shared/api/index.js";
 
 const editor = createStaticSessionSource({ id: "editor-1", role: "editor" });
 
@@ -31,4 +32,58 @@ test("reports unknown models and failed model loads without an entry list", asyn
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("API unavailable");
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
+});
+
+function listSpy() {
+  const listEntries = vi.fn(async (_modelKey: string, _cursor?: string, _query?: EntryListQuery) =>
+    entryList([entry]),
+  );
+  const tableCalls = () =>
+    listEntries.mock.calls.filter(
+      ([key, , query]) => key === "posts" && query?.limit === undefined,
+    );
+  return { listEntries, tableCalls };
+}
+
+test("a collection URL restores its search, status filter, and sort", async () => {
+  const { listEntries, tableCalls } = listSpy();
+  renderRoute(
+    "/content/posts?q=launch&status=changed&sort=title",
+    editor,
+    stubClient({ listEntries }),
+  );
+
+  const table = await screen.findByRole("table", { name: "posts entries" });
+  expect(tableCalls()[0]).toEqual([
+    "posts",
+    undefined,
+    { q: "launch", sort: "title", status: "changed" },
+  ]);
+  expect(screen.getByRole("searchbox", { name: "Search entries" })).toHaveValue("launch");
+  expect(screen.getByRole("button", { name: /^Changed/u })).toHaveAttribute("aria-pressed", "true");
+  expect(within(table).getByRole("columnheader", { name: "Title" })).toHaveAttribute(
+    "aria-sort",
+    "ascending",
+  );
+});
+
+test("filter changes replace the URL and unsupported parameters are ignored", async () => {
+  const user = userEvent.setup();
+  const { listEntries, tableCalls } = listSpy();
+  const router = renderRoute(
+    "/content/posts?status=archived&sort=author",
+    editor,
+    stubClient({ listEntries }),
+  );
+
+  await screen.findByRole("table", { name: "posts entries" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(tableCalls()[0]).toEqual(["posts", undefined, {}]);
+  expect(screen.getByRole("button", { name: /^All/u })).toHaveAttribute("aria-pressed", "true");
+
+  const historyLength = router.history.length;
+  await user.click(screen.getByRole("button", { name: /^Draft/u }));
+  await waitFor(() => expect(router.state.location.search).toEqual({ status: "draft" }));
+  expect(router.state.location.href).toBe("/content/posts?status=draft");
+  expect(router.history.length).toBe(historyLength);
 });

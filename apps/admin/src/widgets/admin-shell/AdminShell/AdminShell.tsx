@@ -1,70 +1,46 @@
-import { Link, Outlet } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
-import { useSession } from "../../../entities/session/index.js";
+import { Outlet } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { useSignOut } from "../../../features/sign-out/index.js";
 import { errorDescription, technicalDetails } from "../../../shared/api/index.js";
-import { cn } from "../../../shared/lib/index.js";
-import { Button, buttonVariants } from "../../../shared/ui/Button/index.js";
 import { ErrorState } from "../../../shared/ui/ErrorState/index.js";
-import { mainClass } from "../../../shared/ui/layout/index.js";
-import { navigationFor } from "../navigation.js";
+import { ShellHeader } from "../ShellHeader/index.js";
+import { SidebarNav } from "../SidebarNav/index.js";
 
+/**
+ * The inset-panel shell: a persistent sidebar from `md` up, a sheet below it,
+ * and the route content in a raised panel under breadcrumbs.
+ */
 export function AdminShell({ children }: { readonly children: ReactNode }) {
-  const session = useSession();
-  const [navOpen, setNavOpen] = useState(false);
   const signOut = useSignOut();
+  const signOutProps = { onSignOut: () => signOut.mutate(), signingOut: signOut.isPending };
   return (
-    <div
-      className="group min-h-screen md:grid md:grid-cols-[16rem_minmax(0,1fr)]"
-      data-nav-open={navOpen}
-    >
-      <aside
-        className="hidden grid-rows-[auto_1fr] gap-6 border-r border-sidebar-border bg-sidebar p-6 text-sidebar-foreground md:grid max-md:group-data-[nav-open=true]:fixed max-md:group-data-[nav-open=true]:inset-[0_4rem_0_0] max-md:group-data-[nav-open=true]:z-10 max-md:group-data-[nav-open=true]:grid max-md:group-data-[nav-open=true]:shadow-lg"
-        aria-label="Admin navigation"
+    <div className="min-h-screen bg-sidebar md:flex">
+      <a
+        className="sr-only z-50 rounded-md bg-background px-3 py-2 text-sm font-medium shadow-md focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+        href="#main-content"
       >
-        <Link
-          className="text-xl font-bold text-sidebar-foreground"
-          onClick={() => setNavOpen(false)}
-          to="/content"
-        >
-          Lace
-        </Link>
-        <nav className="grid content-start gap-1" id="admin-navigation">
-          {navigationFor(session.role).map((item) => (
-            <Link
-              className="rounded-md px-3 py-2 text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground"
-              key={item.path}
-              onClick={() => setNavOpen(false)}
-              to={item.path as never}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        Skip to content
+      </a>
+      <aside
+        aria-label="Admin navigation"
+        className="hidden w-60 shrink-0 md:sticky md:top-0 md:block md:h-screen"
+      >
+        <SidebarNav {...signOutProps} />
       </aside>
-      <main className={mainClass}>
-        <div className="mb-4 flex justify-end gap-3">
-          <button
-            aria-controls="admin-navigation"
-            aria-expanded={navOpen}
-            className={cn(buttonVariants({ variant: "outline" }), "mr-auto md:hidden")}
-            onClick={() => setNavOpen((open) => !open)}
-            type="button"
-          >
-            Menu
-          </button>
-          <Button disabled={signOut.isPending} onClick={() => signOut.mutate()} variant="ghost">
-            {signOut.isPending ? "Signing out…" : "Log out"}
-          </Button>
-        </div>
-        {signOut.error === null ? undefined : (
-          <ErrorState
-            description={errorDescription(signOut.error)}
-            technicalDetails={technicalDetails(signOut.error)}
-          />
-        )}
-        {children}
-      </main>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col bg-background md:m-2 md:ml-0 md:min-h-[calc(100vh-1rem)] md:rounded-xl md:border md:border-border md:shadow-xs">
+        <ShellHeader {...signOutProps} />
+        <main className="min-w-0 flex-1 p-4 outline-none md:p-6" id="main-content" tabIndex={-1}>
+          {signOut.error === null ? undefined : (
+            <div className="mb-4">
+              <ErrorState
+                description={errorDescription(signOut.error)}
+                technicalDetails={technicalDetails(signOut.error)}
+              />
+            </div>
+          )}
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

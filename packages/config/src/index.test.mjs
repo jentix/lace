@@ -243,3 +243,66 @@ test("snapshots the architecture root fixture's canonical public projection", ()
   );
   expect(canonicalizeJson(fixtureConfig.public)).toBe(canonicalizeJson(expected));
 });
+
+test("normalizes ordered scalar list fields and omits empty ones", async () => {
+  const listFields = ["category", "author"];
+  const withList = defineCollection({
+    fields: {
+      author: field.text(),
+      category: field.select({ options: ["design", "news"] }),
+    },
+    key: "posts",
+    listFields,
+    route: "/blog/:slug",
+    version: 1,
+  });
+  listFields.push("mutated");
+  expect(withList.listFields).toEqual(["category", "author"]);
+  expect(Object.isFrozen(withList.listFields)).toBe(true);
+  expect(Object.hasOwn(postModel({ listFields: [] }), "listFields")).toBe(false);
+  expect(Object.hasOwn(postModel(), "listFields")).toBe(false);
+
+  const config = await defineConfig({ blocks, content: [withList] });
+  expect(JSON.parse(JSON.stringify(config.public.content[0])).listFields).toEqual([
+    "category",
+    "author",
+  ]);
+
+  const [empty, absent] = await Promise.all([
+    defineConfig({ blocks, content: [postModel({ listFields: [] })] }),
+    defineConfig({ blocks, content: [postModel()] }),
+  ]);
+  expect(empty.projectionHash).toBe(absent.projectionHash);
+  expect(empty.structureHash).toBe(absent.structureHash);
+});
+
+test("rejects invalid list fields", () => {
+  const fields = {
+    author: field.text(),
+    body: field.richText(),
+    cover: field.media(),
+  };
+  const collection = (listFields) =>
+    defineCollection({ fields, key: "posts", listFields, route: "/blog/:slug", version: 1 });
+  expect(() => collection("author")).toThrow(ConfigurationError);
+  expect(() => collection([1])).toThrow(/field keys/u);
+  expect(() => collection(["missing"])).toThrow(/undeclared field "missing"/u);
+  expect(() => collection(["author", "author"])).toThrow(/duplicate field "author"/u);
+  expect(() => collection(["body"])).toThrow(/scalar field, not richText/u);
+  expect(() => collection(["cover"])).toThrow(/scalar field, not media/u);
+  expect(() => collection(["toString"])).toThrow(/undeclared field/u);
+});
+
+test("treats list fields as projection-only identity", async () => {
+  const [plain, listed, relisted] = await Promise.all([
+    defineConfig({ blocks, content: [postModel()] }),
+    defineConfig({ blocks, content: [postModel({ listFields: ["author"] })] }),
+    defineConfig({ blocks, content: [postModel({ listFields: ["publishedAt", "author"] })] }),
+  ]);
+  expect(listed.content[0].structureHash).toBe(plain.content[0].structureHash);
+  expect(relisted.content[0].structureHash).toBe(plain.content[0].structureHash);
+  expect(listed.structureHash).toBe(plain.structureHash);
+  expect(listed.content[0].projectionHash).not.toBe(plain.content[0].projectionHash);
+  expect(relisted.content[0].projectionHash).not.toBe(listed.content[0].projectionHash);
+  expect(listed.projectionHash).not.toBe(plain.projectionHash);
+});

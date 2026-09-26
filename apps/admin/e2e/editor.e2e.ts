@@ -46,6 +46,7 @@ function entry(title = "First post") {
     },
     id: "entry-1",
     model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+    updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
 }
 
@@ -188,13 +189,13 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
   await expect(empty.getByRole("status", { name: "Loading content models" })).toBeVisible();
   releaseModels?.();
   await expect(empty.getByText("No content models configured")).toBeVisible();
-  await empty.getByRole("button", { name: "Menu" }).focus();
-  await expect(empty.getByRole("button", { name: "Menu" })).toBeFocused();
+  await empty.getByRole("button", { name: "Open navigation" }).focus();
+  await expect(empty.getByRole("button", { name: "Open navigation" })).toBeFocused();
   const focus = await empty
-    .getByRole("button", { name: "Menu" })
+    .getByRole("button", { name: "Open navigation" })
     .evaluate((element) => getComputedStyle(element).outlineStyle);
   expect(focus).not.toBe("none");
-  await empty.getByRole("button", { name: "Menu" }).press("Enter");
+  await empty.getByRole("button", { name: "Open navigation" }).press("Enter");
   await expect(empty.getByRole("link", { name: "Media" })).toBeVisible();
   for (const [route, message] of [
     ["media", "No media yet"],
@@ -222,4 +223,57 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
     await expect(failed.getByRole("alert").first()).toBeVisible();
     await failed.close();
   }
+});
+
+test("restores collection search, status filter, and sort from the URL after a reload", async ({
+  browser,
+}) => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 740 } });
+  const listQueries: string[] = [];
+  const summary = {
+    draftRevision: 2,
+    id: "entry-1",
+    listValues: {},
+    modelKey: "posts",
+    publishedAt: "2026-09-20T00:00:00.000Z",
+    publishedSnapshotId: "published-1",
+    slug: "first-post",
+    status: "changed",
+    title: "First post",
+    updatedAt: "2026-09-21T00:00:00.000Z",
+    updatedBy: { displayName: "Ada Editor", id: "editor-1" },
+  };
+  await mockEditor(page, "editor", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/v1/admin/models/posts/entries") return false;
+    if (!url.searchParams.has("limit")) listQueries.push(url.searchParams.toString());
+    await json(route, { items: [summary], totals: { all: 1, changed: 1, draft: 0, published: 0 } });
+    return true;
+  });
+
+  await page.goto("/admin/content/posts");
+  await expect(page.getByRole("table", { name: "posts entries" })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search entries" }).fill("first");
+  await expect(page).toHaveURL(/q=first/u);
+  await page.getByRole("button", { name: "Changed 1" }).click();
+  await page.getByRole("button", { name: "Title", exact: true }).click();
+  await expect(page).toHaveURL(/sort=title/u);
+  await expect(page).toHaveURL(/status=changed/u);
+
+  await page.reload();
+  await expect(page.getByRole("searchbox", { name: "Search entries" })).toHaveValue("first");
+  await expect(page.getByRole("button", { name: "Changed 1" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("columnheader", { name: "Title" })).toHaveAttribute(
+    "aria-sort",
+    "ascending",
+  );
+  expect(new URLSearchParams(listQueries.at(-1))).toEqual(
+    new URLSearchParams("q=first&status=changed&sort=title"),
+  );
+  await expect(page.getByText("entry-1")).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  await page.close();
 });

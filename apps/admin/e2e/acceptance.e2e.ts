@@ -49,12 +49,15 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("textbox", { name: "Email" }).fill(account.email);
   await page.getByLabel("Password").fill(account.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Content" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "home" })).toBeVisible();
-  await page.getByRole("link", { name: "notes" }).click();
+  // Sidebar, breadcrumbs, and overview cards repeat names, so scope each query.
+  const main = page.getByRole("main");
+  const sidebar = page.getByRole("complementary", { name: "Admin navigation" });
+  await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible();
+  await expect(main.getByRole("link", { name: "home" })).toBeVisible();
+  await main.getByRole("link", { name: "notes" }).click();
   await expect(page.getByText("No entries yet")).toBeVisible();
 
-  await page.getByRole("link", { name: "Media" }).click();
+  await sidebar.getByRole("link", { name: "Media", exact: true }).click();
   await expect(page.getByText("No media yet")).toBeVisible();
   await page.getByLabel("Upload image").setInputFiles({
     name: "acceptance.png",
@@ -63,8 +66,8 @@ test("administrator completes the local editorial flow and preserves published o
   });
   await expect(page.getByText("Uploaded acceptance.png.")).toBeVisible();
 
-  await page.getByRole("link", { name: "Content" }).click();
-  await page.getByRole("link", { name: "home" }).click();
+  await sidebar.getByRole("link", { name: "Content", exact: true }).click();
+  await main.getByRole("link", { name: "home" }).click();
   await page.getByRole("textbox", { name: "Title" }).fill("Acceptance home");
   await page.getByRole("button", { name: "Add Image" }).click();
   await page.getByRole("textbox", { name: "Alt" }).fill("Acceptance image");
@@ -76,8 +79,8 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("button", { name: "Confirm publication" }).click();
   await expect(page.getByRole("region", { name: "Publication status" })).toContainText("Published");
 
-  await page.getByRole("link", { name: "Content" }).click();
-  await page.getByRole("link", { name: "notes" }).click();
+  await sidebar.getByRole("link", { name: "Content", exact: true }).click();
+  await main.getByRole("link", { name: "notes" }).click();
   await page.getByRole("button", { name: "Create entry" }).click();
   await page
     .getByRole("dialog", { name: "Create entry" })
@@ -87,7 +90,7 @@ test("administrator completes the local editorial flow and preserves published o
     .getByRole("dialog", { name: "Create entry" })
     .getByRole("button", { name: "Create entry" })
     .click();
-  await page.getByRole("link", { name: "Acceptance note" }).click();
+  await main.getByRole("link", { name: "Acceptance note" }).click();
   await page.getByRole("textbox", { name: "Slug" }).fill("acceptance-note");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText(/Saved revision 2/u)).toBeVisible();
@@ -95,7 +98,7 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("button", { name: "Confirm publication" }).click();
   await expect(page.getByRole("region", { name: "Publication status" })).toContainText("Published");
 
-  await page.getByRole("link", { name: "Settings" }).click();
+  await sidebar.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("textbox", { name: "Token name" }).fill("acceptance-site");
   await page.getByRole("button", { name: "Create build token" }).click();
   const token = await page.getByTestId("issued-token-value").textContent();
@@ -125,9 +128,9 @@ test("administrator completes the local editorial flow and preserves published o
   });
   expect(exportBefore.status()).toBe(200);
   const publishedBefore = await exportBefore.json();
-  await page.getByRole("link", { name: "Content" }).click();
-  await page.getByRole("link", { name: "notes" }).click();
-  await page.getByRole("link", { name: "Acceptance note" }).click();
+  await sidebar.getByRole("link", { name: "Content", exact: true }).click();
+  await main.getByRole("link", { name: "notes" }).click();
+  await main.getByRole("link", { name: "Acceptance note" }).click();
   await page.getByRole("textbox", { name: "Title" }).fill("Unpublished note");
   await page.getByRole("textbox", { name: "Slug" }).fill("unpublished-note");
   await page.getByRole("button", { name: "Save draft" }).click();
@@ -145,7 +148,7 @@ test("administrator completes the local editorial flow and preserves published o
   expect((await request.get(`${origin}/notes/unpublished-note`)).status()).toBe(404);
 
   const userPassword = randomBytes(24).toString("base64url");
-  await page.getByRole("link", { name: "Users" }).click();
+  await sidebar.getByRole("link", { name: "Users", exact: true }).click();
   for (const role of ["editor", "viewer"] as const) {
     await page.getByRole("textbox", { name: "Email" }).fill(`acceptance-${role}@example.test`);
     await page.getByLabel("Password").fill(userPassword);
@@ -159,13 +162,14 @@ test("administrator completes the local editorial flow and preserves published o
     await member.getByRole("textbox", { name: "Email" }).fill(`acceptance-${role}@example.test`);
     await member.getByLabel("Password").fill(userPassword);
     await member.getByRole("button", { name: "Sign in" }).click();
-    await expect(member.getByRole("heading", { name: "Content" })).toBeVisible();
+    const memberSidebar = member.getByRole("complementary", { name: "Admin navigation" });
+    await expect(member.getByRole("heading", { name: "Content", exact: true })).toBeVisible();
     await expect(member.getByRole("link", { name: "Users" })).toHaveCount(0);
     await expect(member.getByRole("link", { name: "Settings" })).toHaveCount(0);
     await member.goto(`${origin}/admin/users`);
     await expect(member.getByText("Access denied")).toBeVisible();
-    await member.getByRole("link", { name: "Content" }).click();
-    await member.getByRole("link", { name: "home" }).click();
+    await memberSidebar.getByRole("link", { name: "Content", exact: true }).click();
+    await member.getByRole("main").getByRole("link", { name: "home" }).click();
     await expect(member.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
     if (role === "editor") {
       await member.getByRole("textbox", { name: "Title" }).fill("Editor private draft");
@@ -173,7 +177,7 @@ test("administrator completes the local editorial flow and preserves published o
       await expect(member.getByText(/Saved revision 3/u)).toBeVisible();
     } else {
       await expect(member.getByRole("button", { name: "Save draft" })).toHaveCount(0);
-      await member.getByRole("link", { name: "Media" }).click();
+      await memberSidebar.getByRole("link", { name: "Media", exact: true }).click();
       await expect(member.getByLabel("Upload image")).toHaveCount(0);
     }
     await member.close();

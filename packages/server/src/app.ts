@@ -17,9 +17,10 @@ import {
   buildTokenListSchema,
   buildTokenSchema,
   adminSettingsStatusSchema,
+  adminContentEntrySchema,
   classifyError,
+  contentEntryListQuerySchema,
   contentEntryListSchema,
-  contentEntrySchema,
   contentModelListSchema,
   managedUserListSchema,
   managedUserSchema,
@@ -41,6 +42,7 @@ import {
   resolveExpectedRevision,
   saveDraftRequestSchema,
   setupAdminRequestSchema,
+  toAdminContentEntryDto,
   toBuildExportDto,
   toContentEntryDto,
   toContentModelDto,
@@ -84,7 +86,11 @@ interface ServerModelBase {
 }
 
 type ServerContentModel =
-  | (ServerModelBase & { readonly kind: "collection"; readonly route: string })
+  | (ServerModelBase & {
+      readonly kind: "collection";
+      readonly listFields?: readonly string[];
+      readonly route: string;
+    })
   | (ServerModelBase & { readonly kind: "page"; readonly path: string });
 
 interface ServerBlockMetadata {
@@ -313,6 +319,9 @@ function modelDto(config: ServerConfig, model: ServerContentModel) {
     key: model.key,
     kind: model.kind,
     ...(model.label === undefined ? {} : { label: model.label }),
+    ...(model.kind === "collection" && model.listFields !== undefined
+      ? { listFields: model.listFields }
+      : {}),
     ...(model.kind === "page" ? { path: model.path } : { route: model.route }),
     version: model.version,
   });
@@ -488,6 +497,19 @@ export function createLaceApp(input: LaceAppInput): Hono {
     if (resolved === null) throw new AuthorizationError();
     context.set("lace.actor", resolved);
     return resolved;
+  }
+
+  async function adminEntryDto(
+    resolvedActor: Actor,
+    entry: Awaited<ReturnType<ContentUseCases["create"]>>,
+  ) {
+    return toAdminContentEntryDto(
+      entry,
+      await input.content.describeActor({
+        actor: resolvedActor,
+        actorId: entry.draft.updatedBy.id,
+      }),
+    );
   }
 
   app.get("/health/live", (context) => context.json({ status: "live" }));
@@ -773,28 +795,50 @@ export function createLaceApp(input: LaceAppInput): Hono {
 
   app.get(
     "/api/v1/admin/models/:modelKey/entries",
-    describeRoute({ summary: "List content entries", tags: ["admin"] }),
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(contentEntryListSchema) } },
+          description: "Content entry page with per-status totals",
+        },
+      },
+      summary: "List content entries",
+      tags: ["admin"],
+    }),
     validator("param", modelKeyParams, validationHook),
+    validator("query", contentEntryListQuerySchema, validationHook),
     async (context) => {
       const modelKey = context.req.param("modelKey");
       if (contentModel(input.config, modelKey) === undefined) return notFound();
+      const query = context.req.valid("query") as v.InferOutput<typeof contentEntryListQuerySchema>;
       const page = await input.content.list({
         actor: await actor(context),
         modelKey,
         ...pagination(context.req.raw),
+        ...(query.q === undefined || query.q.length === 0 ? {} : { q: query.q }),
+        ...(query.sort === undefined ? {} : { sort: query.sort }),
+        ...(query.status === undefined ? {} : { status: query.status }),
       });
       return response(contentEntryListSchema, {
         items: page.items.map((entry) => ({
           draftRevision: entry.draftRevision,
           id: entry.id,
+          listValues: entry.listValues,
           modelKey: entry.modelKey,
+          ...(entry.publishedAt === undefined
+            ? {}
+            : { publishedAt: toIsoTimestamp(entry.publishedAt) }),
           ...(entry.publishedSnapshotId === undefined
             ? {}
             : { publishedSnapshotId: entry.publishedSnapshotId }),
+          ...(entry.slug === undefined ? {} : { slug: entry.slug }),
+          status: entry.status,
           title: entry.title,
           updatedAt: toIsoTimestamp(entry.updatedAt),
+          updatedBy: entry.updatedBy,
         })),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        totals: page.totals,
       });
     },
   );
@@ -807,7 +851,7 @@ export function createLaceApp(input: LaceAppInput): Hono {
       },
       responses: {
         201: {
-          content: { "application/json": { schema: resolver(contentEntrySchema) } },
+          content: { "application/json": { schema: resolver(adminContentEntrySchema) } },
           description: "Created entry",
         },
       },
@@ -823,28 +867,41 @@ export function createLaceApp(input: LaceAppInput): Hono {
         typeof createContentEntryRequestSchema
       >;
       const { blocks, fields, slug, title } = body;
+      const resolvedActor = await actor(context);
       const entry = await input.content.create({
-        actor: await actor(context),
+        actor: resolvedActor,
         modelKey,
         blocks: blocks.map((block) => ({ ...block, key: block.key as never })),
         fields,
         ...(slug === undefined ? {} : { slug }),
         title,
       });
-      return response(contentEntrySchema, toContentEntryDto(entry), 201);
+      return response(adminContentEntrySchema, await adminEntryDto(resolvedActor, entry), 201);
     },
   );
 
   app.get(
     "/api/v1/admin/entries/:entryId",
-    describeRoute({ summary: "Load content entry", tags: ["admin"] }),
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(adminContentEntrySchema) } },
+          description: "Content entry with its last editor",
+        },
+      },
+      summary: "Load content entry",
+      tags: ["admin"],
+    }),
     validator("param", entryIdParams, validationHook),
     async (context) => {
+      const resolvedActor = await actor(context);
       const entry = await input.content.load({
-        actor: await actor(context),
+        actor: resolvedActor,
         entryId: context.req.param("entryId") as never,
       });
-      return entry === null ? notFound() : response(contentEntrySchema, toContentEntryDto(entry));
+      return entry === null
+        ? notFound()
+        : response(adminContentEntrySchema, await adminEntryDto(resolvedActor, entry));
     },
   );
 
@@ -854,6 +911,12 @@ export function createLaceApp(input: LaceAppInput): Hono {
       requestBody: {
         content: { "application/json": { schema: resolver(saveDraftRequestSchema) } },
       },
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(adminContentEntrySchema) } },
+          description: "Saved entry",
+        },
+      },
       summary: "Save complete draft",
       tags: ["admin"],
     }),
@@ -861,8 +924,9 @@ export function createLaceApp(input: LaceAppInput): Hono {
     validator("json", saveDraftRequestSchema, validationHook),
     async (context) => {
       const body = context.req.valid("json") as v.InferOutput<typeof saveDraftRequestSchema>;
+      const resolvedActor = await actor(context);
       const entry = await input.content.save({
-        actor: await actor(context),
+        actor: resolvedActor,
         blocks: body.blocks.map((block) => ({ ...block, key: block.key as never })),
         entryId: context.req.param("entryId") as never,
         expectedRevision: revision(body, context.req.raw),
@@ -870,7 +934,7 @@ export function createLaceApp(input: LaceAppInput): Hono {
         ...(body.slug === undefined ? {} : { slug: body.slug }),
         title: body.title,
       });
-      return response(contentEntrySchema, toContentEntryDto(entry));
+      return response(adminContentEntrySchema, await adminEntryDto(resolvedActor, entry));
     },
   );
 
@@ -879,6 +943,12 @@ export function createLaceApp(input: LaceAppInput): Hono {
     describeRoute({
       requestBody: {
         content: { "application/json": { schema: resolver(publishContentEntryRequestSchema) } },
+      },
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(publishContentEntryResultSchema) } },
+          description: "Publication and build dispatch outcome",
+        },
       },
       summary: "Publish content entry",
       tags: ["admin"],
@@ -890,13 +960,23 @@ export function createLaceApp(input: LaceAppInput): Hono {
         typeof publishContentEntryRequestSchema
       >;
       const idempotencyKey = optionalIdempotencyKey(context.req.raw);
+      const resolvedActor = await actor(context);
       const published = await input.content.publish({
-        actor: await actor(context),
+        actor: resolvedActor,
         entryId: context.req.param("entryId") as never,
         expectedRevision: revision(body, context.req.raw),
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       });
-      return response(publishContentEntryResultSchema, toPublishContentEntryResultDto(published));
+      return response(
+        publishContentEntryResultSchema,
+        toPublishContentEntryResultDto({
+          ...published,
+          updatedBy: await input.content.describeActor({
+            actor: resolvedActor,
+            actorId: published.entry.draft.updatedBy.id,
+          }),
+        }),
+      );
     },
   );
 

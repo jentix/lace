@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { panelClass } from "../layout/index.js";
 
 export function EmptyState({
@@ -10,9 +10,10 @@ export function EmptyState({
   readonly description: string;
   readonly title: string;
 }) {
+  const titleId = useId();
   return (
-    <section className={panelClass} aria-labelledby="empty-state-title">
-      <h2 id="empty-state-title">{title}</h2>
+    <section className={panelClass} aria-labelledby={titleId}>
+      <h2 id={titleId}>{title}</h2>
       <p>{description}</p>
       {action}
     </section>

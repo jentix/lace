@@ -14,8 +14,11 @@ import {
   buildExportSchema,
   blockMetadataSchema,
   classifyError,
+  adminContentEntrySchema,
+  contentEntryListQuerySchema,
   contentEntryListSchema,
   contentEntrySchema,
+  contentEntrySummarySchema,
   contentModelListSchema,
   createContentEntryRequestSchema,
   deleteContentEntryRequestSchema,
@@ -37,6 +40,7 @@ import {
   saveDraftRequestSchema,
   siteBuildSchema,
   toBuildExportDto,
+  toAdminContentEntryDto,
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
@@ -94,13 +98,19 @@ describe("shared REST contract DTOs", () => {
           {
             draftRevision: 4,
             id: "entry-1",
+            listValues: { author: "Lace" },
             modelKey: "posts",
+            publishedAt: toIsoTimestamp(timestamp),
             publishedSnapshotId: "snapshot-published-1",
+            slug: "welcome",
+            status: "published",
             title: "Welcome",
             updatedAt: toIsoTimestamp(timestamp),
+            updatedBy: { displayName: "Editor", id: "actor-1" },
           },
         ],
         nextCursor: "opaque-next-page",
+        totals: { all: 1, changed: 0, draft: 0, published: 1 },
       }),
     ).toMatchObject({ items: [{ id: "entry-1" }], nextCursor: "opaque-next-page" });
 
@@ -150,19 +160,21 @@ describe("shared REST contract DTOs", () => {
       build: { buildId: "build-1", status: "accepted" },
       entry,
       publication: "published",
+      updatedBy: { displayName: "Editor", id: actor.id },
     });
+    const adminEntryDto = publishedResult.entry;
     expect(v.parse(publishContentEntryResultSchema, publishedResult)).toEqual(publishedResult);
     expect(
       v.parse(publishContentEntryResultSchema, {
         build: { status: "unavailable" },
-        entry: entryDto,
+        entry: adminEntryDto,
         publication: "published",
       }),
     ).toMatchObject({ build: { status: "unavailable" } });
     expect(
       v.parse(publishContentEntryResultSchema, {
         build: { status: "not-dispatched" },
-        entry: entryDto,
+        entry: adminEntryDto,
         publication: "replayed",
       }),
     ).toMatchObject({ publication: "replayed" });
@@ -394,5 +406,112 @@ describe("invalid shared REST payloads", () => {
     expect(v.safeParse(entityTagSchema, "7").success).toBe(false);
     expect(v.safeParse(idempotencyKeySchema, "bad\nkey").success).toBe(false);
     expect(v.safeParse(jsonPointerSchema, "fields.title").success).toBe(false);
+  });
+});
+
+describe("admin entry list contracts", () => {
+  const summary = {
+    draftRevision: 2,
+    id: "entry-1",
+    listValues: { author: "Lace", featured: true, rank: 3 },
+    modelKey: "posts",
+    status: "draft",
+    title: "Welcome",
+    updatedAt: toIsoTimestamp(timestamp),
+    updatedBy: { displayName: "Editor", id: "actor-1" },
+  };
+  const publishedFields = {
+    publishedAt: toIsoTimestamp(timestamp),
+    publishedSnapshotId: "snapshot-published-1",
+  };
+
+  test("accepts consistent summaries for every status", () => {
+    expect(v.parse(contentEntrySummarySchema, summary)).toEqual(summary);
+    for (const status of ["published", "changed"]) {
+      expect(
+        v.parse(contentEntrySummarySchema, { ...summary, ...publishedFields, status }),
+      ).toMatchObject({ status });
+    }
+  });
+
+  test("rejects inconsistent status, non-scalar list values, and missing totals", () => {
+    for (const invalid of [
+      { ...summary, publishedAt: toIsoTimestamp(timestamp) },
+      { ...summary, publishedSnapshotId: "snapshot-published-1" },
+      { ...summary, status: "changed", publishedAt: toIsoTimestamp(timestamp) },
+      { ...summary, status: "published" },
+      { ...summary, status: "archived" },
+      { ...summary, listValues: { body: { type: "doc" } } },
+      { ...summary, listValues: { tags: ["a"] } },
+      { ...summary, listValues: { empty: null } },
+      { ...summary, updatedBy: { displayName: "", id: "actor-1" } },
+      { ...summary, updatedBy: { id: "actor-1" } },
+    ]) {
+      expect(v.safeParse(contentEntrySummarySchema, invalid).success).toBe(false);
+    }
+    expect(v.safeParse(contentEntryListSchema, { items: [summary] }).success).toBe(false);
+    expect(
+      v.safeParse(contentEntryListSchema, {
+        items: [summary],
+        totals: { all: -1, changed: 0, draft: 0, published: 0 },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("validates list query parameters", () => {
+    expect(
+      v.parse(contentEntryListQuerySchema, {
+        extra: "ignored",
+        limit: "25",
+        q: "  launch  ",
+        sort: "-title",
+        status: "changed",
+      }),
+    ).toEqual({ limit: "25", q: "launch", sort: "-title", status: "changed" });
+    expect(v.parse(contentEntryListQuerySchema, { q: " ".repeat(300) })).toEqual({ q: "" });
+    for (const invalid of [
+      { status: "archived" },
+      { sort: "author" },
+      { q: "x".repeat(201) },
+      { limit: "0" },
+      { after: "" },
+    ]) {
+      expect(v.safeParse(contentEntryListQuerySchema, invalid).success).toBe(false);
+    }
+  });
+
+  test("admin entries name the last editor while public entries stay unchanged", () => {
+    const adminDto = toAdminContentEntryDto(entry, { displayName: "Editor", id: actor.id });
+    expect(v.parse(adminContentEntrySchema, adminDto)).toEqual(adminDto);
+    expect(adminDto.updatedBy).toEqual({ displayName: "Editor", id: "actor-1" });
+    expect(v.safeParse(contentEntrySchema, adminDto).success).toBe(false);
+    expect(v.safeParse(adminContentEntrySchema, toContentEntryDto(entry)).success).toBe(false);
+    expect(JSON.stringify(toContentEntryDto(entry))).not.toContain("displayName");
+  });
+
+  test("content models carry valid collection list fields only", () => {
+    const fields = { author: { required: false, type: "text" } };
+    const collection = { blocks: [], fields, key: "posts", kind: "collection", route: "/b/:slug" };
+    const dto = toContentModelDto({ ...collection, listFields: ["author"], version: 1 });
+    expect(v.parse(contentModelListSchema, { items: [dto] }).items[0].listFields).toEqual([
+      "author",
+    ]);
+    expect(toContentModelDto({ ...collection, version: 1 })).not.toHaveProperty("listFields");
+    for (const invalid of [
+      { ...collection, listFields: [], version: 1 },
+      { ...collection, listFields: ["author", "author"], version: 1 },
+      { ...collection, listFields: ["missing"], version: 1 },
+      {
+        blocks: [],
+        fields,
+        key: "home",
+        kind: "page",
+        listFields: ["author"],
+        path: "/",
+        version: 1,
+      },
+    ]) {
+      expect(v.safeParse(contentModelListSchema, { items: [invalid] }).success).toBe(false);
+    }
   });
 });

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { renderRoute, stubClient as client } from "../testing/index.js";
+import { logOut, renderRoute, stubClient as client } from "../testing/index.js";
 import { AdminApp } from "./index.js";
 import {
   createStaticSessionSource,
@@ -9,7 +9,6 @@ import {
 } from "../../entities/session/index.js";
 import { AdminClientError } from "../../shared/api/index.js";
 import { safeReturnPath } from "../../shared/lib/index.js";
-import { navigationFor } from "../../widgets/admin-shell/index.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,7 +32,7 @@ test("anonymous protected visits show only neutral loading before login redirect
   expect(screen.queryByRole("heading", { name: "Entry" })).not.toBeInTheDocument();
 });
 
-test("admin root redirects through the session guard and header logout clears the session", async () => {
+test("admin root redirects through the session guard and user-menu logout clears the session", async () => {
   const user = userEvent.setup();
   let current: { id: string; role: "admin" } | null = { id: "admin-1", role: "admin" };
   const source: AdminSessionSource = { get: async () => current, invalidate: () => undefined };
@@ -42,7 +41,7 @@ test("admin root redirects through the session guard and header logout clears th
   });
   renderRoute("/", source, client({ signOut }));
   expect(await screen.findByRole("heading", { name: "Content" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Log out" }));
+  await logOut(user);
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   expect(signOut).toHaveBeenCalledOnce();
   document.body.replaceChildren();
@@ -63,17 +62,9 @@ test("typed route foundations render valid paths and reject malformed model keys
   expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
 });
 
-test("safe navigation helpers retain only local return paths and allowed links", () => {
+test("safe navigation helpers retain only local return paths", () => {
   expect(safeReturnPath("/content/posts?view=list")).toBe("/content/posts?view=list");
   expect(safeReturnPath("//attacker.test")).toBe("/content");
-  expect(navigationFor("admin").map((item) => item.label)).toEqual([
-    "Content",
-    "Media",
-    "Builds",
-    "Users",
-    "Settings",
-  ]);
-  expect(navigationFor("editor").map((item) => item.label)).toEqual(["Content", "Media", "Builds"]);
 });
 
 test("an expired-session response removes protected content during recovery", async () => {
