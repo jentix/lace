@@ -15,21 +15,28 @@ function expectedFormat(mimeType: MediaMimeType): "avif" | "jpeg" | "png" | "web
   }
 }
 
-/** Node image inspector used only after the portable media policy identifies a candidate format. */
+/**
+ * Node image inspector used only after the portable media policy identifies a
+ * candidate format. It reports orientation-applied (displayed) dimensions.
+ */
 export class NodeSharpImageInspector implements ImageInspector {
   public async inspect(bytes: Uint8Array, mimeType: MediaMimeType): Promise<ImageDimensions> {
     try {
       const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: false }).metadata();
       const format =
         mimeType === "image/avif" && metadata.format === "heif" ? "avif" : metadata.format;
+      // Display dimensions: EXIF orientation 5-8 swaps the stored width and height.
+      const { height, width } = metadata.autoOrient ?? {};
       if (
         format !== expectedFormat(mimeType) ||
-        metadata.width === undefined ||
-        metadata.height === undefined
+        !Number.isSafeInteger(width) ||
+        !Number.isSafeInteger(height) ||
+        width! < 1 ||
+        height! < 1
       ) {
         throw new DomainError("CONTENT_INVALID_STATE", "Media image data is invalid.");
       }
-      return { height: metadata.height, width: metadata.width };
+      return { height: height!, width: width! };
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new DomainError("CONTENT_INVALID_STATE", "Media image data is invalid.");

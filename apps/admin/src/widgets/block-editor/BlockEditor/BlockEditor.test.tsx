@@ -63,7 +63,7 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
         items: [
           {
             createdAt: "2026-09-20T00:00:00.000Z",
-            createdBy: "editor-1",
+            createdBy: { displayName: "editor@lace.test", id: "editor-1" },
             filename: "cover.png",
             id: "media-1",
             mimeType: "image/png",
@@ -71,6 +71,7 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
             status: "active",
             updatedAt: "2026-09-20T00:00:00.000Z",
             url: "https://lace.test/api/v1/public/media/media-1",
+            usageCount: 0,
           },
         ],
       }),

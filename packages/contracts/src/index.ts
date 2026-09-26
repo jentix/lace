@@ -474,20 +474,83 @@ export type BuildTokenDto = v.InferOutput<typeof buildTokenSchema>;
 export type BuildTokenCreatedDto = v.InferOutput<typeof buildTokenCreatedSchema>;
 export type BuildTokenListDto = v.InferOutput<typeof buildTokenListSchema>;
 
+const positiveIntegerSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
+
+export const mediaMimeTypeSchema = v.picklist([
+  "image/avif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+export const mediaSortSchema = v.picklist([
+  "-createdAt",
+  "-filename",
+  "-size",
+  "createdAt",
+  "filename",
+  "size",
+]);
+export const MAX_MEDIA_SEARCH_LENGTH = 200;
+export const MAX_MEDIA_USAGE_ENTRIES = 50;
+
+/** Query parameters accepted by the admin media list; unknown keys stay ignored. */
+export const mediaListQuerySchema = v.object({
+  after: v.optional(opaqueCursorSchema),
+  limit: v.optional(v.pipe(v.string(), v.regex(/^[1-9][0-9]{0,2}$/u))),
+  q: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(MAX_MEDIA_SEARCH_LENGTH))),
+  sort: v.optional(mediaSortSchema),
+  type: v.optional(mediaMimeTypeSchema),
+});
+
 export const mediaMetadataSchema = v.strictObject({
   createdAt: isoTimestampSchema,
-  createdBy: identifierSchema,
+  createdBy: actorSummarySchema,
   filename: v.string(),
-  height: v.optional(nonNegativeIntegerSchema),
+  height: v.optional(positiveIntegerSchema),
   id: identifierSchema,
   mimeType: v.string(),
   size: nonNegativeIntegerSchema,
   status: v.picklist(["active", "delete_failed", "deleting"]),
   updatedAt: isoTimestampSchema,
   url: v.string(),
-  width: v.optional(nonNegativeIntegerSchema),
+  usageCount: nonNegativeIntegerSchema,
+  width: v.optional(positiveIntegerSchema),
 });
 export const mediaListSchema = cursorPageSchema(mediaMetadataSchema);
+
+const mediaUsageStatesSchema = v.pipe(
+  v.array(v.picklist(["draft", "published"])),
+  v.minLength(1),
+  v.maxLength(2),
+  v.check((states) => new Set(states).size === states.length, "Usage states must be unique."),
+);
+export const mediaUsageLocationSchema = v.variant("source", [
+  v.strictObject({
+    field: identifierSchema,
+    source: v.literal("field"),
+    states: mediaUsageStatesSchema,
+  }),
+  v.strictObject({
+    blockKey: identifierSchema,
+    blockType: identifierSchema,
+    field: identifierSchema,
+    source: v.literal("block"),
+    states: mediaUsageStatesSchema,
+  }),
+]);
+export const mediaUsageEntrySchema = v.strictObject({
+  entryId: identifierSchema,
+  locations: v.pipe(v.array(mediaUsageLocationSchema), v.minLength(1)),
+  modelKey: identifierSchema,
+  slug: v.optional(identifierSchema),
+  status: contentEntryStatusSchema,
+  title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
+});
+/** Admin media details: metadata plus the bounded entries that use the item. */
+export const mediaDetailSchema = v.strictObject({
+  ...mediaMetadataSchema.entries,
+  usage: v.pipe(v.array(mediaUsageEntrySchema), v.maxLength(MAX_MEDIA_USAGE_ENTRIES)),
+});
 
 export const siteBuildSchema = v.strictObject({
   id: identifierSchema,
@@ -512,6 +575,7 @@ export const errorCodeSchema = v.picklist([
   "CONTENT_REVISION_CONFLICT",
   "CONTENT_ROUTE_CONFLICT",
   "LAST_ADMIN_PROTECTED",
+  "MEDIA_IN_USE",
   "INTERNAL_ERROR",
   "NOT_FOUND",
   "PAYLOAD_TOO_LARGE",
@@ -546,6 +610,12 @@ export type PublicContentListDto = v.InferOutput<typeof publicContentListSchema>
 export type BuildExportDto = v.InferOutput<typeof buildExportSchema>;
 export type MediaMetadataDto = v.InferOutput<typeof mediaMetadataSchema>;
 export type MediaListDto = v.InferOutput<typeof mediaListSchema>;
+export type MediaDetailDto = v.InferOutput<typeof mediaDetailSchema>;
+export type MediaUsageEntryDto = v.InferOutput<typeof mediaUsageEntrySchema>;
+export type MediaUsageLocationDto = v.InferOutput<typeof mediaUsageLocationSchema>;
+export type MediaSortDto = v.InferOutput<typeof mediaSortSchema>;
+export type MediaMimeTypeDto = v.InferOutput<typeof mediaMimeTypeSchema>;
+export type MediaListQueryDto = v.InferOutput<typeof mediaListQuerySchema>;
 export type SiteBuildDto = v.InferOutput<typeof siteBuildSchema>;
 export type ErrorEnvelope = v.InferOutput<typeof errorEnvelopeSchema>;
 export type LaceErrorCode = v.InferOutput<typeof errorCodeSchema>;
@@ -635,7 +705,7 @@ export function toPublishContentEntryResultDto(input: {
 /** Maps metadata without exposing the private storage key. */
 export interface MediaMetadataDtoSource {
   readonly createdAt: UnixMilliseconds;
-  readonly createdBy: string;
+  readonly createdBy: { readonly displayName: string; readonly id: string };
   readonly filename: string;
   readonly height?: number;
   readonly id: string;
@@ -643,13 +713,14 @@ export interface MediaMetadataDtoSource {
   readonly size: number;
   readonly status: "active" | "delete_failed" | "deleting";
   readonly updatedAt: UnixMilliseconds;
+  readonly usageCount: number;
   readonly width?: number;
 }
 
 export function toMediaMetadataDto(media: MediaMetadataDtoSource, url: string): MediaMetadataDto {
   return {
     createdAt: toIsoTimestamp(media.createdAt),
-    createdBy: media.createdBy,
+    createdBy: { displayName: media.createdBy.displayName, id: media.createdBy.id },
     filename: media.filename,
     ...(media.height === undefined ? {} : { height: media.height }),
     id: media.id,
@@ -658,7 +729,58 @@ export function toMediaMetadataDto(media: MediaMetadataDtoSource, url: string): 
     status: media.status,
     updatedAt: toIsoTimestamp(media.updatedAt),
     url,
+    usageCount: media.usageCount,
     ...(media.width === undefined ? {} : { width: media.width }),
+  };
+}
+
+export type MediaUsageLocationDtoSource =
+  | {
+      readonly field: string;
+      readonly source: "field";
+      readonly states: readonly ("draft" | "published")[];
+    }
+  | {
+      readonly blockKey: string;
+      readonly blockType: string;
+      readonly field: string;
+      readonly source: "block";
+      readonly states: readonly ("draft" | "published")[];
+    };
+
+export interface MediaDetailDtoSource extends MediaMetadataDtoSource {
+  readonly usage: readonly {
+    readonly entryId: string;
+    readonly locations: readonly MediaUsageLocationDtoSource[];
+    readonly modelKey: string;
+    readonly slug?: string;
+    readonly status: "changed" | "draft" | "published";
+    readonly title: string;
+  }[];
+}
+
+/** Maps a media item and its usage without exposing storage or snapshot identities. */
+export function toMediaDetailDto(media: MediaDetailDtoSource, url: string): MediaDetailDto {
+  return {
+    ...toMediaMetadataDto(media, url),
+    usage: media.usage.map((entry) => ({
+      entryId: entry.entryId,
+      locations: entry.locations.map((location) =>
+        location.source === "field"
+          ? { field: location.field, source: "field" as const, states: [...location.states] }
+          : {
+              blockKey: location.blockKey,
+              blockType: location.blockType,
+              field: location.field,
+              source: "block" as const,
+              states: [...location.states],
+            },
+      ),
+      modelKey: entry.modelKey,
+      ...(entry.slug === undefined ? {} : { slug: entry.slug }),
+      status: entry.status,
+      title: entry.title,
+    })),
   };
 }
 
@@ -763,6 +885,7 @@ const domainErrorStatus: Readonly<Record<DomainErrorCode, 403 | 409 | 422>> = {
   CONTENT_REVISION_CONFLICT: 409,
   CONTENT_ROUTE_CONFLICT: 409,
   LAST_ADMIN_PROTECTED: 409,
+  MEDIA_IN_USE: 409,
 };
 
 const domainErrorMessage: Readonly<Record<DomainErrorCode, string>> = {
@@ -773,6 +896,7 @@ const domainErrorMessage: Readonly<Record<DomainErrorCode, string>> = {
   CONTENT_REVISION_CONFLICT: "The draft was modified by another request.",
   CONTENT_ROUTE_CONFLICT: "The public route is already in use.",
   LAST_ADMIN_PROTECTED: "The final active administrator cannot be disabled or demoted.",
+  MEDIA_IN_USE: "The media is still used by content.",
 };
 
 export interface ClassifiedError {

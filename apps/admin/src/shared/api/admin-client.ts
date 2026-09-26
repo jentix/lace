@@ -8,6 +8,7 @@ import {
   contentModelListSchema,
   contractValidationIssueSchema,
   errorEnvelopeSchema,
+  mediaDetailSchema,
   mediaListSchema,
   mediaMetadataSchema,
   managedUserListSchema,
@@ -24,8 +25,11 @@ import {
   type ContentEntryStatusDto,
   type ContentEntryListDto,
   type ContentModelListDto,
+  type MediaDetailDto,
   type MediaListDto,
   type MediaMetadataDto,
+  type MediaMimeTypeDto,
+  type MediaSortDto,
   type ManagedUserDto,
   type ManagedUserListDto,
   type PublishContentEntryResultDto,
@@ -51,6 +55,8 @@ export const adminQueryKeys = Object.freeze({
   /** Invalidation prefix covering every entry query of one model. */
   modelEntries: (modelKey: string) => ["admin", "entries", modelKey] as const,
   media: (cursor?: string) => ["admin", "media", cursor ?? null] as const,
+  /** One media item with the entries that use it. */
+  mediaDetail: (mediaId: string) => ["admin", "media", "detail", mediaId] as const,
   models: ["admin", "models"] as const,
   session: ["admin", "session"] as const,
 });
@@ -100,7 +106,8 @@ export interface AdminClient {
     cursor?: string,
     query?: EntryListQuery,
   ): Promise<ContentEntryListDto>;
-  listMedia(cursor?: string): Promise<MediaListDto>;
+  listMedia(cursor?: string, query?: MediaListQuery): Promise<MediaListDto>;
+  getMedia(mediaId: string): Promise<MediaDetailDto>;
   uploadMedia(file: File): Promise<MediaMetadataDto>;
   deleteMedia(mediaId: string): Promise<MediaMetadataDto>;
   retryMediaDeletion(mediaId: string): Promise<MediaMetadataDto>;
@@ -132,6 +139,17 @@ export interface EntryListQuery {
   readonly q?: string;
   readonly sort?: ContentEntrySortDto;
   readonly status?: ContentEntryStatusDto;
+}
+
+/** The media-list order the API applies when no sort is requested. */
+export const DEFAULT_MEDIA_SORT: MediaSortDto = "-createdAt";
+
+/** Server-side filename search, type filter, and sort for the media library. */
+export interface MediaListQuery {
+  readonly limit?: number;
+  readonly q?: string;
+  readonly sort?: MediaSortDto;
+  readonly type?: MediaMimeTypeDto;
 }
 
 type Fetcher = typeof fetch;
@@ -273,10 +291,21 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     },
     listModels: async () =>
       parse(contentModelListSchema, await request(fetcher, "/api/v1/admin/content-models")),
-    listMedia: async (cursor?: string) => {
-      const query = cursor === undefined ? "" : `?after=${encodeURIComponent(cursor)}`;
-      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${query}`));
+    listMedia: async (cursor?: string, query: MediaListQuery = {}) => {
+      const search = new URLSearchParams();
+      if (cursor !== undefined) search.set("after", cursor);
+      if (query.q !== undefined && query.q.trim().length > 0) search.set("q", query.q.trim());
+      if (query.type !== undefined) search.set("type", query.type);
+      if (query.sort !== undefined) search.set("sort", query.sort);
+      if (query.limit !== undefined) search.set("limit", String(query.limit));
+      const suffix = search.size === 0 ? "" : `?${search.toString()}`;
+      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${suffix}`));
     },
+    getMedia: async (mediaId: string) =>
+      parse(
+        mediaDetailSchema,
+        await request(fetcher, `/api/v1/admin/media/${encodeURIComponent(mediaId)}`),
+      ),
     uploadMedia: async (file: File) => {
       const body = new FormData();
       body.append("file", file);

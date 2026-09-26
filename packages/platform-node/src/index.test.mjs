@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { hashPassword } from "better-auth/crypto";
+import sharp from "sharp";
 import {
   listAppliedMigrations,
   migrateNodeDatabase,
   NodeInfrastructureUnavailableError,
   NodeMinioObjectStorage,
   NodeMediaDeletionDispatcher,
+  NodeSharpImageInspector,
   NodeObjectStorageError,
   NodeContentRepository,
   NodeFixedWindowRateLimiter,
@@ -1753,4 +1755,332 @@ test("lists Node entries with derived status, totals, search, sorts, and bound c
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
+});
+
+function usageEntry(id, { blocks = [], fields = {}, updatedAt }) {
+  const entryId = contentEntryId(id);
+  return createContentEntry({
+    id: entryId,
+    model: routes.get("posts"),
+    draft: {
+      blocks,
+      createdAt: unixMilliseconds(updatedAt),
+      entryId,
+      fields,
+      id: contentSnapshotId(`${id}-draft`),
+      revision: 1,
+      slug: id,
+      state: "draft",
+      title: `Title ${id}`,
+      updatedAt: unixMilliseconds(updatedAt),
+      updatedBy: editor,
+    },
+  });
+}
+
+function mediaBlock(key, type, position, image) {
+  return { data: { image }, key: blockKey(key), position, schemaVersion: 1, type };
+}
+
+test("lists Node media with search, type filter, sorts, bound cursors, and usage", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-media-catalog-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      database.connection
+        .prepare("insert into content_models values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("posts", "collection", "Posts", 1, "structure", "projection", 1, 1);
+      database.connection
+        .prepare(
+          "insert into user (id, name, email, email_verified, role, disabled, created_at, updated_at) values (?, ?, ?, 0, 'editor', 0, 1, 1)",
+        )
+        .run("editor", "Ada", "ada@example.test");
+      const repository = new NodeContentRepository(database.connection, (key) => routes.get(key));
+      for (const [id, filename, mimeType, size, createdAt, createdBy] of [
+        ["m-a", "Cover.png", "image/png", 30, 10, "editor"],
+        ["m-b", "cover-2.jpg", "image/jpeg", 10, 11, "gone"],
+        ["m-c", "100% _off_ 'deal'.webp", "image/webp", 20, 12, "system:content-sync"],
+        ["m-d", "banner.png", "image/png", 20, 12, "editor"],
+        ["m-e", "cover.png", "image/png", 30, 10, "editor"],
+      ]) {
+        await repository.createMedia({
+          createdAt: unixMilliseconds(createdAt),
+          createdBy: actorId(createdBy),
+          filename,
+          height: 2,
+          id: mediaId(id),
+          mimeType,
+          size,
+          storageKey: `media/${id}`,
+          width: 3,
+        });
+      }
+      const base = { limit: 100, sort: "-createdAt" };
+      const ids = async (input) =>
+        (await repository.listMedia({ ...base, ...input })).items.map((item) => item.media.id);
+
+      const all = await repository.listMedia(base);
+      const byId = new Map(all.items.map((item) => [item.media.id, item]));
+      expect(byId.get("m-a")).toEqual({
+        createdBy: { displayName: "Ada", id: "editor" },
+        media: expect.objectContaining({ filename: "Cover.png", height: 2, width: 3 }),
+        usageCount: 0,
+      });
+      expect(byId.get("m-b").createdBy).toEqual({ displayName: "Unknown user", id: "gone" });
+      expect(byId.get("m-c").createdBy.displayName).toBe("System");
+
+      expect(await ids({ q: "cover" })).toEqual(["m-b", "m-e", "m-a"]);
+      expect(await ids({ q: "COVER", type: "image/png" })).toEqual(["m-e", "m-a"]);
+      for (const [q, expected] of [
+        ["%", ["m-c"]],
+        ["_off_", ["m-c"]],
+        ["'deal'", ["m-c"]],
+        ["o_f", []],
+      ]) {
+        expect(await ids({ q })).toEqual(expected);
+      }
+      await expect(repository.listMedia({ ...base, type: "image/gif" })).rejects.toMatchObject({
+        code: "CONTENT_INVALID_STATE",
+      });
+
+      const pageThrough = async (sort) => {
+        const result = [];
+        let after;
+        do {
+          const page = await repository.listMedia({
+            limit: 1,
+            sort,
+            ...(after === undefined ? {} : { after }),
+          });
+          result.push(...page.items.map((item) => item.media.id));
+          after = page.nextCursor;
+        } while (after !== undefined);
+        return result;
+      };
+      const expectedOrders = {
+        "-createdAt": ["m-d", "m-c", "m-b", "m-e", "m-a"],
+        "-filename": ["m-e", "m-a", "m-b", "m-d", "m-c"],
+        "-size": ["m-e", "m-a", "m-d", "m-c", "m-b"],
+        createdAt: ["m-a", "m-e", "m-b", "m-c", "m-d"],
+        filename: ["m-c", "m-d", "m-b", "m-a", "m-e"],
+        size: ["m-b", "m-c", "m-d", "m-a", "m-e"],
+      };
+      for (const [sort, expected] of Object.entries(expectedOrders)) {
+        expect(await pageThrough(sort)).toEqual(expected);
+        expect(await ids({ sort })).toEqual(expected);
+      }
+
+      const filenamePage = await repository.listMedia({ limit: 1, sort: "filename" });
+      for (const mismatch of [
+        { sort: "-createdAt" },
+        { sort: "filename", type: "image/png" },
+        { q: "cover", sort: "filename" },
+      ]) {
+        await expect(
+          repository.listMedia({ limit: 1, after: filenamePage.nextCursor, ...mismatch }),
+        ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      }
+      const forged = (fields) =>
+        Buffer.from(
+          JSON.stringify({
+            id: "m-a",
+            kind: JSON.stringify(["media", "filename", null, null]),
+            value: "cover.png",
+            version: 2,
+            ...fields,
+          }),
+        ).toString("base64url");
+      for (const after of [
+        forged({ value: 10 }),
+        forged({ version: 1 }),
+        Buffer.from(
+          JSON.stringify({ id: "m-a", kind: "media", timestamp: 10, version: 1 }),
+        ).toString("base64url"),
+        "not a cursor",
+      ]) {
+        await expect(
+          repository.listMedia({ limit: 1, after, sort: "filename" }),
+        ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      }
+      await expect(
+        repository.listMedia({ limit: 1, after: forged({}), sort: "filename" }),
+      ).resolves.toMatchObject({ items: [{ media: { id: "m-e" } }] });
+
+      const published = usageEntry("e-one", {
+        blocks: [
+          mediaBlock("hero-1", "hero", 1000, "m-a"),
+          mediaBlock("gallery-1", "gallery", 2000, "m-a"),
+        ],
+        fields: { cover: "m-a" },
+        updatedAt: 20,
+      });
+      await repository.create({
+        entry: published,
+        mediaReferences: [
+          { fieldPath: "cover", mediaId: mediaId("m-a"), sourceKey: "$fields" },
+          { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("hero-1") },
+          { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("gallery-1") },
+        ],
+      });
+      await repository.publish({
+        entryId: published.id,
+        expectedRevision: 1,
+        publishedAt: unixMilliseconds(30),
+        publishedBy: editor,
+        publishedSnapshotId: contentSnapshotId("e-one-published"),
+      });
+      await repository.saveCompleteDraft({
+        entryId: published.id,
+        mutation: {
+          blocks: [mediaBlock("gallery-1", "carousel", 1000, "m-a")],
+          expectedRevision: 1,
+          fields: { cover: "m-d" },
+          mediaReferences: [
+            { fieldPath: "cover", mediaId: mediaId("m-d"), sourceKey: "$fields" },
+            { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("gallery-1") },
+          ],
+          slug: "e-one",
+          title: "Title e-one",
+          updatedAt: unixMilliseconds(40),
+          updatedBy: editor,
+        },
+      });
+      await repository.create({
+        entry: usageEntry("e-two", { fields: { cover: "m-a" }, updatedAt: 50 }),
+        mediaReferences: [{ fieldPath: "cover", mediaId: mediaId("m-a"), sourceKey: "$fields" }],
+      });
+
+      expect((await repository.loadMediaCatalogItem("m-a")).usageCount).toBe(2);
+      expect((await repository.loadMediaCatalogItem("m-d")).usageCount).toBe(1);
+      expect((await repository.loadMediaCatalogItem("m-b")).usageCount).toBe(0);
+      await expect(repository.loadMediaCatalogItem("missing")).resolves.toBeNull();
+      expect(
+        new Map((await repository.listMedia(base)).items.map((i) => [i.media.id, i.usageCount])),
+      ).toEqual(
+        new Map([
+          ["m-a", 2],
+          ["m-b", 0],
+          ["m-c", 0],
+          ["m-d", 1],
+          ["m-e", 0],
+        ]),
+      );
+
+      expect(await repository.loadMediaUsage({ limit: 50, mediaId: mediaId("m-a") })).toEqual([
+        {
+          entryId: "e-two",
+          locations: [{ field: "cover", source: "field", states: ["draft"] }],
+          modelKey: "posts",
+          slug: "e-two",
+          status: "draft",
+          title: "Title e-two",
+        },
+        {
+          entryId: "e-one",
+          locations: [
+            { field: "cover", source: "field", states: ["published"] },
+            {
+              blockKey: "gallery-1",
+              blockType: "carousel",
+              field: "image",
+              source: "block",
+              states: ["draft", "published"],
+            },
+            {
+              blockKey: "hero-1",
+              blockType: "hero",
+              field: "image",
+              source: "block",
+              states: ["published"],
+            },
+          ],
+          modelKey: "posts",
+          slug: "e-one",
+          status: "changed",
+          title: "Title e-one",
+        },
+      ]);
+      expect(await repository.loadMediaUsage({ limit: 50, mediaId: mediaId("m-d") })).toEqual([
+        expect.objectContaining({
+          entryId: "e-one",
+          locations: [{ field: "cover", source: "field", states: ["draft"] }],
+        }),
+      ]);
+      expect(
+        (await repository.loadMediaUsage({ limit: 1, mediaId: mediaId("m-a") })).map(
+          (entry) => entry.entryId,
+        ),
+      ).toEqual(["e-two"]);
+      for (const limit of [0, 51]) {
+        await expect(
+          repository.loadMediaUsage({ limit, mediaId: mediaId("m-a") }),
+        ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      }
+
+      const outboxCount = () =>
+        database.connection
+          .prepare(
+            "select count(*) as count from outbox_events where type = 'media.delete.requested'",
+          )
+          .get().count;
+      const request = (id) => ({
+        mediaId: mediaId(id),
+        requestedAt: unixMilliseconds(60),
+        requestedBy: editor,
+      });
+      await expect(repository.markForDeletion(request("m-a"))).rejects.toMatchObject({
+        code: "MEDIA_IN_USE",
+      });
+      await expect(repository.retryDeletion(request("m-a"))).rejects.toMatchObject({
+        code: "CONTENT_INVALID_STATE",
+      });
+      database.connection
+        .prepare("update media set status = 'delete_failed' where id = 'm-d'")
+        .run();
+      await expect(repository.retryDeletion(request("m-d"))).rejects.toMatchObject({
+        code: "MEDIA_IN_USE",
+      });
+      expect(outboxCount()).toBe(0);
+      await expect(repository.markForDeletion(request("m-b"))).resolves.toMatchObject({
+        status: "deleting",
+      });
+      await expect(repository.markForDeletion(request("m-b"))).rejects.toMatchObject({
+        code: "CONTENT_INVALID_STATE",
+      });
+      expect(outboxCount()).toBe(1);
+      expect((await repository.loadMedia("m-a")).status).toBe("active");
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("reports orientation-applied display dimensions from the sharp inspector", async () => {
+  const inspector = new NodeSharpImageInspector();
+  const rotated = await sharp({
+    create: { background: { b: 3, g: 2, r: 1 }, channels: 3, height: 200, width: 400 },
+  })
+    .jpeg()
+    .withMetadata({ orientation: 6 })
+    .toBuffer();
+  await expect(inspector.inspect(new Uint8Array(rotated), "image/jpeg")).resolves.toEqual({
+    height: 400,
+    width: 200,
+  });
+  const upright = await sharp({
+    create: { background: { b: 3, g: 2, r: 1 }, channels: 3, height: 2, width: 3 },
+  })
+    .png()
+    .toBuffer();
+  await expect(inspector.inspect(new Uint8Array(upright), "image/png")).resolves.toEqual({
+    height: 2,
+    width: 3,
+  });
+  await expect(inspector.inspect(new Uint8Array(upright), "image/jpeg")).rejects.toMatchObject({
+    code: "CONTENT_INVALID_STATE",
+  });
 });

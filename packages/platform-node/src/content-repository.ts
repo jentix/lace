@@ -1,9 +1,11 @@
 import {
   actorDisplayName,
+  ALLOWED_MEDIA_MIME_TYPES,
   DISPATCHER_LEASE_DURATION_MS,
   dispatcherEventId,
   foldAscii,
   MAX_CONTENT_ENTRY_SEARCH_LENGTH,
+  MAX_MEDIA_USAGE_ENTRIES,
   dispatcherLeaseId,
   opaqueCursor,
   planConfigurationSynchronization,
@@ -34,6 +36,9 @@ import type {
   DispatcherLeasePort,
   ListContentEntriesInput,
   ListMediaInput,
+  LoadMediaUsageInput,
+  MediaCatalogItem,
+  MediaCatalogPort,
   ListPublicContentInput,
   LoadContentEntryInput,
   MarkMediaForDeletionInput,
@@ -42,6 +47,10 @@ import type {
   MediaDeletionDispatchPort,
   MediaListPort,
   MediaReadPort,
+  MediaSort,
+  MediaUsageEntry,
+  MediaUsageLocation,
+  MediaUsageState,
   PublishContentEntryCommand,
   PublishContentEntryResult,
   PublicContentEntry,
@@ -168,7 +177,7 @@ interface DecodedEntryCursor {
   readonly value: number | string;
 }
 
-const ENTRY_CURSOR_VERSION = 2;
+const SORT_CURSOR_VERSION = 2;
 const ENTRY_SOURCE_SQL = `content_entries e
   join content_snapshots d on d.id = e.draft_snapshot_id
   left join content_snapshots p on p.id = e.published_snapshot_id`;
@@ -181,6 +190,43 @@ const ENTRY_SORT_SQL: Readonly<Record<string, { readonly order: string; readonly
     title: { order: "d.title collate nocase", value: "d.title" },
     updatedAt: { order: "e.updated_at", value: "e.updated_at" },
   };
+const MAX_MEDIA_FILENAME_LENGTH = 255;
+const MEDIA_COLUMNS_SQL =
+  "m.id, m.storage_key, m.filename, m.mime_type, m.size, m.width, m.height, m.status, m.created_by, m.created_at, m.updated_at";
+/** Distinct entries whose current draft or published snapshot references the media row `m`. */
+const MEDIA_USAGE_COUNT_SQL = `(select count(distinct s.entry_id)
+  from content_media_references r
+  join content_snapshots s on s.id = r.snapshot_id
+  where r.media_id = m.id)`;
+const MEDIA_CATALOG_SQL = `select ${MEDIA_COLUMNS_SQL}, u.name as created_by_name,
+  ${MEDIA_USAGE_COUNT_SQL} as usage_count`;
+const MEDIA_SORT_SQL: Readonly<Record<string, { readonly order: string; readonly value: string }>> =
+  {
+    createdAt: { order: "m.created_at", value: "m.created_at" },
+    filename: { order: "m.filename collate nocase", value: "m.filename" },
+    size: { order: "m.size", value: "m.size" },
+  };
+
+interface MediaUsageRow {
+  readonly block_type: string | null;
+  readonly entry_id: string;
+  readonly field_path: string;
+  readonly model_key: string;
+  readonly position: number | null;
+  readonly slug: string | null;
+  readonly source_key: string;
+  readonly state: MediaUsageState;
+  readonly status: string;
+  readonly title: string;
+}
+
+interface MediaUsageLocationDraft {
+  readonly blockKey?: string;
+  blockType?: string;
+  readonly field: string;
+  position: number;
+  readonly states: Set<MediaUsageState>;
+}
 
 interface PublicRow extends EntryRow {
   readonly path: string;
@@ -324,22 +370,22 @@ function entryCursorKind(input: ListContentEntriesInput): string {
   ]);
 }
 
-function encodeEntryCursor(
+function encodeSortCursor(
   kind: string,
   value: number | string,
   id: string,
 ): ReturnType<typeof opaqueCursor> {
   return opaqueCursor(
-    Buffer.from(JSON.stringify({ id, kind, value, version: ENTRY_CURSOR_VERSION })).toString(
+    Buffer.from(JSON.stringify({ id, kind, value, version: SORT_CURSOR_VERSION })).toString(
       "base64url",
     ),
   );
 }
 
-function decodeEntryCursor(
+function decodeSortCursor(
   value: string,
   kind: string,
-  sort: ContentEntrySort,
+  validValue: (sortValue: unknown) => boolean,
 ): DecodedEntryCursor {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) failure("Cursor is not base64url encoded.");
   try {
@@ -354,23 +400,61 @@ function decodeEntryCursor(
     }
     const candidate = parsed as Record<string, unknown>;
     if (
-      candidate.version !== ENTRY_CURSOR_VERSION ||
+      candidate.version !== SORT_CURSOR_VERSION ||
       candidate.kind !== kind ||
       typeof candidate.id !== "string" ||
       candidate.id.length === 0
     ) {
       failure("Cursor is unsupported or belongs to a different list.");
     }
-    const sortValue = candidate.value;
-    const validValue = sort.endsWith("title")
-      ? typeof sortValue === "string" && sortValue.length <= MAX_CONTENT_ENTRY_SEARCH_LENGTH
-      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= -1;
-    if (!validValue) failure("Cursor sort value is invalid.");
-    return { id: candidate.id, value: sortValue as number | string };
+    if (!validValue(candidate.value)) failure("Cursor sort value is invalid.");
+    return { id: candidate.id, value: candidate.value as number | string };
   } catch (error) {
     if (error instanceof DomainError) throw error;
     failure("Cursor contains invalid JSON.");
   }
+}
+
+function decodeEntryCursor(
+  value: string,
+  kind: string,
+  sort: ContentEntrySort,
+): DecodedEntryCursor {
+  return decodeSortCursor(value, kind, (sortValue) =>
+    sort.endsWith("title")
+      ? typeof sortValue === "string" && sortValue.length <= MAX_CONTENT_ENTRY_SEARCH_LENGTH
+      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= -1,
+  );
+}
+
+function mediaCursorKind(input: ListMediaInput): string {
+  return JSON.stringify(["media", input.sort, input.type ?? null, input.q ?? null]);
+}
+
+function decodeMediaCursor(value: string, kind: string, sort: MediaSort): DecodedEntryCursor {
+  return decodeSortCursor(value, kind, (sortValue) =>
+    sort.endsWith("filename")
+      ? typeof sortValue === "string" && sortValue.length <= MAX_MEDIA_FILENAME_LENGTH
+      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= 0,
+  );
+}
+
+/** Orders usage locations: entry fields by name, then blocks by position and key. */
+function compareUsageLocations(
+  left: MediaUsageLocationDraft,
+  right: MediaUsageLocationDraft,
+): number {
+  if ((left.blockKey === undefined) !== (right.blockKey === undefined)) {
+    return left.blockKey === undefined ? -1 : 1;
+  }
+  if (left.position !== right.position) return left.position - right.position;
+  const leftKey = `${left.blockKey ?? ""}\u0000${left.field}`;
+  const rightKey = `${right.blockKey ?? ""}\u0000${right.field}`;
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+function usageStates(states: ReadonlySet<MediaUsageState>): readonly MediaUsageState[] {
+  return Object.freeze((["draft", "published"] as const).filter((state) => states.has(state)));
 }
 
 function entryStatus(value: string): ContentEntryStatus {
@@ -423,10 +507,11 @@ export class NodeContentRepository
     ConfigurationSyncStateReadPort,
     DispatcherLeasePort,
     MediaCommandPort,
+    MediaCatalogPort,
     MediaDeletionDispatchPort,
     MediaListPort,
-    PublicContentReadPort,
-    MediaReadPort
+    MediaReadPort,
+    PublicContentReadPort
 {
   public constructor(
     private readonly connection: Database.Database,
@@ -812,7 +897,9 @@ export class NodeContentRepository
             "update media set status = 'deleting', updated_at = ? where id = ? and status = 'active' and not exists (select 1 from content_media_references where media_id = ?)",
           )
           .run(input.requestedAt, input.mediaId, input.mediaId);
-        if (changed.changes !== 1) failure("Media is not eligible for deletion.");
+        if (changed.changes !== 1) {
+          this.refuseDeletion(input.mediaId, "active", "Media is not eligible for deletion.");
+        }
         this.checkpoint("media.outbox");
         this.connection
           .prepare(
@@ -844,7 +931,9 @@ export class NodeContentRepository
             "update media set status = 'deleting', last_error = null, updated_at = ? where id = ? and status = 'delete_failed' and not exists (select 1 from content_media_references where media_id = ?)",
           )
           .run(input.requestedAt, input.mediaId, input.mediaId);
-        if (changed.changes !== 1) failure("Media deletion cannot be retried.");
+        if (changed.changes !== 1) {
+          this.refuseDeletion(input.mediaId, "delete_failed", "Media deletion cannot be retried.");
+        }
         this.checkpoint("media.outbox");
         this.connection
           .prepare(
@@ -1132,7 +1221,7 @@ export class NodeContentRepository
     return Object.freeze({
       items: Object.freeze(items),
       ...(rows.length > limit && last !== undefined
-        ? { nextCursor: encodeEntryCursor(kind, last.sort_value, last.id) }
+        ? { nextCursor: encodeSortCursor(kind, last.sort_value, last.id) }
         : {}),
       totals: this.entryTotals(input.modelKey, term),
     });
@@ -1267,37 +1356,166 @@ export class NodeContentRepository
     return row === undefined ? null : this.mapMedia(row);
   }
 
-  public async listMedia(input: ListMediaInput): Promise<CursorPage<MediaMetadata>> {
+  public async listMedia(input: ListMediaInput): Promise<CursorPage<MediaCatalogItem>> {
     const limit = assertPageSize(input.limit);
-    const after = input.after === undefined ? undefined : decodeCursor(input.after, "media");
-    const cursorClause =
-      after === undefined ? "" : "where (created_at > ? or (created_at = ? and id > ?))";
+    const descending = input.sort.startsWith("-");
+    const sort = MEDIA_SORT_SQL[descending ? input.sort.slice(1) : input.sort];
+    if (sort === undefined) failure("Media sort is unsupported.");
+    if (input.type !== undefined && !ALLOWED_MEDIA_MIME_TYPES.includes(input.type)) {
+      failure("Media type filter is unsupported.");
+    }
+    const kind = mediaCursorKind(input);
+    const after =
+      input.after === undefined ? undefined : decodeMediaCursor(input.after, kind, input.sort);
+    const comparison = descending ? "<" : ">";
+    const direction = descending ? "desc" : "asc";
+    const conditions: string[] = [];
+    const bindings: (number | string)[] = [];
+    if (input.q !== undefined) {
+      conditions.push("instr(lower(m.filename), ?) > 0");
+      bindings.push(foldAscii(input.q));
+    }
+    if (input.type !== undefined) {
+      conditions.push("m.mime_type = ?");
+      bindings.push(input.type);
+    }
+    if (after !== undefined) {
+      conditions.push(
+        `(${sort.order} ${comparison} ? or (${sort.order} = ? and m.id ${comparison} ?))`,
+      );
+      bindings.push(after.value, after.value, after.id);
+    }
     const rows = this.connection
       .prepare(
-        "select id, storage_key, filename, mime_type, size, width, height, status, created_by, created_at, updated_at from media " +
-          cursorClause +
-          " order by created_at asc, id asc limit ?",
+        `${MEDIA_CATALOG_SQL}, ${sort.value} as sort_value
+           from media m
+           left join user u on u.id = m.created_by
+          ${conditions.length === 0 ? "" : `where ${conditions.join(" and ")}`}
+          order by ${sort.order} ${direction}, m.id ${direction} limit ?`,
       )
-      .all(
-        ...(after === undefined
-          ? [limit + 1]
-          : [after.timestamp, after.timestamp, after.id, limit + 1]),
-      ) as readonly Record<string, unknown>[];
+      .all(...bindings, limit + 1) as readonly Record<string, unknown>[];
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((row) => this.mapMedia(row));
+    const items = pageRows.map((row) => this.catalogItem(row));
     const last = pageRows.at(-1);
     return Object.freeze({
       items: Object.freeze(items),
       ...(rows.length > limit && last !== undefined
         ? {
-            nextCursor: encodeCursor(
-              "media",
-              assertTimestamp(last.created_at as number, "Media timestamp"),
-              String(last.id),
-            ),
+            nextCursor: encodeSortCursor(kind, last.sort_value as number | string, String(last.id)),
           }
         : {}),
     });
+  }
+
+  public async loadMediaCatalogItem(id: string): Promise<MediaCatalogItem | null> {
+    const row = this.connection
+      .prepare(
+        `${MEDIA_CATALOG_SQL}
+           from media m
+           left join user u on u.id = m.created_by
+          where m.id = ? limit 1`,
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row === undefined ? null : this.catalogItem(row);
+  }
+
+  public async loadMediaUsage(input: LoadMediaUsageInput): Promise<readonly MediaUsageEntry[]> {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > MAX_MEDIA_USAGE_ENTRIES
+    ) {
+      failure(`Media usage limit must be between 1 and ${MAX_MEDIA_USAGE_ENTRIES}.`);
+    }
+    const rows = this.connection
+      .prepare(
+        `with used as (
+           select distinct s.entry_id
+             from content_media_references r
+             join content_snapshots s on s.id = r.snapshot_id
+            where r.media_id = ?
+         ), page as (
+           select e.id
+             from content_entries e
+             join used on used.entry_id = e.id
+            order by e.updated_at desc, e.id desc
+            limit ?
+         )
+         select e.id as entry_id, e.model_key, d.title, d.slug,
+                ${ENTRY_STATUS_SQL} as status,
+                case when r.snapshot_id = e.draft_snapshot_id then 'draft' else 'published' end as state,
+                r.source_key, r.field_path, b.block_type, b.position
+           from content_media_references r
+           join content_snapshots s on s.id = r.snapshot_id
+           join content_entries e on e.id = s.entry_id
+           join content_snapshots d on d.id = e.draft_snapshot_id
+           left join content_snapshots p on p.id = e.published_snapshot_id
+           left join content_blocks b on b.snapshot_id = r.snapshot_id and b.block_key = r.source_key
+          where r.media_id = ? and e.id in (select id from page)
+          order by e.updated_at desc, e.id desc`,
+      )
+      .all(input.mediaId, input.limit, input.mediaId) as readonly MediaUsageRow[];
+    const entries = new Map<
+      string,
+      { readonly locations: Map<string, MediaUsageLocationDraft>; readonly row: MediaUsageRow }
+    >();
+    for (const row of rows) {
+      let entry = entries.get(row.entry_id);
+      if (entry === undefined) {
+        entry = { locations: new Map(), row };
+        entries.set(row.entry_id, entry);
+      }
+      const isBlock = row.source_key !== "$fields";
+      if (isBlock && (row.block_type === null || row.position === null)) {
+        throw new Error("A media reference names a block that does not exist.");
+      }
+      const key = `${row.source_key}\u0000${row.field_path}`;
+      let location = entry.locations.get(key);
+      if (location === undefined) {
+        location = {
+          ...(isBlock ? { blockKey: row.source_key, blockType: row.block_type! } : {}),
+          field: row.field_path,
+          position: isBlock ? row.position! : 0,
+          states: new Set(),
+        };
+        entry.locations.set(key, location);
+      } else if (isBlock) {
+        // The draft's block type describes what an editor sees now.
+        if (row.state === "draft") location.blockType = row.block_type!;
+        location.position = Math.min(location.position, row.position!);
+      }
+      location.states.add(row.state);
+    }
+    return Object.freeze(
+      [...entries.values()].map(({ locations, row }) =>
+        Object.freeze({
+          entryId: contentEntryId(row.entry_id),
+          locations: Object.freeze(
+            [...locations.values()]
+              .sort(compareUsageLocations)
+              .map((location): MediaUsageLocation =>
+                location.blockKey === undefined
+                  ? Object.freeze({
+                      field: location.field,
+                      source: "field" as const,
+                      states: usageStates(location.states),
+                    })
+                  : Object.freeze({
+                      blockKey: blockKey(location.blockKey),
+                      blockType: location.blockType!,
+                      field: location.field,
+                      source: "block" as const,
+                      states: usageStates(location.states),
+                    }),
+              ),
+          ),
+          modelKey: contentModelKey(row.model_key),
+          ...(row.slug === null ? {} : { slug: row.slug }),
+          status: entryStatus(row.status),
+          title: row.title,
+        }),
+      ),
+    );
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {
@@ -1613,6 +1831,38 @@ export class NodeContentRepository
       .run(payload, timestamp + 5_000);
     void requestedBy;
     return state.version;
+  }
+
+  private catalogItem(row: Record<string, unknown>): MediaCatalogItem {
+    const media = this.mapMedia(row);
+    const createdByName = typeof row.created_by_name === "string" ? row.created_by_name : null;
+    return Object.freeze({
+      createdBy: Object.freeze({
+        displayName: actorDisplayName(media.createdBy, createdByName),
+        id: media.createdBy,
+      }),
+      media,
+      usageCount: assertNonNegativeInteger(row.usage_count, "Media usage count"),
+    });
+  }
+
+  /** Classifies a refused deletion inside the same write transaction as its guard. */
+  private refuseDeletion(
+    mediaId: string,
+    expectedStatus: MediaMetadata["status"],
+    message: string,
+  ): never {
+    const row = this.connection
+      .prepare(
+        "select status, exists(select 1 from content_media_references where media_id = ?) as referenced from media where id = ?",
+      )
+      .get(mediaId, mediaId) as
+      | { readonly referenced: number; readonly status: string }
+      | undefined;
+    if (row?.status === expectedStatus && row.referenced === 1) {
+      throw new DomainError("MEDIA_IN_USE", "Media is still referenced by content.");
+    }
+    failure(message);
   }
 
   private mapMedia(row: Record<string, unknown>): MediaMetadata {

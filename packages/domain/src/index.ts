@@ -35,7 +35,8 @@ export type DomainErrorCode =
   | "CONTENT_PUBLISHED_IMMUTABLE"
   | "CONTENT_REVISION_CONFLICT"
   | "CONTENT_ROUTE_CONFLICT"
-  | "LAST_ADMIN_PROTECTED";
+  | "LAST_ADMIN_PROTECTED"
+  | "MEDIA_IN_USE";
 
 /** A portable error with a stable code suitable for later transport mapping. */
 export class DomainError extends Error {

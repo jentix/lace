@@ -14,9 +14,9 @@ test("media deletion keeps failed items and labels accepted work as pending", as
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const deleteMedia = vi.fn(async () => {
     throw new AdminClientError({
-      code: "CONTENT_INVALID_STATE",
-      message: "The requested content operation is invalid.",
-      status: 422,
+      code: "MEDIA_IN_USE",
+      message: "The media is still used by content.",
+      status: 409,
     });
   });
   const retryMediaDeletion = vi.fn(async () => ({
@@ -46,7 +46,7 @@ test("media deletion keeps failed items and labels accepted work as pending", as
   );
   await screen.findByText("failed.png");
   await user.click(screen.getByRole("button", { name: "Delete cover.png" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("may be referenced by content");
+  expect(await screen.findByRole("alert")).toHaveTextContent("content still uses this media");
   expect(screen.getByText("cover.png")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry deletion of failed.png" }));
   await waitFor(() => expect(retryMediaDeletion).toHaveBeenCalledWith("failed-1"));

@@ -705,8 +705,21 @@ the draft snapshot's reference projection in the same atomic mutation;
 publication copies it with `INSERT ... SELECT`. A media item may be selected only
 while its status is `active`.
 
+The same projection is the only source of media usage. An entry uses an item
+when its current draft or current published snapshot references it in an entry
+field or a block field. Every admin media DTO carries `usageCount`, the number
+of distinct using entries, and the media detail read lists up to 50 of them with
+each location and whether the draft, the published version, or both use it.
+Because only current snapshots keep references, usage and the deletion guard
+always agree: an item is refused deletion exactly when its `usageCount` is
+greater than zero.
+
+`width` and `height` are the displayed dimensions, measured after the image's
+EXIF orientation is applied. Every upload records both values.
+
 Media deletion is asynchronous and recoverable. The delete use case refuses a
-referenced item, marks an unreferenced item `deleting`, and writes a
+referenced item with `MEDIA_IN_USE` (HTTP `409`), marks an unreferenced item
+`deleting`, and writes a
 `media.delete.requested` outbox event atomically. The dispatcher deletes the
 object and then the metadata row; failures set `delete_failed` and remain
 retryable. This avoids either a dangling published reference or an unrecoverable
@@ -978,7 +991,9 @@ DELETE /api/v1/admin/entries/:entryId
 
 GET    /api/v1/admin/media
 POST   /api/v1/admin/media
+GET    /api/v1/admin/media/:mediaId
 DELETE /api/v1/admin/media/:mediaId
+POST   /api/v1/admin/media/:mediaId/retry-deletion
 
 GET    /api/v1/admin/site-builds
 POST   /api/v1/admin/site-builds
@@ -1013,6 +1028,12 @@ preserve the same snapshot-revision invariant.
 - Admin entry summaries and entry responses name the last editor with an `id`
   and `displayName`, so lists never render raw user IDs. Public and
   build-export DTOs never carry display names.
+- The admin media list accepts `q` (filename substring), `type` (an allowed
+  image MIME type), and `sort` (`createdAt`, `filename`, or `size`, either
+  direction; default newest first), with cursors bound to that query. Media
+  DTOs name the uploader as `createdBy` with an `id` and `displayName`, and
+  carry `usageCount`. `GET /api/v1/admin/media/:mediaId` adds the bounded
+  `usage` list.
 - Mutable operations use optimistic concurrency through a revision or `If-Match` value.
 - Publish operations are idempotent.
 - Dates in JSON use ISO 8601 UTC strings.

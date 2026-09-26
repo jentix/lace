@@ -133,7 +133,7 @@ test("uses validated credentialed user, status, and token endpoints", async () =
 test("lists validated media through the credentialed admin API", async () => {
   const item = {
     createdAt: "2026-09-20T00:00:00.000Z",
-    createdBy: "admin-1",
+    createdBy: { displayName: "Admin", id: "admin-1" },
     filename: "hero.png",
     id: "media-1",
     mimeType: "image/png",
@@ -141,6 +141,7 @@ test("lists validated media through the credentialed admin API", async () => {
     status: "active",
     updatedAt: "2026-09-20T00:00:00.000Z",
     url: "https://lace.test/api/v1/public/media/media-1",
+    usageCount: 0,
   };
   const fetcher = vi.fn(async () => Response.json({ items: [item], nextCursor: "next" }));
   await expect(createAdminClient(fetcher).listMedia("previous+/=")).resolves.toEqual({
@@ -154,12 +155,58 @@ test("lists validated media through the credentialed admin API", async () => {
   await expect(
     createAdminClient(async () => Response.json({ items: [{ id: "bad" }] })).listMedia(),
   ).rejects.toBeInstanceOf(AdminClientError);
+  await createAdminClient(fetcher).listMedia(undefined, {
+    limit: 24,
+    q: "  hero ",
+    sort: "filename",
+    type: "image/png",
+  });
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/media?q=hero&type=image%2Fpng&sort=filename&limit=24",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  await createAdminClient(fetcher).listMedia(undefined, { q: "   " });
+  expect(fetcher).toHaveBeenLastCalledWith("/api/v1/admin/media", expect.anything());
+});
+
+test("reads media details with usage through the credentialed admin API", async () => {
+  const detail = {
+    createdAt: "2026-09-20T00:00:00.000Z",
+    createdBy: { displayName: "Admin", id: "admin-1" },
+    filename: "hero.png",
+    id: "media/1",
+    mimeType: "image/png",
+    size: 12,
+    status: "active",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    url: "https://lace.test/api/v1/public/media/media-1",
+    usage: [
+      {
+        entryId: "entry-1",
+        locations: [{ field: "cover", source: "field", states: ["published"] }],
+        modelKey: "posts",
+        status: "published",
+        title: "Hello",
+      },
+    ],
+    usageCount: 1,
+  };
+  const fetcher = vi.fn(async () => Response.json(detail));
+  await expect(createAdminClient(fetcher).getMedia("media/1")).resolves.toEqual(detail);
+  expect(fetcher).toHaveBeenCalledWith("/api/v1/admin/media/media%2F1", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  expect(adminQueryKeys.mediaDetail("media-1")).toEqual(["admin", "media", "detail", "media-1"]);
+  await expect(
+    createAdminClient(async () => Response.json({ ...detail, usage: undefined })).getMedia("m"),
+  ).rejects.toBeInstanceOf(AdminClientError);
 });
 
 test("uploads and requests media deletion with validated credentialed responses", async () => {
   const item = {
     createdAt: "2026-09-20T00:00:00.000Z",
-    createdBy: "admin-1",
+    createdBy: { displayName: "Admin", id: "admin-1" },
     filename: "hero.png",
     id: "media-1",
     mimeType: "image/png",
@@ -167,6 +214,7 @@ test("uploads and requests media deletion with validated credentialed responses"
     status: "active",
     updatedAt: "2026-09-20T00:00:00.000Z",
     url: "https://lace.test/api/v1/public/media/media-1",
+    usageCount: 0,
   };
   const fetcher = vi.fn(async () => Response.json(item, { status: 201 }));
   const client = createAdminClient(fetcher);

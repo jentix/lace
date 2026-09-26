@@ -655,3 +655,115 @@ test("admin entry responses name the last editor while public DTOs stay unchange
     expect(JSON.stringify(body)).not.toContain("admin@example.test");
   }
 });
+
+test("lists media with filters and bound cursors and exposes details with usage", async () => {
+  const { app, store } = await fixture();
+  store.setActorDisplayNames({ admin: "Ada" });
+  const upload = async (filename) => {
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])]),
+      filename,
+    );
+    const created = await app.fetch(
+      new Request("https://lace.test/api/v1/admin/media", { body: form, method: "POST" }),
+    );
+    expect(created.status).toBe(201);
+    return created.json();
+  };
+  const cover = await upload("Cover.png");
+  const banner = await upload("banner.png");
+  expect(cover).toMatchObject({
+    createdBy: { displayName: "Ada", id: "admin" },
+    height: 1,
+    usageCount: 0,
+    width: 1,
+  });
+
+  const ids = async (query) =>
+    (await json(app, `/api/v1/admin/media?${query}`)).body.items.map((item) => item.id);
+  expect(await ids("q=%20COVER%20")).toEqual([cover.id]);
+  expect(await ids("type=image/png&sort=filename")).toEqual([banner.id, cover.id]);
+  expect(await ids("type=image/jpeg")).toEqual([]);
+  expect(await ids("q=")).toHaveLength(2);
+  for (const [query, pointer] of [
+    ["type=image/svg%2Bxml", "/type"],
+    ["sort=width", "/sort"],
+    [`q=${"x".repeat(201)}`, "/q"],
+    ["limit=0", "/limit"],
+  ]) {
+    expect(await json(app, `/api/v1/admin/media?${query}`)).toMatchObject({
+      body: { error: { code: "VALIDATION_FAILED", details: { issues: [{ path: pointer }] } } },
+      response: { status: 422 },
+    });
+  }
+  const first = await json(app, "/api/v1/admin/media?sort=filename&limit=1");
+  const cursor = encodeURIComponent(first.body.nextCursor);
+  expect(await ids(`sort=filename&limit=1&after=${cursor}`)).toEqual([cover.id]);
+  expect(
+    await json(app, `/api/v1/admin/media?sort=-createdAt&limit=1&after=${cursor}`),
+  ).toMatchObject({
+    body: { error: { code: "CONTENT_INVALID_STATE" } },
+    response: { status: 422 },
+  });
+
+  const entry = await json(app, "/api/v1/admin/models/posts/entries", {
+    body: JSON.stringify({
+      blocks: [],
+      fields: { image: cover.id },
+      slug: "cover",
+      title: "Cover",
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  expect(entry.response.status).toBe(201);
+  await json(app, `/api/v1/admin/entries/${entry.body.id}/publish`, {
+    body: JSON.stringify({ expectedRevision: 1 }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  const detail = await json(app, `/api/v1/admin/media/${cover.id}`);
+  expect(detail.response.status).toBe(200);
+  expect(detail.body).toMatchObject({
+    createdBy: { displayName: "Ada", id: "admin" },
+    id: cover.id,
+    usage: [
+      {
+        entryId: entry.body.id,
+        locations: [{ field: "image", source: "field", states: ["draft", "published"] }],
+        modelKey: "posts",
+        slug: "cover",
+        status: "published",
+        title: "Cover",
+      },
+    ],
+    usageCount: 1,
+  });
+  expect(JSON.stringify(detail.body)).not.toContain("storageKey");
+  expect((await ids("q=cover")).length).toBe(1);
+  expect((await json(app, "/api/v1/admin/media?q=cover")).body.items[0].usageCount).toBe(1);
+  expect(await json(app, "/api/v1/admin/media/missing")).toMatchObject({
+    body: { error: { code: "NOT_FOUND" } },
+    response: { status: 404 },
+  });
+
+  const refused = await app.fetch(
+    new Request(`https://lace.test/api/v1/admin/media/${cover.id}`, { method: "DELETE" }),
+  );
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toEqual({
+    error: { code: "MEDIA_IN_USE", message: "The media is still used by content." },
+  });
+  expect(store.mediaDeletionRequests).toEqual([]);
+  const accepted = await app.fetch(
+    new Request(`https://lace.test/api/v1/admin/media/${banner.id}`, { method: "DELETE" }),
+  );
+  expect(accepted.status).toBe(202);
+  expect(await accepted.json()).toMatchObject({ status: "deleting", usageCount: 0 });
+  expect((await json(app, `/api/v1/admin/media/${banner.id}`)).body).toMatchObject({
+    status: "deleting",
+    usage: [],
+  });
+});
