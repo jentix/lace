@@ -21,7 +21,14 @@ import {
 const admin = { id: actorId("admin"), role: "admin" };
 const editor = { id: actorId("editor"), role: "editor" };
 
-async function fixture({ actor = admin, auth, ready = true, allowed = true } = {}) {
+async function fixture({
+  actor = admin,
+  auth,
+  ready = true,
+  allowed = true,
+  maxBodyBytes = 256,
+  models,
+} = {}) {
   const config = await defineConfig({
     blocks: [
       defineBlock({
@@ -29,8 +36,9 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
         type: "hero",
         version: 1,
       }),
+      defineBlock({ fields: { body: field.richText() }, type: "richText", version: 1 }),
     ],
-    content: [
+    content: models ?? [
       definePage({ key: "home", path: "/", version: 1 }),
       defineCollection({
         blocks: ["hero"],
@@ -46,7 +54,7 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
   const storage = new InMemoryObjectStorage();
   const content = new ContentUseCases({
     clock: new DeterministicClock(unixMilliseconds(1)),
-    config: config.public,
+    config: config.runtime,
     content: store,
     idGenerator: new DeterministicIdGenerator("server"),
     media: store,
@@ -74,7 +82,7 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
     content,
     environment: { engineVersion: "0.0.0-test", openApiTitle: "Lace test" },
     logger: { log: (entry) => logs.push(entry) },
-    maxBodyBytes: 256,
+    maxBodyBytes,
     media,
     publicBaseUrl: "https://lace.test/",
     publicContent: {
@@ -294,6 +302,95 @@ test("validates admin requests, rejects anonymous actors, and protects fallbacks
     body: { error: { code: "NOT_FOUND" } },
     response: { status: 404 },
   });
+});
+
+test("content validation failures use the validation envelope with JSON Pointers", async () => {
+  const { app, store } = await fixture({
+    maxBodyBytes: 4096,
+    models: [
+      defineCollection({
+        blocks: ["hero", "richText"],
+        fields: { summary: field.text({ required: true }) },
+        key: "notes",
+        route: "/notes/:slug",
+        version: 1,
+      }),
+    ],
+  });
+  const send = (path, body, method = "POST") =>
+    json(app, path, {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      method,
+    });
+  expect(
+    await send("/api/v1/admin/models/notes/entries", {
+      blocks: [],
+      fields: { unknown: "x" },
+      slug: "bad",
+      title: "Bad",
+    }),
+  ).toMatchObject({
+    body: {
+      error: {
+        code: "VALIDATION_FAILED",
+        details: { issues: [{ code: "unknown_field", path: "/fields/unknown" }] },
+      },
+    },
+    response: { status: 422 },
+  });
+
+  const created = await send("/api/v1/admin/models/notes/entries", {
+    blocks: [],
+    fields: {},
+    slug: "note",
+    title: "Note",
+  });
+  expect(created.response.status).toBe(201);
+  const entryId = created.body.id;
+  const rejected = await send(
+    `/api/v1/admin/entries/${entryId}/draft`,
+    {
+      blocks: [
+        {
+          data: { body: { content: [{ type: "html" }], type: "doc" } },
+          key: "01J00000000000000000000000",
+          position: 1024,
+          schemaVersion: 1,
+          type: "richText",
+        },
+      ],
+      expectedRevision: 1,
+      fields: {},
+      slug: "note",
+      title: "Note",
+    },
+    "PUT",
+  );
+  expect(rejected).toMatchObject({
+    body: {
+      error: {
+        code: "VALIDATION_FAILED",
+        details: { issues: [{ code: "invalid_field_value", path: "/blocks/0/data/body" }] },
+      },
+    },
+    response: { status: 422 },
+  });
+  expect(JSON.stringify(rejected.body)).not.toContain("html");
+  expect((await json(app, `/api/v1/admin/entries/${entryId}`)).body.draft.revision).toBe(1);
+
+  expect(
+    await send(`/api/v1/admin/entries/${entryId}/publish`, { expectedRevision: 1 }),
+  ).toMatchObject({
+    body: {
+      error: {
+        code: "VALIDATION_FAILED",
+        details: { issues: [{ code: "missing_required_field", path: "/fields/summary" }] },
+      },
+    },
+    response: { status: 422 },
+  });
+  expect(await store.loadPublic("/notes/note")).toBeNull();
 });
 
 test("renders stable body-limit and rate-limit envelopes", async () => {

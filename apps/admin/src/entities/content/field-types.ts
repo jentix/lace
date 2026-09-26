@@ -26,3 +26,10 @@ export interface FieldRendererProps {
 export type FieldRendererRegistry = Partial<
   Record<FieldDefinition["type"], ComponentType<FieldRendererProps>>
 >;
+
+/** The DOM id of the control for a model or block field's form name. */
+export function fieldControlId(
+  name: `blocks.${number}.data.${string}` | `fields.${string}`,
+): string {
+  return `field-${name.replaceAll(".", "-")}`;
+}

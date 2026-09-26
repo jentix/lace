@@ -1,12 +1,17 @@
 export {
+  BLOCK_MESSAGES,
   createDraftResolver,
+  fieldProblem,
   initialModelFieldValues,
   isUlid,
-  pointerToFormField,
+  issueLocation,
+  locationField,
+  serverIssueMessage,
   suggestSlug,
   validateDraftValues,
   withoutClearedValues,
   type DraftEditorValues,
+  type IssueLocation,
 } from "./editor-form.js";
 export {
   draftValues,
@@ -25,3 +30,9 @@ export {
 export { RichTextEditor } from "./RichTextEditor/index.js";
 export { EntryStatusBadge } from "./EntryStatusBadge/index.js";
 export { useEntryOverview } from "./overview.js";
+export {
+  blockLevelProblems,
+  validationProblems,
+  type ProblemTarget,
+  type ValidationProblem,
+} from "./validation-problems.js";

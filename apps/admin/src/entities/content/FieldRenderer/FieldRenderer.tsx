@@ -3,7 +3,11 @@ import { Controller, type Control } from "react-hook-form";
 import { fieldErrorClass } from "../../../shared/ui/layout/index.js";
 import type { DraftEditorValues } from "../editor-form.js";
 import { fieldLabel } from "../draft.js";
-import type { FieldDefinition, FieldRendererRegistry } from "../field-types.js";
+import {
+  fieldControlId,
+  type FieldDefinition,
+  type FieldRendererRegistry,
+} from "../field-types.js";
 import { builtInRenderers, groupedFieldTypes } from "../FieldControls/index.js";
 
 export type { FieldDefinition, FieldRendererProps, FieldRendererRegistry } from "../field-types.js";
@@ -48,7 +52,7 @@ export function FieldRenderer({
 }) {
   const { readOnly, renderers } = useContext(FieldRendererContext);
   const Renderer = renderers[definition.type] ?? builtInRenderers[definition.type];
-  const id = `field-${name.replaceAll(".", "-")}`;
+  const id = fieldControlId(name);
   const errorId = `${id}-error`;
   const descriptionId = `${id}-description`;
   const describedBy =

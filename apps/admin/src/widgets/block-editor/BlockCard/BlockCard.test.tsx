@@ -105,6 +105,24 @@ test("keeps a block with an error expanded and shows the error", () => {
   expect(screen.queryByRole("button", { name: /Expand Hero block/u })).not.toBeInTheDocument();
 });
 
+test("shows block-level problems and a text marker", () => {
+  mount({
+    error: {
+      data: { extra: { message: "This block has data for the undefined field “extra”." } },
+      schemaVersion: { message: "This block version is not current." },
+    },
+  });
+  const card = screen.getByRole("article", { name: "Hero" });
+  expect(card).toHaveAttribute("data-invalid", "true");
+  expect(card).toHaveTextContent("Has problems");
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent("This block version is not current.");
+  expect(alert).toHaveTextContent("This block has data for the undefined field “extra”.");
+  expect(card).toHaveAccessibleDescription(
+    "This block version is not current. This block has data for the undefined field “extra”.",
+  );
+});
+
 test("marks the active block and reports activation on focus", async () => {
   const user = userEvent.setup();
   const { props, rerender } = mount();

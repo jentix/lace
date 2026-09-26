@@ -1022,7 +1022,11 @@ preserve the same snapshot-revision invariant.
 - Requests and responses use shared Valibot runtime schemas.
 - Hono request validation uses `@hono/standard-validator`, keeping route integration based on Standard Schema rather than a validator-specific Hono API.
 - Database rows are never exposed directly as API DTOs.
-- Errors use one stable machine-readable envelope.
+- Errors use one stable machine-readable envelope. Validation failures,
+  including content validation while creating, saving, or publishing an entry,
+  return `422 VALIDATION_FAILED` with one issue per failure: its code, a
+  message that never repeats the submitted value, and a JSON Pointer such as
+  `/blocks/0/data/body` or `/fields/summary`.
 - Collection lists use cursor pagination. Admin entry lists accept `q` (title
   or slug substring), `status` (`draft`, `published`, or `changed`, derived from
   the draft and published revisions), and `sort`; cursors are bound to the
@@ -1384,6 +1388,17 @@ Each card's actions menu offers Move up, Move down, Duplicate, and Remove. Remov
 An insert control between adjacent blocks and an Add block button after the list open the same popover. It lists the model's allowed blocks with icon, label, and description, and it has a text filter.
 
 Keyboard and pointer drag reordering stay on dnd-kit. The screen-reader announcements name blocks by label and position, never by key.
+
+Each editable rich-text field has a fixed toolbar named after the field. It holds the following controls:
+
+- a text style menu (Paragraph, Heading 1–3);
+- Bold, Italic, Strike, and Code toggles;
+- Bulleted list, Numbered list, and Quote toggles;
+- a Link control.
+
+The toggles report their pressed state for the selection. The toolbar is one tab stop with arrow-key movement, `Alt+F10` moves focus from the text to it, and Escape returns. Tooltips and `aria-keyshortcuts` name each shortcut. The editor adds undo and redo and keeps Tiptap's mark, list, heading, and Markdown shortcuts. `⌘K`/`Ctrl+K` opens the link popover, which applies only URLs that pass the shared allowlist and says which forms are permitted. The Tiptap schema declares only allowlisted attributes: links carry `href` and lists carry nothing. Every document the editor produces therefore passes the shared validator. Empty fields show a placeholder, also exposed as `aria-placeholder`. Viewers get neither the toolbar nor the placeholder.
+
+Validation problems appear where they occur. Field messages are sentences such as "Enter at least 5 characters." A block card shows its block-level problems and a "Has problems" marker: a type that is not allowed, a stale version, a key problem, or data for an undefined field. A block whose type the model no longer allows still renders, so it can be removed. When Save is blocked, or the server rejects a save or publish, a summary above the title takes focus. It counts the problems and links each one, in reading order, to its control or block card. The admin maps server JSON Pointers, including deep rich-text paths, to the same locations. Issues it cannot place are listed as text.
 
 ### Component source and design tokens
 

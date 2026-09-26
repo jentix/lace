@@ -4,6 +4,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   ChevronDownIcon,
+  CircleAlertIcon,
   CopyIcon,
   GripVerticalIcon,
   MoreHorizontalIcon,
@@ -11,7 +12,11 @@ import {
 } from "lucide-react";
 import { useId, useRef } from "react";
 import { useWatch, type Control } from "react-hook-form";
-import { FieldRenderer, type DraftEditorValues } from "../../../entities/content/index.js";
+import {
+  blockLevelProblems,
+  FieldRenderer,
+  type DraftEditorValues,
+} from "../../../entities/content/index.js";
 import { cn } from "../../../shared/lib/index.js";
 import { Button } from "../../../shared/ui/Button/index.js";
 import {
@@ -80,14 +85,19 @@ export function BlockCard({
   // A block with an error stays open so the error is never hidden.
   const hasError = error !== undefined && Object.keys(error).length > 0;
   const hidden = collapsed && !hasError;
+  // Problems that belong to no visible field are shown in the card itself.
+  const problems = blockLevelProblems(error, definition.fields);
   return (
     <article
+      aria-describedby={problems.length === 0 ? undefined : `${id}-problems`}
       aria-labelledby={`${id}-title`}
       className={cn(
         "grid gap-3 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-xs transition-[border-color,box-shadow] duration-(--duration-fast) ease-standard outline-hidden",
         active && "border-primary ring-2 ring-ring/30",
+        hasError && "border-destructive",
         sortable.isDragging && "relative z-10 shadow-md",
       )}
+      data-invalid={hasError ? "true" : undefined}
       data-active={active ? "true" : undefined}
       data-block-key={blockKey}
       onFocusCapture={onActivate}
@@ -121,7 +131,12 @@ export function BlockCard({
             {blockSummary(definition, data)}
           </p>
         </div>
-        {hasError ? undefined : (
+        {hasError ? (
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-destructive">
+            <CircleAlertIcon aria-hidden className="size-3.5" />
+            Has problems
+          </span>
+        ) : (
           <Button
             aria-controls={`${id}-fields`}
             aria-expanded={!collapsed}
@@ -184,6 +199,15 @@ export function BlockCard({
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
+      {problems.length === 0 ? undefined : (
+        <div id={`${id}-problems`} role="alert">
+          <ul className="m-0 grid list-none gap-1 p-0 text-xs text-destructive">
+            {problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-3" hidden={hidden} id={`${id}-fields`}>
         {Object.entries(definition.fields).map(([fieldKey, fieldDefinition]) => (
           <FieldRenderer

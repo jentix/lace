@@ -187,7 +187,12 @@ test("server block validation stays on the nested editable block field", async (
   await user.click(screen.getByRole("button", { name: "Collapse Hero block" }));
   expect(screen.getByLabelText("Heading")).not.toBeVisible();
   await user.click(screen.getByRole("button", { name: "Save draft" }));
-  expect(await screen.findByText("Heading is unavailable.")).toHaveAttribute("role", "alert");
+  expect(
+    await screen.findByText("Heading is unavailable.", {
+      selector: "#field-blocks-0-data-heading-error",
+    }),
+  ).toHaveAttribute("role", "alert");
+  expect(screen.getByRole("link", { name: "Heading in Hero block 1" })).toBeInTheDocument();
   expect(screen.getByLabelText("Heading")).toHaveValue("Retain me");
   expect(screen.getByLabelText("Heading")).toBeVisible();
   expect(screen.queryByRole("button", { name: /Collapse Hero block/u })).not.toBeInTheDocument();
@@ -337,4 +342,59 @@ test("the active highlight follows the block being edited", async () => {
   await user.click(within(cards[0]!).getByRole("textbox", { name: "Heading" }));
   expect(cards[0]).toHaveAttribute("data-active", "true");
   expect(cards[2]).not.toHaveAttribute("data-active");
+});
+
+test("a block whose type the model no longer allows renders with its error and can be removed", async () => {
+  const user = userEvent.setup();
+  const saveDraft = vi.fn(
+    async (_entryId: string, input: Parameters<AdminClient["saveDraft"]>[1]) => ({
+      ...draftEntry,
+      draft: { ...draftEntry.draft, ...input, revision: 3 },
+    }),
+  );
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listModels: async () => ({ items: [models.items[0]!, cardModel] }) as never,
+      loadEntry: async () => ({
+        ...draftEntry,
+        draft: {
+          ...draftEntry.draft,
+          blocks: [
+            existingBlocks[0]!,
+            {
+              data: { text: "Old" },
+              key: "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+              position: 900,
+              schemaVersion: 1,
+              type: "legacyBanner",
+            },
+          ],
+        },
+      }),
+      saveDraft: saveDraft as unknown as AdminClient["saveDraft"],
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  const legacy = screen.getByRole("article", { name: "Legacy Banner" });
+  expect(legacy).toHaveTextContent("Has problems");
+  expect(within(legacy).getByRole("alert")).toHaveTextContent(
+    "This block type is not allowed by the model.",
+  );
+
+  await user.type(screen.getByLabelText("Title"), " edited");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(saveDraft).not.toHaveBeenCalled();
+
+  await blockAction(
+    user,
+    within(legacy).getByRole("button", { name: "Actions for Legacy Banner block" }),
+    "Remove",
+  );
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+  expect(saveDraft.mock.calls[0]![1].blocks.map((block) => block.key)).toEqual([
+    existingBlocks[0]!.key,
+  ]);
 });

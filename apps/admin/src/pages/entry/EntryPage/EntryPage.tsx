@@ -1,7 +1,8 @@
 import type { AdminContentEntryDto, ContentModelDto } from "@lacecms/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useBlocker } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type BaseSyntheticEvent } from "react";
+import type { ContractValidationIssue } from "@lacecms/contracts";
 import { useForm } from "react-hook-form";
 import { ulid } from "ulid";
 import {
@@ -9,10 +10,13 @@ import {
   draftValues,
   FieldRenderer,
   FieldRendererProvider,
+  issueLocation,
   localDraftJson,
-  pointerToFormField,
+  locationField,
   resolvedPublicPath,
+  serverIssueMessage,
   suggestSlug,
+  validationProblems,
   withoutClearedValues,
   type DraftEditorValues,
   type FieldRendererRegistry,
@@ -36,6 +40,7 @@ import { MediaPicker } from "../../../widgets/media-library/index.js";
 import { DiscardChangesDialog } from "../DiscardChangesDialog/index.js";
 import { EntryConflictAlert } from "../EntryConflictAlert/index.js";
 import { EntryEditorActions, type SaveState } from "../EntryEditorActions/index.js";
+import { EntryValidationSummary } from "../EntryValidationSummary/index.js";
 import {
   EntryPublicationDetails,
   type BuildDispatchStatus,
@@ -69,8 +74,49 @@ export function EntryPage() {
   modelRef.current = model;
   const form = useForm<DraftEditorValues, unknown, DraftEditorValues>({
     defaultValues: { blocks: [], fields: {}, title: "" },
+    // The validation summary takes focus instead of the first invalid control.
+    shouldFocusError: false,
     ...(model === undefined ? {} : { resolver: createDraftResolver(model) }),
   });
+  const [summaryShown, setSummaryShown] = useState(false);
+  const [unmappedIssues, setUnmappedIssues] = useState<readonly string[]>([]);
+  const summaryRef = useRef<HTMLElement>(null);
+  const [summaryFocus, setSummaryFocus] = useState(0);
+  useEffect(() => {
+    if (summaryFocus > 0) summaryRef.current?.focus();
+  }, [summaryFocus]);
+  const showSummary = () => {
+    setSummaryShown(true);
+    setSummaryFocus((count) => count + 1);
+  };
+  const hideSummary = () => {
+    setSummaryShown(false);
+    setUnmappedIssues([]);
+  };
+  /** Shows server validation issues at their locations and in the summary. */
+  const applyServerIssues = (issues: readonly ContractValidationIssue[]) => {
+    const currentModel = modelRef.current;
+    if (currentModel === undefined) return;
+    const blocks = form.getValues("blocks");
+    const unmapped: string[] = [];
+    for (const issue of issues) {
+      const location = issueLocation(issue.path, currentModel, blocks);
+      if (location === undefined) {
+        unmapped.push(serverIssueMessage(issue));
+        continue;
+      }
+      const definition = locationField(location, currentModel, blocks);
+      const message = serverIssueMessage(
+        issue,
+        definition === undefined
+          ? undefined
+          : { definition, value: form.getValues(location as never) },
+      );
+      form.setError(location as never, { message, type: "server" });
+    }
+    setUnmappedIssues(unmapped);
+    showSummary();
+  };
   const loaded = useRef<string | undefined>(undefined);
   const [suggestingSlug, setSuggestingSlug] = useState(false);
   const suggestingSlugRef = useRef(false);
@@ -127,13 +173,10 @@ export function EntryPage() {
         setConflict("save");
         return;
       }
-      for (const issue of error.issues ?? []) {
-        const name = pointerToFormField(issue.path, modelRef.current, form.getValues("blocks"));
-        if (name !== undefined)
-          form.setError(name as never, { message: issue.message, type: "server" });
-      }
+      if (error.issues !== undefined && error.issues.length > 0) applyServerIssues(error.issues);
     },
     onSuccess: async (saved) => {
+      hideSummary();
       const savedModel = modelRef.current;
       if (savedModel === undefined) return;
       queryClient.setQueryData(adminQueryKeys.entry(entryId), saved);
@@ -157,6 +200,12 @@ export function EntryPage() {
         setPublishAttempt(undefined);
         return;
       }
+      if (
+        error instanceof AdminClientError &&
+        error.issues !== undefined &&
+        error.issues.length > 0
+      )
+        applyServerIssues(error.issues);
       if (error instanceof AdminClientError && error.status !== undefined)
         setPublishAttempt(undefined);
     },
@@ -175,7 +224,13 @@ export function EntryPage() {
     },
   });
   const readOnly = session.role === "viewer";
-  const submitDraft = form.handleSubmit((values) => save.mutate(values));
+  const submitDraft = (event?: BaseSyntheticEvent) => {
+    setUnmappedIssues([]);
+    return form.handleSubmit(
+      (values) => save.mutate(values),
+      () => showSummary(),
+    )(event);
+  };
   useSaveShortcut(() => {
     if (readOnly || save.isPending || !form.formState.isDirty) return;
     void submitDraft();
@@ -189,6 +244,7 @@ export function EntryPage() {
       setSavedEntry(reloaded);
       loaded.current = `${reloaded.id}:${reloaded.draft.revision}`;
       form.reset(draftValues(reloadedModel, reloaded));
+      hideSummary();
       setConflict(undefined);
       setPublishAttempt(undefined);
     },
@@ -234,6 +290,17 @@ export function EntryPage() {
       setCopyError("Could not copy local JSON. Select and copy it manually from your browser.");
     }
   };
+  const problems = summaryShown
+    ? validationProblems({
+        // Errors change with every revalidation, which re-renders the page.
+        blocks: form.getValues("blocks"),
+        errors: form.formState.errors,
+        model,
+        unmapped: unmappedIssues,
+      })
+    : [];
+  const validationRejected = (error: unknown) =>
+    error instanceof AdminClientError && (error.issues?.length ?? 0) > 0;
   const titleError = form.formState.errors.title;
   const slugError = form.formState.errors.slug;
   const hasEntryFields = model.kind === "collection" || Object.keys(model.fields).length > 0;
@@ -288,8 +355,11 @@ export function EntryPage() {
               >
                 Edit {model.label ?? model.key}
               </h1>
+              {problems.length === 0 ? undefined : (
+                <EntryValidationSummary problems={problems} ref={summaryRef} />
+              )}
               {conflict === undefined ? (
-                save.error === null ? undefined : (
+                save.error === null || validationRejected(save.error) ? undefined : (
                   <PageError error={save.error} />
                 )
               ) : (

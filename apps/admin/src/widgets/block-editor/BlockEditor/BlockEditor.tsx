@@ -17,8 +17,9 @@ import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useFieldArray, type Control, type UseFormGetValues } from "react-hook-form";
 import { ulid } from "ulid";
-import type { DraftEditorValues } from "../../../entities/content/index.js";
+import { BLOCK_MESSAGES, type DraftEditorValues } from "../../../entities/content/index.js";
 import { Button } from "../../../shared/ui/Button/index.js";
+import { fieldErrorClass } from "../../../shared/ui/layout/index.js";
 import { AddBlockMenu } from "../AddBlockMenu/index.js";
 import { BlockCard } from "../BlockCard/index.js";
 import { RemovedBlockNotice } from "../RemovedBlockNotice/index.js";
@@ -41,6 +42,7 @@ export function BlockEditor({
   model,
 }: {
   readonly control: Control<DraftEditorValues, unknown, DraftEditorValues>;
+  /** Per-block errors by index, plus `root` for the block list as a whole. */
   readonly errors: Record<string, Record<string, unknown>> | undefined;
   readonly getValues: UseFormGetValues<DraftEditorValues>;
   readonly model: ContentModelDto;
@@ -61,6 +63,7 @@ export function BlockEditor({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const definitions = model.blockDefinitions ?? [];
+  const listError = errors?.root?.message as string | undefined;
   // Screen-reader announcements name blocks by label and position, never by key.
   const describe = (id: string | number, overId?: string | number) => {
     const index = fields.findIndex((block) => block.key === id);
@@ -188,8 +191,17 @@ export function BlockEditor({
       );
     }
     if (removed?.index === index) items.push(notice);
-    const definition = definitions.find((item) => item.type === block.type);
-    if (definition === undefined) return;
+    // A block whose type the model no longer allows still renders, with its
+    // error, so the writer can see why Save is blocked and remove it.
+    const allowed = definitions.find((item) => item.type === block.type);
+    const definition: BlockDefinitionDto = allowed ?? {
+      fields: {},
+      type: block.type,
+      version: block.schemaVersion,
+    };
+    const error =
+      errors?.[index] ??
+      (allowed === undefined ? { type: { message: BLOCK_MESSAGES.typeNotAllowed } } : undefined);
     items.push(
       <BlockCard
         active={activeKey === block.key}
@@ -197,7 +209,7 @@ export function BlockEditor({
         collapsed={collapsed.has(block.key)}
         control={control}
         definition={definition}
-        error={errors?.[index]}
+        error={error}
         index={index}
         key={block.formId}
         onActivate={() => setActiveKey(block.key)}
@@ -220,9 +232,14 @@ export function BlockEditor({
 
   return (
     <section aria-labelledby="blocks-title" className="mt-6 grid gap-3">
-      <h2 className="m-0 text-lg font-semibold" id="blocks-title">
+      <h2 className="m-0 text-lg font-semibold outline-hidden" id="blocks-title" tabIndex={-1}>
         Blocks
       </h2>
+      {listError === undefined ? undefined : (
+        <p className={`${fieldErrorClass} text-xs`} role="alert">
+          {listError}
+        </p>
+      )}
       {definitions.length === 0 ? (
         <p className="m-0 text-sm text-muted-foreground">This model does not allow blocks.</p>
       ) : undefined}

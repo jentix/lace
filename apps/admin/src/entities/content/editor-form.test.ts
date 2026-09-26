@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
 import type { ContentModelDto } from "@lacecms/contracts";
+import type { FieldMetadata } from "@lacecms/content";
 import {
+  fieldProblem,
   initialModelFieldValues,
   isUlid,
-  pointerToFormField,
+  issueLocation,
+  locationField,
+  serverIssueMessage,
   suggestSlug,
   validateDraftValues,
   withoutClearedValues,
@@ -31,7 +35,16 @@ describe("metadata-driven draft validation", () => {
         fields: { score: 6, status: "other", url: "javascript:alert(1)" },
         title: "",
       }),
-    ).toMatchObject({ fields: { score: {}, status: {}, url: {} }, title: {} });
+    ).toMatchObject({
+      fields: {
+        score: { message: "Enter a number from 1 to 5." },
+        status: { message: "Choose one of the listed options." },
+        url: {
+          message: "Enter a URL that starts with https://, http://, mailto:, tel:, / or #.",
+        },
+      },
+      title: { message: "Title is required." },
+    });
     expect(validateDraftValues(model, { blocks: [], fields: {}, title: "Draft" })).toEqual({});
   });
 
@@ -79,10 +92,18 @@ describe("metadata-driven draft validation", () => {
     ).toEqual({});
   });
 
-  test("applies field defaults and maps only safe server error paths", () => {
+  test("applies field defaults and maps only known server error paths", () => {
     expect(initialModelFieldValues(model, {})).toMatchObject({ enabled: false });
-    expect(pointerToFormField("/fields/status")).toBe("fields.status");
-    expect(pointerToFormField("/blocks/0/data/title")).toBeUndefined();
+    expect(issueLocation("/title", model, [])).toBe("title");
+    expect(issueLocation("/slug", model, [])).toBe("slug");
+    expect(issueLocation("/fields/status", model, [])).toBe("fields.status");
+    expect(issueLocation("/fields/status/nested/0", model, [])).toBe("fields.status");
+    expect(issueLocation("/fields/unknown", model, [])).toBeUndefined();
+    expect(issueLocation("/blocks", model, [])).toBe("blocks.root");
+    expect(issueLocation("/blocks/0/data/title", model, [])).toBeUndefined();
+    expect(issueLocation("", model, [])).toBeUndefined();
+    expect(issueLocation("/kind", model, [])).toBeUndefined();
+    expect(issueLocation("/title/extra", model, [])).toBeUndefined();
   });
 
   test("validates local block metadata and maps only its current block paths", () => {
@@ -114,17 +135,116 @@ describe("metadata-driven draft validation", () => {
     ).toMatchObject({
       blocks: { 0: { data: { actionUrl: {} } } },
     });
-    expect(pointerToFormField("/blocks/0/data/actionUrl", blockModel, [block])).toBe(
+    expect(issueLocation("/blocks/0/data/actionUrl", blockModel, [block])).toBe(
       "blocks.0.data.actionUrl",
     );
-    expect(pointerToFormField("/blocks/0/data/unknown", blockModel, [block])).toBeUndefined();
+    expect(issueLocation("/blocks/0/data/actionUrl/content/0", blockModel, [block])).toBe(
+      "blocks.0.data.actionUrl",
+    );
+    expect(issueLocation("/blocks/0/data/unknown", blockModel, [block])).toBe(
+      "blocks.0.data.unknown",
+    );
+    expect(issueLocation("/blocks/0/type", blockModel, [block])).toBe("blocks.0.type");
+    expect(issueLocation("/blocks/0/key", blockModel, [block])).toBe("blocks.0.key");
+    expect(issueLocation("/blocks/0/schemaVersion", blockModel, [block])).toBe(
+      "blocks.0.schemaVersion",
+    );
+    expect(issueLocation("/blocks/0", blockModel, [block])).toBe("blocks.0.block");
+    expect(issueLocation("/blocks/0/data", blockModel, [block])).toBe("blocks.0.block");
+    expect(issueLocation("/blocks/1/data/actionUrl", blockModel, [block])).toBeUndefined();
+    expect(issueLocation("/blocks/01/type", blockModel, [block])).toBeUndefined();
+    expect(locationField("blocks.0.data.actionUrl", blockModel, [block])).toEqual({
+      required: false,
+      type: "url",
+    });
+    expect(locationField("blocks.0.type", blockModel, [block])).toBeUndefined();
+    expect(
+      validateDraftValues(blockModel, {
+        blocks: [{ ...block, data: { actionUrl: "/safe", extra: 1 } }],
+        fields: {},
+        title: "Post",
+      }),
+    ).toMatchObject({
+      blocks: {
+        0: { data: { extra: { message: "This block has data for the undefined field “extra”." } } },
+      },
+    });
     expect(
       validateDraftValues(blockModel, {
         blocks: [{ ...block, data: { actionUrl: "/safe" }, key: "invalid" }, { ...block }],
         fields: {},
         title: "Post",
       }),
-    ).toMatchObject({ blocks: { 0: { key: {} } } });
+    ).toMatchObject({ blocks: { 0: { key: { message: "This block's key is not valid." } } } });
+  });
+
+  test("describes descriptor violations as sentences without the value", () => {
+    const text = { maxLength: 5, minLength: 2, required: false, type: "text" } as FieldMetadata;
+    expect(fieldProblem(text, "ok")).toBeUndefined();
+    expect(fieldProblem(text, "x")).toBe("Enter between 2 and 5 characters.");
+    expect(fieldProblem({ minLength: 3, required: false, type: "textarea" }, "x")).toBe(
+      "Enter at least 3 characters.",
+    );
+    expect(fieldProblem({ maxLength: 3, required: false, type: "text" }, "long")).toBe(
+      "Enter no more than 3 characters.",
+    );
+    expect(fieldProblem({ min: 2, required: false, type: "number" }, 1)).toBe(
+      "Enter a number of at least 2.",
+    );
+    expect(fieldProblem({ required: false, type: "number" }, Number.NaN)).toBe("Enter a number.");
+    expect(fieldProblem({ required: false, type: "date" }, "2026-02-30")).toBe(
+      "Choose a valid date.",
+    );
+    expect(fieldProblem({ required: false, type: "datetime" }, "soon")).toBe(
+      "Choose a valid date and time.",
+    );
+    expect(fieldProblem({ required: false, type: "media" }, "")).toBe("Choose a media item.");
+    expect(fieldProblem({ required: false, type: "boolean" }, "yes")).toBe("Choose on or off.");
+    const richText = { required: false, type: "richText" } as FieldMetadata;
+    const link = (href: string) => ({
+      content: [
+        {
+          content: [{ marks: [{ attrs: { href }, type: "link" }], text: "x", type: "text" }],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    });
+    expect(fieldProblem(richText, link("https://lace.test"))).toBeUndefined();
+    expect(fieldProblem(richText, link("javascript:alert(1)"))).toBe(
+      "Links must start with https://, http://, mailto:, tel:, / or #.",
+    );
+    expect(fieldProblem(richText, { content: [{ type: "image" }], type: "doc" })).toBe(
+      "Remove formatting that is not supported here.",
+    );
+    expect(fieldProblem(richText, { type: "invalid" })).toBe(
+      "This text could not be read. Undo the last change or clear the field.",
+    );
+  });
+
+  test("maps server issue codes to the same sentences", () => {
+    const url = { required: false, type: "url" } as FieldMetadata;
+    expect(
+      serverIssueMessage(
+        { code: "invalid_field_value", message: "does not conform to its field definition." },
+        { definition: url, value: "javascript:x" },
+      ),
+    ).toBe("Enter a URL that starts with https://, http://, mailto:, tel:, / or #.");
+    expect(serverIssueMessage({ code: "invalid_field_value", message: "x" })).toBe(
+      "This value is not valid for this field.",
+    );
+    expect(serverIssueMessage({ code: "missing_required_field", message: "x" })).toBe(
+      "This field is required to publish.",
+    );
+    expect(serverIssueMessage({ code: "disallowed_block_type", message: "x" })).toBe(
+      "This block type is not allowed by the model.",
+    );
+    expect(serverIssueMessage({ code: "too_many_blocks", message: "must not contain more." })).toBe(
+      "Must not contain more.",
+    );
+    expect(serverIssueMessage({ code: "invalid_value", message: "Summary is unavailable." })).toBe(
+      "Summary is unavailable.",
+    );
   });
 
   test("suggests a stable collection slug", () => {

@@ -113,7 +113,12 @@ as a validation failure before the operation reaches application code.
 The system SHALL represent every transport failure as `{ error: { code,
 message, details? } }`. Validation failures SHALL use `VALIDATION_FAILED` with
 field issues whose paths use JSON Pointer notation; the envelope SHALL not
-expose stack traces, SQL text, or validator-internal objects. Each existing
+expose stack traces, SQL text, or validator-internal objects. Content
+validation failures raised while creating, saving, or publishing an entry
+(model fields, system fields, and block keys, types, versions, and data) SHALL
+use the same `422` `VALIDATION_FAILED` envelope, with one issue per failure
+carrying its stable issue code, a sanitized message that does not repeat the
+submitted value, and the JSON Pointer of the failing location. Each existing
 domain/application error SHALL map to exactly one stable status and code pair:
 `AUTHORIZATION_DENIED` to `403`, `CONTENT_INVALID_STATE` to `422`, and each of
 `CONTENT_MODEL_CARDINALITY_CONFLICT`, `CONTENT_PUBLISHED_IMMUTABLE`,
@@ -139,6 +144,20 @@ oversized request body as `PAYLOAD_TOO_LARGE` with `413`.
 - **THEN** the API can return status `422` with code `VALIDATION_FAILED` and
   stable JSON Pointer issue paths without a stack trace, SQL text, or
   implementation-specific validator output
+
+#### Scenario: Invalid block data is rejected with its pointer
+- **WHEN** a writer saves a complete draft whose first block's rich-text field
+  contains a node outside the shared allowlist
+- **THEN** the API returns status `422` with code `VALIDATION_FAILED` and an
+  issue whose path is `/blocks/0/data/body`, and the draft revision is
+  unchanged
+
+#### Scenario: Publication validation is rejected with its pointer
+- **WHEN** an admin publishes a draft that lacks a model field required for
+  publication
+- **THEN** the API returns status `422` with code `VALIDATION_FAILED` and an
+  issue whose path is `/fields/<key>` with code `missing_required_field`, and
+  nothing is published
 
 #### Scenario: A resource does not exist
 - **WHEN** a caller requests an unknown API route or content resource

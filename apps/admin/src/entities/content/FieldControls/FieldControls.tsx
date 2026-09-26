@@ -324,6 +324,7 @@ function UrlField({
 function RichTextField({
   describedBy,
   id,
+  invalid,
   label,
   onBlur,
   onChange,
@@ -334,6 +335,7 @@ function RichTextField({
     <RichTextEditor
       {...(describedBy === undefined ? {} : { describedBy })}
       id={id}
+      invalid={invalid}
       label={label}
       onBlur={onBlur}
       onChange={onChange}
