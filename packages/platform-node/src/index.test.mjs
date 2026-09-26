@@ -780,7 +780,12 @@ test("applies guarded configuration sync atomically, coalesces build work, and r
       { entryCount: 0, key: "posts" },
     ]);
     await expect(
-      repository.list({ limit: 1, modelKey: contentModelKey("home") }),
+      repository.list({
+        limit: 1,
+        listFields: [],
+        modelKey: contentModelKey("home"),
+        sort: "-updatedAt",
+      }),
     ).resolves.toMatchObject({
       items: [{ title: "home" }],
     });
@@ -1282,17 +1287,19 @@ test("persists bounded Node draft reads and writes without exposing drafts publi
       const second = draftEntry("post-b", "posts", 20, "Second");
       await repository.create({ entry: first, mediaReferences: references("post-a-block") });
       await repository.create({ entry: second, mediaReferences: references("post-b-block") });
-      const firstPage = await repository.list({ limit: 1, modelKey: contentModelKey("posts") });
-      expect(firstPage.items.map((item) => item.id)).toEqual(["post-b"]);
-      const secondPage = await repository.list({
-        after: firstPage.nextCursor,
+      const listInput = {
         limit: 1,
+        listFields: [],
         modelKey: contentModelKey("posts"),
-      });
+        sort: "-updatedAt",
+      };
+      const firstPage = await repository.list(listInput);
+      expect(firstPage.items.map((item) => item.id)).toEqual(["post-b"]);
+      const secondPage = await repository.list({ ...listInput, after: firstPage.nextCursor });
       expect(secondPage.items.map((item) => item.id)).toEqual(["post-a"]);
-      await expect(
-        repository.list({ after: "not-a-cursor", limit: 1, modelKey: contentModelKey("posts") }),
-      ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      await expect(repository.list({ ...listInput, after: "not-a-cursor" })).rejects.toMatchObject({
+        code: "CONTENT_INVALID_STATE",
+      });
 
       await repository.saveCompleteDraft({
         entryId: first.id,
@@ -1486,6 +1493,260 @@ test("guards Node deletions by draft revision and publication identity", async (
         }),
       ).resolves.toMatchObject({ status: "deleted" });
       expect(await repository.load({ entryId: post.id })).toBeNull();
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+function listEntry(id, { fields = {}, slug, title, updatedAt, updatedBy = editor }) {
+  const entryId = contentEntryId(id);
+  return createContentEntry({
+    id: entryId,
+    model: routes.get("posts"),
+    draft: {
+      blocks: [],
+      createdAt: unixMilliseconds(updatedAt),
+      entryId,
+      fields,
+      id: contentSnapshotId(`${id}-draft`),
+      revision: 1,
+      ...(slug === undefined ? {} : { slug }),
+      state: "draft",
+      title,
+      updatedAt: unixMilliseconds(updatedAt),
+      updatedBy,
+    },
+  });
+}
+
+test("lists Node entries with derived status, totals, search, sorts, and bound cursors", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-entry-list-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      database.connection
+        .prepare("insert into content_models values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("posts", "collection", "Posts", 1, "structure", "projection", 1, 1);
+      database.connection
+        .prepare(
+          "insert into user (id, name, email, email_verified, role, disabled, created_at, updated_at) values (?, ?, ?, 0, 'editor', 0, 1, 1)",
+        )
+        .run("editor", "editor@example.test", "editor@example.test");
+      const repository = new NodeContentRepository(database.connection, (key) => routes.get(key));
+      const gone = { id: actorId("gone"), role: "editor" };
+      const entries = [
+        listEntry("e-zebra", {
+          fields: { category: "news", body: { type: "doc" } },
+          slug: "zebra",
+          title: "Zebra draft",
+          updatedAt: 10,
+        }),
+        listEntry("e-apple", {
+          fields: { rank: 2 },
+          slug: "apple-launch",
+          title: "apple launch",
+          updatedAt: 11,
+        }),
+        listEntry("e-banana", {
+          fields: { category: "design" },
+          slug: "banana",
+          title: "Banana Launch",
+          updatedAt: 12,
+          updatedBy: gone,
+        }),
+        listEntry("e-same-a", { slug: "same-a", title: "Same", updatedAt: 13 }),
+        listEntry("e-same-b", { slug: "same-b", title: "same", updatedAt: 13 }),
+        listEntry("e-literal", {
+          slug: "literal",
+          title: "100% _off_ 'deal'",
+          updatedAt: 14,
+          updatedBy: { id: actorId("system:content-sync"), role: "admin" },
+        }),
+      ];
+      for (const entry of entries) await repository.create({ entry, mediaReferences: [] });
+      for (const [id, at] of [
+        ["e-apple", 20],
+        ["e-banana", 21],
+      ]) {
+        await repository.publish({
+          entryId: contentEntryId(id),
+          expectedRevision: 1,
+          publishedAt: unixMilliseconds(at),
+          publishedBy: editor,
+          publishedSnapshotId: contentSnapshotId(`${id}-published`),
+        });
+      }
+      const base = {
+        limit: 100,
+        listFields: ["category", "rank", "body", "missing"],
+        modelKey: contentModelKey("posts"),
+        sort: "-updatedAt",
+      };
+      const before = await repository.list(base);
+      expect(before.totals).toEqual({ all: 6, changed: 0, draft: 4, published: 2 });
+
+      await repository.saveCompleteDraft({
+        entryId: contentEntryId("e-banana"),
+        mutation: {
+          blocks: [],
+          expectedRevision: 1,
+          fields: { category: "design" },
+          mediaReferences: [],
+          slug: "banana",
+          title: "Banana Launch",
+          updatedAt: unixMilliseconds(30),
+          updatedBy: gone,
+        },
+      });
+      const all = await repository.list(base);
+      expect(all.totals).toEqual({ all: 6, changed: 1, draft: 4, published: 1 });
+      const byId = new Map(all.items.map((item) => [item.id, item]));
+      expect(byId.get("e-zebra")).toEqual({
+        draftRevision: 1,
+        id: "e-zebra",
+        listValues: { category: "news" },
+        modelKey: "posts",
+        slug: "zebra",
+        status: "draft",
+        title: "Zebra draft",
+        updatedAt: 10,
+        updatedBy: { displayName: "editor@example.test", id: "editor" },
+      });
+      expect(byId.get("e-apple")).toMatchObject({
+        listValues: { rank: 2 },
+        publishedAt: 20,
+        publishedSnapshotId: "e-apple-published",
+        status: "published",
+      });
+      expect(byId.get("e-banana")).toMatchObject({
+        publishedAt: 21,
+        status: "changed",
+        updatedBy: { displayName: "Unknown user", id: "gone" },
+      });
+      expect(byId.get("e-literal").updatedBy.displayName).toBe("System");
+
+      const search = await repository.list({ ...base, q: "launch", sort: "title" });
+      expect(search.items.map((item) => item.id)).toEqual(["e-apple", "e-banana"]);
+      expect(search.totals).toEqual({ all: 2, changed: 1, draft: 0, published: 1 });
+      const filtered = await repository.list({ ...base, q: "launch", status: "changed" });
+      expect(filtered.items.map((item) => item.id)).toEqual(["e-banana"]);
+      expect(filtered.totals).toEqual(search.totals);
+      expect((await repository.list({ ...base, q: "apple-l" })).items.map((i) => i.id)).toEqual([
+        "e-apple",
+      ]);
+      for (const [q, expected] of [
+        ["%", ["e-literal"]],
+        ["_off_", ["e-literal"]],
+        ["'deal'", ["e-literal"]],
+        ["o_f", []],
+      ]) {
+        expect((await repository.list({ ...base, q })).items.map((i) => i.id)).toEqual(expected);
+      }
+
+      const pageThrough = async (sort) => {
+        const ids = [];
+        let after;
+        do {
+          const page = await repository.list({
+            ...base,
+            limit: 1,
+            sort,
+            ...(after === undefined ? {} : { after }),
+          });
+          ids.push(...page.items.map((item) => item.id));
+          after = page.nextCursor;
+        } while (after !== undefined);
+        return ids;
+      };
+      // Publication advances the entry update time; never-published entries sort earliest.
+      const expectedOrders = {
+        "-publishedAt": ["e-banana", "e-apple", "e-zebra", "e-same-b", "e-same-a", "e-literal"],
+        "-title": ["e-zebra", "e-same-b", "e-same-a", "e-banana", "e-apple", "e-literal"],
+        "-updatedAt": ["e-banana", "e-apple", "e-literal", "e-same-b", "e-same-a", "e-zebra"],
+        publishedAt: ["e-literal", "e-same-a", "e-same-b", "e-zebra", "e-apple", "e-banana"],
+        title: ["e-literal", "e-apple", "e-banana", "e-same-a", "e-same-b", "e-zebra"],
+        updatedAt: ["e-zebra", "e-same-a", "e-same-b", "e-literal", "e-apple", "e-banana"],
+      };
+      for (const [sort, expected] of Object.entries(expectedOrders)) {
+        expect(await pageThrough(sort)).toEqual(expected);
+        expect((await repository.list({ ...base, sort })).items.map((i) => i.id)).toEqual(expected);
+      }
+
+      const titlePage = await repository.list({ ...base, limit: 1, sort: "title" });
+      for (const mismatch of [
+        { sort: "-updatedAt" },
+        { sort: "title", q: "launch" },
+        { sort: "title", status: "draft" },
+        { modelKey: contentModelKey("home"), sort: "title" },
+      ]) {
+        await expect(
+          repository.list({ ...base, limit: 1, after: titlePage.nextCursor, ...mismatch }),
+        ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      }
+      const forged = (value) =>
+        Buffer.from(
+          JSON.stringify({
+            id: "e-apple",
+            kind: JSON.stringify(["entries", "posts", "title", null, null]),
+            value,
+            version: 2,
+          }),
+        ).toString("base64url");
+      await expect(
+        repository.list({ ...base, after: forged(5), sort: "title" }),
+      ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+      const resumed = await repository.list({
+        ...base,
+        after: forged("apple launch"),
+        sort: "title",
+      });
+      expect(resumed.items.map((item) => item.id)).toEqual([
+        "e-banana",
+        "e-same-a",
+        "e-same-b",
+        "e-zebra",
+      ]);
+      const legacy = Buffer.from(
+        JSON.stringify({ id: "e-apple", kind: "admin", timestamp: 1, version: 1 }),
+      ).toString("base64url");
+      await expect(repository.list({ ...base, after: legacy })).rejects.toMatchObject({
+        code: "CONTENT_INVALID_STATE",
+      });
+
+      await expect(
+        repository.describeActors([
+          actorId("editor"),
+          actorId("system:content-sync"),
+          actorId("gone"),
+        ]),
+      ).resolves.toEqual([
+        { displayName: "editor@example.test", id: "editor" },
+        { displayName: "System", id: "system:content-sync" },
+        { displayName: "Unknown user", id: "gone" },
+      ]);
+
+      const statements = [];
+      const prepare = database.connection.prepare.bind(database.connection);
+      database.connection.prepare = (sql) => {
+        statements.push(sql);
+        return prepare(sql);
+      };
+      await repository.list(base);
+      database.connection.prepare = prepare;
+      const listStatement = statements.find((sql) => sql.includes("sort_value"));
+      const plan = database.connection
+        .prepare(`explain query plan ${listStatement}`)
+        .all("posts", 101);
+      expect(plan).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ detail: expect.stringContaining("content_entries_list_idx") }),
+        ]),
+      );
     } finally {
       database.connection.close();
     }

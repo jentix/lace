@@ -3,8 +3,8 @@ import {
   buildTokenCreatedSchema,
   buildTokenListSchema,
   buildTokenSchema,
+  adminContentEntrySchema,
   contentEntryListSchema,
-  contentEntrySchema,
   contentModelListSchema,
   contractValidationIssueSchema,
   errorEnvelopeSchema,
@@ -19,7 +19,9 @@ import {
   type BuildTokenDto,
   type BuildTokenListDto,
   type ContractValidationIssue,
-  type ContentEntryDto,
+  type AdminContentEntryDto,
+  type ContentEntrySortDto,
+  type ContentEntryStatusDto,
   type ContentEntryListDto,
   type ContentModelListDto,
   type MediaListDto,
@@ -79,10 +81,14 @@ export interface AdminClient {
   listTokens(): Promise<BuildTokenListDto>;
   createToken(name: string): Promise<BuildTokenCreatedDto>;
   revokeToken(tokenId: string): Promise<BuildTokenDto>;
-  createEntry(modelKey: string, title: string): Promise<ContentEntryDto>;
+  createEntry(modelKey: string, title: string): Promise<AdminContentEntryDto>;
   deleteEntry(entryId: string, expectedRevision: number): Promise<void>;
-  loadEntry(entryId: string): Promise<ContentEntryDto>;
-  listEntries(modelKey: string, cursor?: string): Promise<ContentEntryListDto>;
+  loadEntry(entryId: string): Promise<AdminContentEntryDto>;
+  listEntries(
+    modelKey: string,
+    cursor?: string,
+    query?: EntryListQuery,
+  ): Promise<ContentEntryListDto>;
   listMedia(cursor?: string): Promise<MediaListDto>;
   uploadMedia(file: File): Promise<MediaMetadataDto>;
   deleteMedia(mediaId: string): Promise<MediaMetadataDto>;
@@ -103,7 +109,14 @@ export interface AdminClient {
       readonly slug?: string;
       readonly title: string;
     },
-  ): Promise<ContentEntryDto>;
+  ): Promise<AdminContentEntryDto>;
+}
+
+/** Server-side search, status filter, and sort for an admin entry list. */
+export interface EntryListQuery {
+  readonly q?: string;
+  readonly sort?: ContentEntrySortDto;
+  readonly status?: ContentEntryStatusDto;
 }
 
 type Fetcher = typeof fetch;
@@ -208,7 +221,7 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
       ),
     createEntry: async (modelKey: string, title: string) =>
       parse(
-        contentEntrySchema,
+        adminContentEntrySchema,
         await request(fetcher, `/api/v1/admin/models/${encodeURIComponent(modelKey)}/entries`, {
           body: JSON.stringify({ blocks: [], fields: {}, title }),
           headers: { "content-type": "application/json" },
@@ -224,16 +237,21 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     },
     loadEntry: async (entryId: string) =>
       parse(
-        contentEntrySchema,
+        adminContentEntrySchema,
         await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}`),
       ),
-    listEntries: async (modelKey: string, cursor?: string) => {
-      const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+    listEntries: async (modelKey: string, cursor?: string, query: EntryListQuery = {}) => {
+      const search = new URLSearchParams();
+      if (cursor !== undefined) search.set("after", cursor);
+      if (query.q !== undefined && query.q.trim().length > 0) search.set("q", query.q.trim());
+      if (query.status !== undefined) search.set("status", query.status);
+      if (query.sort !== undefined) search.set("sort", query.sort);
+      const suffix = search.size === 0 ? "" : `?${search.toString()}`;
       return parse(
         contentEntryListSchema,
         await request(
           fetcher,
-          `/api/v1/admin/models/${encodeURIComponent(modelKey)}/entries${query}`,
+          `/api/v1/admin/models/${encodeURIComponent(modelKey)}/entries${suffix}`,
         ),
       );
     },
@@ -305,7 +323,7 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
       },
     ) =>
       parse(
-        contentEntrySchema,
+        adminContentEntrySchema,
         await request(fetcher, `/api/v1/admin/entries/${encodeURIComponent(entryId)}/draft`, {
           body: JSON.stringify(input),
           headers: { "content-type": "application/json" },

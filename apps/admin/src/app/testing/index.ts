@@ -11,6 +11,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
+import type { ContentEntryListDto } from "@lacecms/contracts";
 import { createElement, type ReactElement } from "react";
 import {
   createStaticSessionSource,
@@ -38,10 +39,23 @@ export const models = {
 export const entry = {
   draftRevision: 2,
   id: "entry-1",
+  listValues: {},
   modelKey: "posts",
+  status: "draft" as const,
   title: "First post",
   updatedAt: "2026-09-20T00:00:00.000Z",
+  updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
 };
+
+/** Wraps entry summaries in a list page with totals derived from their statuses. */
+export function entryList(
+  items: readonly (typeof entry)[] = [],
+  nextCursor?: string,
+): ContentEntryListDto {
+  const totals = { all: items.length, changed: 0, draft: 0, published: 0 };
+  for (const item of items) totals[item.status] += 1;
+  return { items: [...items], ...(nextCursor === undefined ? {} : { nextCursor }), totals };
+}
 export const draftEntry = {
   draft: {
     blocks: [],
@@ -57,6 +71,7 @@ export const draftEntry = {
   },
   id: "entry-1",
   model: { key: "posts", kind: "collection" as const, route: "/posts/:slug" },
+  updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
 };
 export const mediaItem = {
   createdAt: "2026-09-20T00:00:00.000Z",
@@ -85,8 +100,8 @@ export function stubClient(overrides: Partial<AdminClient> = {}): AdminClient {
     loadEntry: async () => draftEntry,
     listEntries: async (modelKey) =>
       modelKey === "home"
-        ? { items: [{ ...entry, id: "home-1", modelKey: "home", title: "Home" }] }
-        : { items: [entry] },
+        ? entryList([{ ...entry, id: "home-1", modelKey: "home", title: "Home" }])
+        : entryList([entry]),
     listMedia: async () => ({ items: [] }),
     uploadMedia: async () => ({}) as never,
     deleteMedia: async () => ({}) as never,

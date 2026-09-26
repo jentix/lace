@@ -372,6 +372,7 @@ export default defineConfig({
           options: ["engineering", "design", "news"],
         }),
       },
+      listFields: ["category", "author"],
       blocks: ["richText", "image", "quote"],
     }),
   ],
@@ -489,11 +490,17 @@ The command:
 - refuses destructive removal while entries still exist;
 - reports incompatible field changes.
 
+A collection may declare `listFields`, an ordered list of its own scalar fields
+(text, textarea, number, boolean, select, date, datetime, or URL) that admin
+entry lists show as columns. Rich-text and media fields are rejected: the first
+is a document and the second an opaque identifier. `listFields` is presentation
+metadata like labels.
+
 Every model definition has an integer `version` starting at `1`. Any structural
 change to fields, allowed blocks, path, or route must increment it; display-only
-label and description changes do not. Sync compares two canonical hashes:
-`structure_hash` excludes display metadata and `projection_hash` includes the
-complete serializable projection. A changed structure hash without a version
+label, description, and `listFields` changes do not. Sync compares two canonical
+hashes: `structure_hash` excludes display metadata and `projection_hash`
+includes the complete serializable projection. A changed structure hash without a version
 bump fails; a projection-only change is safe and does not require a bump.
 
 Renames are never guessed. `definePage` and `defineCollection` accept a temporary
@@ -999,7 +1006,13 @@ preserve the same snapshot-revision invariant.
 - Hono request validation uses `@hono/standard-validator`, keeping route integration based on Standard Schema rather than a validator-specific Hono API.
 - Database rows are never exposed directly as API DTOs.
 - Errors use one stable machine-readable envelope.
-- Collection lists use cursor pagination.
+- Collection lists use cursor pagination. Admin entry lists accept `q` (title
+  or slug substring), `status` (`draft`, `published`, or `changed`, derived from
+  the draft and published revisions), and `sort`; cursors are bound to the
+  query that produced them, and each page carries per-status totals.
+- Admin entry summaries and entry responses name the last editor with an `id`
+  and `displayName`, so lists never render raw user IDs. Public and
+  build-export DTOs never carry display names.
 - Mutable operations use optimistic concurrency through a revision or `If-Match` value.
 - Publish operations are idempotent.
 - Dates in JSON use ISO 8601 UTC strings.

@@ -97,6 +97,14 @@
                           "label": {
                             "type": "string"
                           },
+                          "listFields": {
+                            "items": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "path": {
                             "type": "string"
                           },
@@ -183,6 +191,266 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "draft": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocks": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "data": {},
+                              "key": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "position": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "schemaVersion": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["data", "key", "position", "schemaVersion", "type"],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "createdAt": {},
+                        "entryId": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fields": {},
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "slug": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "state": {
+                          "const": "draft"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "updatedAt": {},
+                        "updatedBy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": ["admin", "editor", "viewer"]
+                            }
+                          },
+                          "required": ["id", "role"],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "blocks",
+                        "createdAt",
+                        "entryId",
+                        "fields",
+                        "id",
+                        "revision",
+                        "title",
+                        "updatedAt",
+                        "updatedBy",
+                        "state"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "key": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "page"
+                            },
+                            "path": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["kind", "key", "path"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "key": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "collection"
+                            },
+                            "route": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["kind", "key", "route"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "published": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocks": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "data": {},
+                              "key": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "position": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "schemaVersion": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["data", "key", "position", "schemaVersion", "type"],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "createdAt": {},
+                        "entryId": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fields": {},
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "slug": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "state": {
+                          "const": "published"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "updatedAt": {},
+                        "updatedBy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": ["admin", "editor", "viewer"]
+                            }
+                          },
+                          "required": ["id", "role"],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "blocks",
+                        "createdAt",
+                        "entryId",
+                        "fields",
+                        "id",
+                        "revision",
+                        "title",
+                        "updatedAt",
+                        "updatedBy",
+                        "state"
+                      ],
+                      "type": "object"
+                    },
+                    "updatedBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["draft", "id", "model", "updatedBy"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Content entry with its last editor"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -284,6 +552,266 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "draft": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocks": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "data": {},
+                              "key": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "position": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "schemaVersion": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["data", "key", "position", "schemaVersion", "type"],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "createdAt": {},
+                        "entryId": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fields": {},
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "slug": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "state": {
+                          "const": "draft"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "updatedAt": {},
+                        "updatedBy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": ["admin", "editor", "viewer"]
+                            }
+                          },
+                          "required": ["id", "role"],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "blocks",
+                        "createdAt",
+                        "entryId",
+                        "fields",
+                        "id",
+                        "revision",
+                        "title",
+                        "updatedAt",
+                        "updatedBy",
+                        "state"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "key": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "page"
+                            },
+                            "path": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["kind", "key", "path"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "key": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "collection"
+                            },
+                            "route": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["kind", "key", "route"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "published": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocks": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "data": {},
+                              "key": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "position": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "schemaVersion": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["data", "key", "position", "schemaVersion", "type"],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "createdAt": {},
+                        "entryId": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fields": {},
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "slug": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "state": {
+                          "const": "published"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "updatedAt": {},
+                        "updatedBy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": ["admin", "editor", "viewer"]
+                            }
+                          },
+                          "required": ["id", "role"],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "blocks",
+                        "createdAt",
+                        "entryId",
+                        "fields",
+                        "id",
+                        "revision",
+                        "title",
+                        "updatedAt",
+                        "updatedBy",
+                        "state"
+                      ],
+                      "type": "object"
+                    },
+                    "updatedBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["draft", "id", "model", "updatedBy"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Saved entry"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -345,6 +873,325 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "build": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "buildId": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "status": {
+                              "const": "accepted"
+                            }
+                          },
+                          "required": ["status"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "const": "not-dispatched"
+                            }
+                          },
+                          "required": ["status"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "const": "rejected"
+                            }
+                          },
+                          "required": ["status"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "const": "unavailable"
+                            }
+                          },
+                          "required": ["status"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "entry": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "draft": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "blocks": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "data": {},
+                                  "key": {
+                                    "maxLength": 255,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "position": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "type": {
+                                    "maxLength": 255,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["data", "key", "position", "schemaVersion", "type"],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "createdAt": {},
+                            "entryId": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "fields": {},
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "revision": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "slug": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "state": {
+                              "const": "draft"
+                            },
+                            "title": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "updatedAt": {},
+                            "updatedBy": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "maxLength": 255,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "enum": ["admin", "editor", "viewer"]
+                                }
+                              },
+                              "required": ["id", "role"],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "blocks",
+                            "createdAt",
+                            "entryId",
+                            "fields",
+                            "id",
+                            "revision",
+                            "title",
+                            "updatedAt",
+                            "updatedBy",
+                            "state"
+                          ],
+                          "type": "object"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "model": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "key": {
+                                  "maxLength": 255,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "page"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind", "key", "path"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "key": {
+                                  "maxLength": 255,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "collection"
+                                },
+                                "route": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind", "key", "route"],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "published": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "blocks": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "data": {},
+                                  "key": {
+                                    "maxLength": 255,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "position": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "type": {
+                                    "maxLength": 255,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["data", "key", "position", "schemaVersion", "type"],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "createdAt": {},
+                            "entryId": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "fields": {},
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "revision": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "slug": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "state": {
+                              "const": "published"
+                            },
+                            "title": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "updatedAt": {},
+                            "updatedBy": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "maxLength": 255,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "enum": ["admin", "editor", "viewer"]
+                                }
+                              },
+                              "required": ["id", "role"],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "blocks",
+                            "createdAt",
+                            "entryId",
+                            "fields",
+                            "id",
+                            "revision",
+                            "title",
+                            "updatedAt",
+                            "updatedBy",
+                            "state"
+                          ],
+                          "type": "object"
+                        },
+                        "updatedBy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayName": {
+                              "maxLength": 320,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "id": {
+                              "maxLength": 255,
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": ["displayName", "id"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["draft", "id", "model", "updatedBy"],
+                      "type": "object"
+                    },
+                    "publication": {
+                      "enum": ["published", "replayed"]
+                    }
+                  },
+                  "required": ["build", "entry", "publication"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Publication and build dispatch outcome"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -785,9 +1632,176 @@
               "minLength": 1,
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "pattern": "^[1-9][0-9]{0,2}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": ["-publishedAt", "-title", "-updatedAt", "publishedAt", "title", "updatedAt"]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": ["changed", "draft", "published"]
+            }
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "draftRevision": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "listValues": {
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "object"
+                          },
+                          "modelKey": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "publishedAt": {},
+                          "publishedSnapshotId": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "slug": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": ["changed", "draft", "published"]
+                          },
+                          "title": {
+                            "maxLength": 200,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {},
+                          "updatedBy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "displayName": {
+                                "maxLength": 320,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "id": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["displayName", "id"],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "draftRevision",
+                          "id",
+                          "listValues",
+                          "modelKey",
+                          "status",
+                          "title",
+                          "updatedAt",
+                          "updatedBy"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "nextCursor": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "totals": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "all": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "changed": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "draft": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "published": {
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["all", "changed", "draft", "published"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["items", "totals"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Content entry page with per-status totals"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -1117,9 +2131,26 @@
                         "state"
                       ],
                       "type": "object"
+                    },
+                    "updatedBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
                     }
                   },
-                  "required": ["draft", "id", "model"],
+                  "required": ["draft", "id", "model", "updatedBy"],
                   "type": "object"
                 }
               }

@@ -3,7 +3,14 @@ import { createLaceApp } from "../dist/index.js";
 import { ContentUseCases, MediaUseCases } from "@lacecms/application";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { defineBlock, field } from "@lacecms/content";
-import { actorId, unixMilliseconds } from "@lacecms/domain";
+import {
+  actorId,
+  contentEntryId,
+  contentModelKey,
+  contentSnapshotId,
+  createContentEntry,
+  unixMilliseconds,
+} from "@lacecms/domain";
 import {
   DeterministicClock,
   DeterministicIdGenerator,
@@ -27,8 +34,9 @@ async function fixture({ actor = admin, auth, ready = true, allowed = true } = {
       definePage({ key: "home", path: "/", version: 1 }),
       defineCollection({
         blocks: ["hero"],
-        fields: { image: field.media() },
+        fields: { author: field.text(), image: field.media() },
         key: "posts",
+        listFields: ["author"],
         route: "/blog/:slug",
         version: 1,
       }),
@@ -494,4 +502,156 @@ test("accepts an authorized retry only for terminal media deletion failures", as
     ),
   ).resolves.toMatchObject({ status: 422 });
   expect(await storage.get("media/failed-media")).toBeNull();
+});
+
+test("lists entries with filters, totals, and query-bound cursors", async () => {
+  const { app, store } = await fixture();
+  store.setActorDisplayNames({ admin: "admin@example.test" });
+  const post = (body) => ({
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  const draft = await json(
+    app,
+    "/api/v1/admin/models/posts/entries",
+    post({ blocks: [], fields: { author: "Ann" }, slug: "zebra", title: "Zebra" }),
+  );
+  const launched = await json(
+    app,
+    "/api/v1/admin/models/posts/entries",
+    post({ blocks: [], fields: {}, slug: "launch", title: "Launch" }),
+  );
+  expect(draft.body.updatedBy).toEqual({ displayName: "admin@example.test", id: "admin" });
+  await json(
+    app,
+    `/api/v1/admin/entries/${launched.body.id}/publish`,
+    post({ expectedRevision: 1 }),
+  );
+
+  const list = await json(app, "/api/v1/admin/models/posts/entries?sort=title");
+  expect(list.response.status).toBe(200);
+  expect(list.body.totals).toEqual({ all: 2, changed: 0, draft: 1, published: 1 });
+  expect(list.body.items).toMatchObject([
+    { id: launched.body.id, slug: "launch", status: "published", title: "Launch" },
+    {
+      id: draft.body.id,
+      listValues: { author: "Ann" },
+      slug: "zebra",
+      status: "draft",
+      updatedBy: { displayName: "admin@example.test", id: "admin" },
+    },
+  ]);
+  expect(list.body.items[0].publishedAt).toMatch(/Z$/u);
+  expect(list.body.items[1]).not.toHaveProperty("publishedAt");
+
+  const filtered = await json(
+    app,
+    "/api/v1/admin/models/posts/entries?q=%20ZEB%20&status=draft&unknown=ignored",
+  );
+  expect(filtered.body.items.map((item) => item.id)).toEqual([draft.body.id]);
+  expect(filtered.body.totals).toEqual({ all: 1, changed: 0, draft: 1, published: 0 });
+
+  for (const [query, pointer] of [
+    ["status=archived", "/status"],
+    ["sort=author", "/sort"],
+    [`q=${"x".repeat(201)}`, "/q"],
+  ]) {
+    expect(await json(app, `/api/v1/admin/models/posts/entries?${query}`)).toMatchObject({
+      body: { error: { code: "VALIDATION_FAILED", details: { issues: [{ path: pointer }] } } },
+      response: { status: 422 },
+    });
+  }
+  const first = await json(app, "/api/v1/admin/models/posts/entries?sort=title&limit=1");
+  expect(first.body.nextCursor).toBeDefined();
+  const cursor = encodeURIComponent(first.body.nextCursor);
+  expect(
+    (await json(app, `/api/v1/admin/models/posts/entries?sort=title&limit=1&after=${cursor}`)).body
+      .items,
+  ).toMatchObject([{ id: draft.body.id }]);
+  expect(
+    await json(app, `/api/v1/admin/models/posts/entries?sort=-title&limit=1&after=${cursor}`),
+  ).toMatchObject({
+    body: { error: { code: "CONTENT_INVALID_STATE" } },
+    response: { status: 422 },
+  });
+  expect((await json(app, "/api/v1/admin/models/missing/entries")).response.status).toBe(404);
+});
+
+test("admin entry responses name the last editor while public DTOs stay unchanged", async () => {
+  const viewer = { id: actorId("viewer"), role: "viewer" };
+  const { app, store } = await fixture();
+  store.setActorDisplayNames({ admin: "admin@example.test" });
+  const post = (body) => ({
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  const created = await json(
+    app,
+    "/api/v1/admin/models/posts/entries",
+    post({ blocks: [], fields: {}, slug: "named", title: "Named" }),
+  );
+  expect(created.body.updatedBy).toEqual({ displayName: "admin@example.test", id: "admin" });
+  const saved = await json(app, `/api/v1/admin/entries/${created.body.id}/draft`, {
+    body: JSON.stringify({
+      blocks: [],
+      expectedRevision: 1,
+      fields: {},
+      slug: "named",
+      title: "N",
+    }),
+    headers: { "content-type": "application/json" },
+    method: "PUT",
+  });
+  expect(saved.body.updatedBy.displayName).toBe("admin@example.test");
+  const published = await json(
+    app,
+    `/api/v1/admin/entries/${created.body.id}/publish`,
+    post({ expectedRevision: 2 }),
+  );
+  expect(published.body.entry.updatedBy).toEqual({
+    displayName: "admin@example.test",
+    id: "admin",
+  });
+
+  const viewerApp = await fixture({ actor: viewer });
+  viewerApp.store.setActorDisplayNames({ editor: "editor@example.test" });
+  for (const [id, updatedBy, expected] of [
+    ["by-editor", editor, "editor@example.test"],
+    ["by-sync", { id: actorId("system:content-sync"), role: "admin" }, "System"],
+    ["by-gone", { id: actorId("gone"), role: "editor" }, "Unknown user"],
+  ]) {
+    await viewerApp.store.create({
+      entry: createContentEntry({
+        draft: {
+          blocks: [],
+          createdAt: unixMilliseconds(1),
+          entryId: contentEntryId(id),
+          fields: {},
+          id: contentSnapshotId(`${id}-draft`),
+          revision: 1,
+          slug: id,
+          state: "draft",
+          title: id,
+          updatedAt: unixMilliseconds(1),
+          updatedBy,
+        },
+        id: contentEntryId(id),
+        model: { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" },
+      }),
+      mediaReferences: [],
+    });
+    const loaded = await json(viewerApp.app, `/api/v1/admin/entries/${id}`);
+    expect(loaded.body.updatedBy).toEqual({ displayName: expected, id: updatedBy.id });
+  }
+
+  const page = await json(app, "/api/v1/public/collections/posts/named");
+  const exported = await json(app, "/api/v1/public/build-export");
+  expect(page).toMatchObject({ body: { path: "/blog/named" }, response: { status: 200 } });
+  expect(exported).toMatchObject({ body: { entries: [{ path: "/blog/named" }] } });
+  for (const body of [page.body, exported.body]) {
+    expect(JSON.stringify(body)).not.toContain("displayName");
+    expect(JSON.stringify(body)).not.toContain("admin@example.test");
+  }
 });

@@ -24,14 +24,23 @@ import type {
   DraftSnapshot,
   PublishedSnapshot,
 } from "@lacecms/domain";
-import { publicationIdempotencyKey, publicationRequestFingerprint } from "./index.js";
+import {
+  CONTENT_ENTRY_SORTS,
+  CONTENT_ENTRY_STATUSES,
+  DEFAULT_CONTENT_ENTRY_SORT,
+  MAX_CONTENT_ENTRY_SEARCH_LENGTH,
+  publicationIdempotencyKey,
+  publicationRequestFingerprint,
+} from "./index.js";
 import type {
+  ActorSummary,
   Clock,
   ContentCommandResult,
   ContentEntryCommandPort,
+  ContentEntryListPage,
   ContentEntryReadPort,
-  ContentEntrySummary,
-  CursorPage,
+  ContentEntrySort,
+  ContentEntryStatus,
   IdGenerator,
   MediaReadPort,
   OpaqueCursor,
@@ -67,6 +76,14 @@ export interface ListContentEntriesUseCaseInput {
   readonly after?: OpaqueCursor;
   readonly limit: number;
   readonly modelKey: string;
+  readonly q?: string;
+  readonly sort?: string;
+  readonly status?: string;
+}
+
+export interface DescribeActorUseCaseInput {
+  readonly actor: Actor;
+  readonly actorId: Actor["id"];
 }
 
 export interface LoadContentEntryUseCaseInput {
@@ -159,17 +176,46 @@ export class ContentUseCases {
     );
   }
 
-  public async list(
-    input: ListContentEntriesUseCaseInput,
-  ): Promise<CursorPage<ContentEntrySummary>> {
+  public async list(input: ListContentEntriesUseCaseInput): Promise<ContentEntryListPage> {
     requirePermission(input.actor, "content:read");
+    const model = this.model(input.modelKey);
+    const q = input.q?.trim();
+    if (q !== undefined && q.length > MAX_CONTENT_ENTRY_SEARCH_LENGTH) {
+      throw new DomainError(
+        "CONTENT_INVALID_STATE",
+        `Search terms must not exceed ${MAX_CONTENT_ENTRY_SEARCH_LENGTH} characters.`,
+      );
+    }
+    if (
+      input.status !== undefined &&
+      !CONTENT_ENTRY_STATUSES.includes(input.status as ContentEntryStatus)
+    ) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Entry status filter is unsupported.");
+    }
+    if (input.sort !== undefined && !CONTENT_ENTRY_SORTS.includes(input.sort as ContentEntrySort)) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Entry sort is unsupported.");
+    }
     return detached(
       await this.dependencies.content.list({
         ...(input.after === undefined ? {} : { after: input.after }),
         limit: input.limit,
-        modelKey: contentModelKey(input.modelKey),
+        listFields: model.kind === "collection" ? [...(model.listFields ?? [])] : [],
+        modelKey: contentModelKey(model.key),
+        ...(q === undefined || q.length === 0 ? {} : { q }),
+        sort: (input.sort as ContentEntrySort | undefined) ?? DEFAULT_CONTENT_ENTRY_SORT,
+        ...(input.status === undefined ? {} : { status: input.status as ContentEntryStatus }),
       }),
     );
+  }
+
+  /** Resolves an audit actor's display name so clients never need the users API. */
+  public async describeActor(input: DescribeActorUseCaseInput): Promise<ActorSummary> {
+    requirePermission(input.actor, "content:read");
+    const [summary] = await this.dependencies.content.describeActors([input.actorId]);
+    if (summary === undefined || summary.id !== input.actorId) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Actor description is unavailable.");
+    }
+    return detached(summary);
   }
 
   public async load(input: LoadContentEntryUseCaseInput): Promise<ContentEntry | null> {

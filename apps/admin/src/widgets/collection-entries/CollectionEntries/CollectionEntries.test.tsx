@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { entry, renderRoute, stubClient as client } from "../../../app/testing/index.js";
+import { entry, entryList, renderRoute, stubClient as client } from "../../../app/testing/index.js";
 import { createStaticSessionSource } from "../../../entities/session/index.js";
 
 afterEach(() => {
@@ -12,8 +12,8 @@ test("collection lists keep cursors opaque and expose permitted mutations", asyn
   const user = userEvent.setup();
   const listEntries = vi.fn(async (_modelKey: string, cursor?: string) =>
     cursor === undefined
-      ? { items: [entry], nextCursor: "opaque+/=" }
-      : { items: [{ ...entry, id: "entry-2", title: "Second post" }] },
+      ? entryList([entry], "opaque+/=")
+      : entryList([{ ...entry, id: "entry-2", title: "Second post" }]),
   );
   renderRoute(
     "/content/posts",

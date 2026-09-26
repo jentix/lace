@@ -46,6 +46,7 @@ function entry(title = "First post") {
     },
     id: "entry-1",
     model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+    updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
 }
 

@@ -13,6 +13,7 @@ import type {
   FieldDefinition,
   FieldIsRequired,
   FieldValue,
+  JsonObject,
   JsonValue,
 } from "@lacecms/content";
 
@@ -22,6 +23,18 @@ const STABLE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const FIELD_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/u;
 const BLOCK_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9-]*$/u;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+/** Field types whose values are plain JSON scalars suitable for list columns. */
+export const LIST_FIELD_TYPES: ReadonlySet<FieldDefinition["type"]> = new Set([
+  "boolean",
+  "date",
+  "datetime",
+  "number",
+  "select",
+  "text",
+  "textarea",
+  "url",
+]);
 
 /** Thrown when `lace.config.ts` contains an invalid or ambiguous definition. */
 export class ConfigurationError extends Error {
@@ -68,6 +81,8 @@ export interface PageModelInput<
 export interface CollectionModelInput<
   Fields extends FieldMap = FieldMap,
 > extends CommonModelInput<Fields> {
+  /** Ordered scalar field keys shown as columns in admin entry lists. */
+  readonly listFields?: readonly (keyof Fields & string)[];
   readonly route: string;
 }
 
@@ -92,6 +107,7 @@ export type PageModelDefinition<Fields extends FieldMap = FieldMap> =
 export type CollectionModelDefinition<Fields extends FieldMap = FieldMap> =
   NormalizedCommonModel<Fields> & {
     readonly kind: "collection";
+    readonly listFields?: readonly (keyof Fields & string)[];
     readonly route: string;
   };
 
@@ -342,14 +358,48 @@ export function definePage<const Fields extends FieldMap = FieldMap>(
   return deepFreeze(definition);
 }
 
+function normalizeListFields(value: unknown, fields: FieldMap): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    fail("listFields must be an array of field keys.");
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const key of value) {
+    if (typeof key !== "string") {
+      fail("listFields must contain field keys.");
+    }
+    if (seen.has(key)) {
+      fail(`listFields contains duplicate field "${key}".`);
+    }
+    const definition = Object.hasOwn(fields, key) ? fields[key] : undefined;
+    if (definition === undefined) {
+      fail(`listFields references undeclared field "${key}".`);
+    }
+    if (!LIST_FIELD_TYPES.has(definition.type)) {
+      fail(`listFields field "${key}" must be a scalar field, not ${definition.type}.`);
+    }
+    seen.add(key);
+    normalized.push(key);
+  }
+  return normalized;
+}
+
 /** Defines a detached collection model with inferred field values. */
 export function defineCollection<const Fields extends FieldMap = FieldMap>(
   input: CollectionModelInput<Fields>,
 ): CollectionModelDefinition<Fields> {
   const common = normalizeCommonModel(input);
+  const listFields = normalizeListFields(input.listFields, common.fields);
   const definition: CollectionModelDefinition<Fields> = {
     ...common,
     kind: "collection",
+    ...(listFields.length === 0
+      ? {}
+      : { listFields: listFields as readonly (keyof Fields & string)[] }),
     route: normalizeCollectionRoute(input.route),
   };
   return deepFreeze(definition);
@@ -461,6 +511,19 @@ function omitDisplayMetadata(value: JsonValue): MutableJsonValue {
   return projection;
 }
 
+/** Removes model-level presentation metadata that must not affect structural identity. */
+function omitListFields(model: JsonValue): JsonValue {
+  if (model === null || typeof model !== "object" || Array.isArray(model)) {
+    return model;
+  }
+  const { listFields: _listFields, ...structure } = model as JsonObject;
+  return structure;
+}
+
+function structureForHash(projection: JsonValue): MutableJsonValue {
+  return omitDisplayMetadata(omitListFields(projection));
+}
+
 function modelForHash(model: ContentModelDefinition, registry: BlockRegistry): JsonValue {
   const { renamedFrom: _renamedFrom, ...identityModel } = model;
   return asJsonValue({
@@ -516,7 +579,7 @@ export async function defineConfig<const Models extends readonly ContentModelDef
       const normalized: NormalizedContentModel = {
         ...model,
         projectionHash: await sha256CanonicalJson(projection),
-        structureHash: await sha256CanonicalJson(omitDisplayMetadata(projection)),
+        structureHash: await sha256CanonicalJson(structureForHash(projection)),
       };
       return deepFreeze(normalized);
     }),
@@ -524,15 +587,17 @@ export async function defineConfig<const Models extends readonly ContentModelDef
 
   const blocks = toBlockRegistryMetadata(registry);
   const publicModels = normalizedModels.map(publicModel);
-  const projection = {
+  const hashModels = publicModels.map(normalizedModelForHash);
+  const projection = { blocks, content: hashModels } as unknown as JsonValue;
+  const structure = {
     blocks,
-    content: publicModels.map(normalizedModelForHash),
+    content: hashModels.map(omitListFields),
   } as unknown as JsonValue;
   const publicProjection: PublicConfigProjection = {
     blocks,
     content: deepFreeze(publicModels),
     projectionHash: await sha256CanonicalJson(projection),
-    structureHash: await sha256CanonicalJson(omitDisplayMetadata(projection)),
+    structureHash: await sha256CanonicalJson(omitDisplayMetadata(structure)),
   };
   const normalized: NormalizedConfig<Models> = {
     ...publicProjection,

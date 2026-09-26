@@ -33,6 +33,45 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
   expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
 });
 
+test("lists entries with an opaque cursor and optional server-side query", async () => {
+  const page = {
+    items: [
+      {
+        draftRevision: 1,
+        id: "entry-1",
+        listValues: { category: "news" },
+        modelKey: "posts",
+        slug: "first-post",
+        status: "draft",
+        title: "First post",
+        updatedAt: "2026-09-20T00:00:00.000Z",
+        updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
+      },
+    ],
+    totals: { all: 1, changed: 0, draft: 1, published: 0 },
+  };
+  const fetcher = vi.fn(async () => Response.json(page));
+  const client = createAdminClient(fetcher);
+
+  await expect(client.listEntries("posts")).resolves.toEqual(page);
+  expect(fetcher).toHaveBeenLastCalledWith("/api/v1/admin/models/posts/entries", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  await client.listEntries("posts", "opaque+/=", {
+    q: "  launch ",
+    sort: "-title",
+    status: "draft",
+  });
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/models/posts/entries?after=opaque%2B%2F%3D&q=launch&status=draft&sort=-title",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  await expect(
+    createAdminClient(async () => Response.json({ items: page.items })).listEntries("posts"),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
 test("uses validated credentialed user, status, and token endpoints", async () => {
   const account = { disabled: false, email: "editor@lace.test", id: "user-1", role: "editor" };
   const token = {
@@ -195,6 +234,7 @@ test("sends collection mutations with credentialed JSON requests", async () => {
     },
     id: "entry-1",
     model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+    updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
   const fetcher = vi.fn(async () => Response.json(entry, { status: 201 }));
   const client = createAdminClient(fetcher);
@@ -222,6 +262,7 @@ test("loads and saves one validated complete draft with its revision", async () 
     },
     id: "entry-1",
     model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+    updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
   const fetcher = vi.fn(async () => Response.json(entry));
   const client = createAdminClient(fetcher);
@@ -258,6 +299,7 @@ test("publishes with one validated idempotency key and rejects malformed publish
     },
     id: "entry-1",
     model: { key: "posts", kind: "collection", route: "/posts/:slug" },
+    updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
   const fetcher = vi.fn(async () =>
     Response.json({ build: { status: "unavailable" }, entry, publication: "published" }),

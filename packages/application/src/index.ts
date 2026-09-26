@@ -72,13 +72,86 @@ export interface CursorPage<Value> {
   readonly nextCursor?: OpaqueCursor;
 }
 
+/** Publication state derived from the draft and current published revisions. */
+export type ContentEntryStatus = "changed" | "draft" | "published";
+
+export const CONTENT_ENTRY_STATUSES: readonly ContentEntryStatus[] = Object.freeze([
+  "changed",
+  "draft",
+  "published",
+]);
+
+/** Admin entry-list order; a leading `-` sorts descending. */
+export type ContentEntrySort =
+  | "-publishedAt"
+  | "-title"
+  | "-updatedAt"
+  | "publishedAt"
+  | "title"
+  | "updatedAt";
+
+export const CONTENT_ENTRY_SORTS: readonly ContentEntrySort[] = Object.freeze([
+  "-publishedAt",
+  "-title",
+  "-updatedAt",
+  "publishedAt",
+  "title",
+  "updatedAt",
+]);
+
+export const DEFAULT_CONTENT_ENTRY_SORT: ContentEntrySort = "-updatedAt";
+export const MAX_CONTENT_ENTRY_SEARCH_LENGTH = 200;
+
+/** Display name used for `system:` audit actors such as configuration sync. */
+export const SYSTEM_ACTOR_DISPLAY_NAME = "System";
+/** Display name used when an audit actor no longer has a user record. */
+export const UNKNOWN_ACTOR_DISPLAY_NAME = "Unknown user";
+
+/** A human-readable actor reference that keeps raw IDs out of rendered lists. */
+export interface ActorSummary {
+  readonly displayName: string;
+  readonly id: ActorId;
+}
+
+/** Resolves the portable display-name fallbacks shared by every runtime adapter. */
+export function actorDisplayName(id: string, storedName?: string | null): string {
+  const name = storedName?.trim();
+  if (name !== undefined && name.length > 0) return name;
+  return id.startsWith("system:") ? SYSTEM_ACTOR_DISPLAY_NAME : UNKNOWN_ACTOR_DISPLAY_NAME;
+}
+
+/** Folds only ASCII letters, matching SQLite `lower()` so every adapter searches alike. */
+export function foldAscii(value: string): string {
+  return value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+}
+
+/** Scalar draft values of a model's configured list fields. */
+export type ContentEntryListValues = Readonly<Record<string, boolean | number | string>>;
+
 export interface ContentEntrySummary {
   readonly draftRevision: number;
   readonly id: ContentEntryId;
+  readonly listValues: ContentEntryListValues;
   readonly modelKey: ContentModelKey;
+  readonly publishedAt?: UnixMilliseconds;
   readonly publishedSnapshotId?: ContentSnapshotId;
+  readonly slug?: string;
+  readonly status: ContentEntryStatus;
   readonly title: string;
   readonly updatedAt: UnixMilliseconds;
+  readonly updatedBy: ActorSummary;
+}
+
+/** Entry counts for one model and search term, independent of status filter and cursor. */
+export interface ContentEntryStatusTotals {
+  readonly all: number;
+  readonly changed: number;
+  readonly draft: number;
+  readonly published: number;
+}
+
+export interface ContentEntryListPage extends CursorPage<ContentEntrySummary> {
+  readonly totals: ContentEntryStatusTotals;
 }
 
 export interface LoadContentEntryInput {
@@ -88,14 +161,22 @@ export interface LoadContentEntryInput {
 export interface ListContentEntriesInput {
   readonly after?: OpaqueCursor;
   readonly limit: number;
+  /** Draft field keys whose scalar values are copied into each summary. */
+  readonly listFields: readonly string[];
   readonly modelKey: ContentModelKey;
+  /** A trimmed, non-empty title-or-slug substring; ASCII letters match case-insensitively. */
+  readonly q?: string;
+  readonly sort: ContentEntrySort;
+  readonly status?: ContentEntryStatus;
 }
 
 export interface ContentEntryReadPort {
+  /** Returns one summary per requested ID, in order, with display-name fallbacks applied. */
+  describeActors(ids: readonly ActorId[]): Promise<readonly ActorSummary[]>;
   load(input: LoadContentEntryInput): Promise<ContentEntry | null>;
   loadDraft(input: LoadContentEntryInput): Promise<ContentEntry["draft"] | null>;
   loadPublished(input: LoadContentEntryInput): Promise<PublishedSnapshot | null>;
-  list(input: ListContentEntriesInput): Promise<CursorPage<ContentEntrySummary>>;
+  list(input: ListContentEntriesInput): Promise<ContentEntryListPage>;
 }
 
 export interface CreateContentEntryInput {

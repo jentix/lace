@@ -34,6 +34,7 @@ export default await defineConfig({
         category: field.select({ options: ["engineering", "design", "news"] }),
         publishedAt: field.date({ required: true }),
       },
+      listFields: ["category", "author"],
       blocks: ["hero", "richText", "image", "quote", "cta"],
     }),
     defineCollection({

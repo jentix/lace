@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   draftEntry,
   entry,
+  entryList,
   renderRoute,
   stubClient as client,
 } from "../../../app/testing/index.js";
@@ -40,7 +41,7 @@ test("content landing explains no configured models without hiding API errors", 
 
 test("content landing guides missing page sync and opens the synced page editor and collection", async () => {
   const source = createStaticSessionSource({ id: "editor-1", role: "editor" });
-  renderRoute("/content", source, client({ listEntries: async () => ({ items: [] }) }));
+  renderRoute("/content", source, client({ listEntries: async () => entryList() }));
   expect(await screen.findByRole("heading", { name: "Page draft missing" })).toBeInTheDocument();
   expect(screen.getByText(/pnpm content:sync/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "posts" })).toBeInTheDocument();
@@ -51,7 +52,7 @@ test("content landing guides missing page sync and opens the synced page editor 
     source,
     client({
       listEntries: async (key) =>
-        key === "home" ? { items: [{ ...entry, id: "home-1", modelKey: "home" }] } : { items: [] },
+        key === "home" ? entryList([{ ...entry, id: "home-1", modelKey: "home" }]) : entryList(),
       loadEntry: async () => ({
         ...draftEntry,
         id: "home-1",

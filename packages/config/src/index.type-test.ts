@@ -40,5 +40,27 @@ definePage({ key: "missing-version", path: "/missing" });
 // @ts-expect-error A page must use a fixed path.
 definePage({ key: "missing-path", version: 1 });
 
+const listed = defineCollection({
+  fields: { author: field.text(), category: field.select({ options: ["news"] as const }) },
+  key: "listed",
+  listFields: ["category", "author"],
+  route: "/listed/:slug",
+  version: 1,
+});
+
+type _listFields = Expect<
+  Equal<typeof listed.listFields, readonly ("author" | "category")[] | undefined>
+>;
+
+defineCollection({
+  fields: { author: field.text() },
+  key: "unknown-list-field",
+  // @ts-expect-error List fields must name the collection's declared fields.
+  listFields: ["missing"],
+  route: "/unknown/:slug",
+  version: 1,
+});
+
+void listed;
 void page;
 void collection;

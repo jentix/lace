@@ -1,5 +1,7 @@
 import { expect, test } from "vitest";
 import {
+  actorDisplayName,
+  foldAscii,
   dispatcherEventId,
   dispatcherLeaseId,
   checkConfigurationSynchronization,
@@ -18,7 +20,7 @@ import {
   reportConfigurationSynchronization,
   prepareConfigurationSynchronization,
 } from "../dist/index.js";
-import { definePage } from "@lacecms/config";
+import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/application"));
 
@@ -247,4 +249,45 @@ test("prepares a detached dry run and materializes page defaults only for apply"
     },
   });
   expect(received.pageEntries[0].entry.draft.fields).toEqual({ greeting: "Hello" });
+});
+
+test("resolves portable actor display names and ASCII-only search folding", () => {
+  expect(actorDisplayName("user-1", "  Ada  ")).toBe("Ada");
+  expect(actorDisplayName("user-1", "   ")).toBe("Unknown user");
+  expect(actorDisplayName("user-1", null)).toBe("Unknown user");
+  expect(actorDisplayName("system:content-sync")).toBe("System");
+  expect(foldAscii("Launch ÄÖ Q")).toBe("launch ÄÖ q");
+});
+
+test("plans a list-field change as a projection-only label update", async () => {
+  const collection = (listFields) =>
+    defineCollection({
+      fields: { author: field.text() },
+      key: "posts",
+      ...(listFields === undefined ? {} : { listFields }),
+      route: "/blog/:slug",
+      version: 1,
+    });
+  const [before, after] = await Promise.all([
+    defineConfig({ content: [collection()] }),
+    defineConfig({ content: [collection(["author"])] }),
+  ]);
+  const storedModel = before.content[0];
+  const plan = planConfigurationSynchronization({
+    models: after.content,
+    storedModels: [
+      {
+        draftSnapshotCount: 3,
+        entryCount: 3,
+        key: storedModel.key,
+        kind: storedModel.kind,
+        projectionHash: storedModel.projectionHash,
+        publishedSnapshotCount: 2,
+        structureHash: storedModel.structureHash,
+        version: storedModel.version,
+      },
+    ],
+  });
+  expect(plan.isValid).toBe(true);
+  expect(plan.operations).toMatchObject([{ action: "label-update", model: { key: "posts" } }]);
 });

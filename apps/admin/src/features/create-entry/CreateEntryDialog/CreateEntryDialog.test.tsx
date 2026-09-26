@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { entry, renderRoute, stubClient as client } from "../../../app/testing/index.js";
+import { entry, entryList, renderRoute, stubClient as client } from "../../../app/testing/index.js";
 import { createStaticSessionSource } from "../../../entities/session/index.js";
 
 afterEach(() => {
@@ -12,7 +12,7 @@ test("entry creation and confirmed deletion refresh the active collection list",
   const user = userEvent.setup();
   const createEntry = vi.fn(async () => ({}) as never);
   const deleteEntry = vi.fn(async () => undefined);
-  const listEntries = vi.fn(async () => ({ items: [entry] }));
+  const listEntries = vi.fn(async () => entryList([entry]));
   renderRoute(
     "/content/posts",
     createStaticSessionSource({ id: "editor-1", role: "editor" }),
