@@ -24,16 +24,24 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
     credentials: "same-origin",
     headers: { accept: "application/json" },
   });
-  expect(adminQueryKeys.entries("posts", "opaque+/=")).toEqual([
+  expect(adminQueryKeys.entryList("posts", { q: "launch", sort: "title" })).toEqual([
     "admin",
     "entries",
     "posts",
-    "opaque+/=",
+    "list",
+    { q: "launch", sort: "title", status: null },
+  ]);
+  expect(adminQueryKeys.entryList("posts", { status: "draft" })).toEqual([
+    "admin",
+    "entries",
+    "posts",
+    "list",
+    { q: null, sort: null, status: "draft" },
   ]);
   expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
   expect(adminQueryKeys.entryOverview("posts")).toEqual(["admin", "entries", "posts", "overview"]);
   const prefix = adminQueryKeys.modelEntries("posts");
-  for (const key of [adminQueryKeys.entries("posts"), adminQueryKeys.entryOverview("posts")])
+  for (const key of [adminQueryKeys.entryList("posts", {}), adminQueryKeys.entryOverview("posts")])
     expect(key.slice(0, prefix.length)).toEqual(prefix);
 });
 

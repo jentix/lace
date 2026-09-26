@@ -6,6 +6,7 @@ import {
   Outlet,
   redirect,
   type RouterHistory,
+  type SearchSchemaInput,
 } from "@tanstack/react-router";
 import type { AdminSessionSource } from "../../entities/session/index.js";
 import { BuildsPage } from "../../pages/builds/index.js";
@@ -21,6 +22,7 @@ import { UsersPage } from "../../pages/users/index.js";
 import { createAdminClient, type AdminClient } from "../../shared/api/index.js";
 import { safeReturnPath } from "../../shared/lib/index.js";
 import { AdminShellLayout } from "../../widgets/admin-shell/index.js";
+import { parseCollectionSearch } from "./collection-search.js";
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -83,6 +85,8 @@ const modelRoute = createRoute({
     stringify: (parameters) => ({ modelKey: parameters.modelKey }),
   },
   path: "/content/$modelKey",
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) =>
+    parseCollectionSearch(search),
 });
 const entryRoute = createRoute({
   component: EntryPage,

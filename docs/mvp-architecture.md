@@ -1326,7 +1326,7 @@ Primary routes:
 
 The content-model response drives navigation and field forms. Pages open their singleton editor directly; collections open a paginated entry list.
 
-The shell groups its sidebar into Pages, Collections (with entry totals from the entry-list API), Library (Media and Builds, all roles), and Admin (Users and Settings, administrators only), shows the signed-in user's display name and role in a user menu, and locates each screen with breadcrumbs. Below the medium breakpoint the same navigation opens in a sheet. Shell surfaces never show internal entry or user IDs.
+The shell groups its sidebar into Pages, Collections (with entry totals from the entry-list API), Library (Media and Builds, all roles), and Admin (Users and Settings, administrators only), shows the signed-in user's display name and role in a user menu, and locates each screen with breadcrumbs. Below the medium breakpoint the same navigation opens in a sheet. Shell surfaces never show internal entry or user IDs. Collection lists are TanStack Table views over the entry-list API: title with slug, derived status, the model's `listFields` columns, publication date, and relative last edit with the editor's display name; search, status filter, and sort live in the route's URL search parameters, while the opaque cursor pages with "Load more" and never enters the URL.
 
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
 

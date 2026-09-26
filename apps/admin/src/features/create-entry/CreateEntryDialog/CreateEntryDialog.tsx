@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useState } from "react";
 import {
   adminQueryKeys,
@@ -9,61 +10,91 @@ import {
 import { Button } from "../../../shared/ui/Button/index.js";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "../../../shared/ui/Dialog/index.js";
 import { ErrorState } from "../../../shared/ui/ErrorState/index.js";
-import { formClass } from "../../../shared/ui/layout/index.js";
 import { TextField } from "../../../shared/ui/TextField/index.js";
 
-export function CreateEntryDialog({ modelKey }: { readonly modelKey: string }) {
+/** Creates a draft entry in a collection from its title; the editor sets everything else. */
+export function CreateEntryDialog({
+  collectionLabel,
+  modelKey,
+}: {
+  readonly collectionLabel?: string;
+  readonly modelKey: string;
+}) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const trimmedTitle = title.trim();
   const create = useMutation({
-    mutationFn: () => client.createEntry(modelKey, title),
+    mutationFn: () => client.createEntry(modelKey, trimmedTitle),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.models });
-      setOpen(false);
-      setTitle("");
+      changeOpen(false);
     },
   });
+  function changeOpen(next: boolean) {
+    setOpen(next);
+    if (!next) {
+      setTitle("");
+      create.reset();
+    }
+  }
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
+    <Dialog onOpenChange={changeOpen} open={open}>
       <DialogTrigger asChild>
-        <Button>Create entry</Button>
+        <Button>
+          <Plus aria-hidden="true" />
+          Create entry
+        </Button>
       </DialogTrigger>
-      <DialogContent aria-describedby={undefined}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Create entry</DialogTitle>
+          <DialogDescription>
+            {`Add a draft to ${collectionLabel ?? modelKey}. You can set its slug and fields in the editor.`}
+          </DialogDescription>
         </DialogHeader>
         <form
-          className={formClass}
+          className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            create.mutate();
+            if (trimmedTitle.length > 0) create.mutate();
           }}
         >
           <TextField
             label="Title"
+            maxLength={200}
             onChange={(event) => setTitle(event.currentTarget.value)}
             required
             value={title}
           />
-          <Button disabled={create.isPending} type="submit">
-            {create.isPending ? "Creating…" : "Create entry"}
-          </Button>
+          {create.error === null ? undefined : (
+            <ErrorState
+              description={errorDescription(create.error)}
+              technicalDetails={technicalDetails(create.error)}
+            />
+          )}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button disabled={trimmedTitle.length === 0 || create.isPending} type="submit">
+              {create.isPending ? "Creating…" : "Create entry"}
+            </Button>
+          </DialogFooter>
         </form>
-        {create.error === null ? undefined : (
-          <ErrorState
-            description={errorDescription(create.error)}
-            technicalDetails={technicalDetails(create.error)}
-          />
-        )}
       </DialogContent>
     </Dialog>
   );

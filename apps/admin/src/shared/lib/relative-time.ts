@@ -28,3 +28,18 @@ export function formatAbsoluteTime(iso: string): string {
     ? ""
     : date.toLocaleString("en", { dateStyle: "medium", timeStyle: "short" });
 }
+
+const calendarDate = /^\d{4}-\d{2}-\d{2}$/u;
+
+/**
+ * Formats an ISO timestamp or a `YYYY-MM-DD` calendar date as a readable date.
+ * Calendar dates are read in UTC so they never shift to a neighbouring day.
+ */
+export function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en", {
+    dateStyle: "medium",
+    ...(calendarDate.test(value) ? { timeZone: "UTC" } : {}),
+  });
+}

@@ -2,6 +2,7 @@ export {
   AdminClientError,
   adminQueryKeys,
   createAdminClient,
+  DEFAULT_ENTRY_SORT,
   isSessionExpiredError,
   type AdminClient,
   type EntryListQuery,

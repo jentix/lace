@@ -9,6 +9,8 @@ const modelRoute = getRouteApi("/_protected/content/$modelKey");
 
 export function ModelPage() {
   const { modelKey } = modelRoute.useParams();
+  const search = modelRoute.useSearch();
+  const navigate = modelRoute.useNavigate();
   const client = useAdminClient();
   const models = useQuery({ queryFn: client.listModels, queryKey: adminQueryKeys.models });
   useSessionRecovery(models.error);
@@ -26,5 +28,11 @@ export function ModelPage() {
         title={model.label ?? model.key}
       />
     );
-  return <CollectionEntries modelKey={modelKey} title={model.label ?? model.key} />;
+  return (
+    <CollectionEntries
+      model={model}
+      onQueryChange={(query) => navigate({ replace: true, search: query })}
+      query={search}
+    />
+  );
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatAbsoluteTime, formatRelativeTime } from "./relative-time.js";
+import { formatAbsoluteTime, formatDate, formatRelativeTime } from "./relative-time.js";
 
 const now = Date.parse("2026-09-26T12:00:00.000Z");
 const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
@@ -19,4 +19,11 @@ test("relative time formats future values and rejects invalid input", () => {
   expect(formatRelativeTime("not a date", now)).toBe("");
   expect(formatAbsoluteTime("not a date")).toBe("");
   expect(formatAbsoluteTime(ago(0))).toMatch(/2026/);
+});
+
+test("dates format ISO timestamps and calendar dates without day shifts", () => {
+  expect(formatDate("2026-09-20")).toBe("Sep 20, 2026");
+  expect(formatDate("2026-01-01")).toBe("Jan 1, 2026");
+  expect(formatDate("2026-09-20T12:00:00.000Z")).toMatch(/Sep (19|20|21), 2026/u);
+  expect(formatDate("not a date")).toBe("");
 });

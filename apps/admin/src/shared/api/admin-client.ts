@@ -37,8 +37,15 @@ export const adminQueryKeys = Object.freeze({
   tokens: ["admin", "tokens"] as const,
   users: ["admin", "users"] as const,
   entry: (entryId: string) => ["admin", "entry", entryId] as const,
-  entries: (modelKey: string, cursor?: string) =>
-    ["admin", "entries", modelKey, cursor ?? null] as const,
+  /** One searched, filtered, and sorted collection list; pages are held by the infinite query. */
+  entryList: (modelKey: string, query: Pick<EntryListQuery, "q" | "sort" | "status">) =>
+    [
+      "admin",
+      "entries",
+      modelKey,
+      "list",
+      { q: query.q ?? null, sort: query.sort ?? null, status: query.status ?? null },
+    ] as const,
   /** First-page summary (singleton and totals) shared by the shell and content overview. */
   entryOverview: (modelKey: string) => ["admin", "entries", modelKey, "overview"] as const,
   /** Invalidation prefix covering every entry query of one model. */
@@ -115,6 +122,9 @@ export interface AdminClient {
     },
   ): Promise<AdminContentEntryDto>;
 }
+
+/** The entry-list order the API applies when no sort is requested. */
+export const DEFAULT_ENTRY_SORT: ContentEntrySortDto = "-updatedAt";
 
 /** Server-side search, status filter, and sort for an admin entry list. */
 export interface EntryListQuery {

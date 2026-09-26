@@ -12,7 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
-import type { ContentEntryListDto } from "@lacecms/contracts";
+import type { ContentEntryListDto, ContentEntrySummaryDto } from "@lacecms/contracts";
 import { createElement, type ReactElement } from "react";
 import {
   createStaticSessionSource,
@@ -50,7 +50,7 @@ export const entry = {
 
 /** Wraps entry summaries in a list page with totals derived from their statuses. */
 export function entryList(
-  items: readonly (typeof entry)[] = [],
+  items: readonly ContentEntrySummaryDto[] = [],
   nextCursor?: string,
 ): ContentEntryListDto {
   const totals = { all: items.length, changed: 0, draft: 0, published: 0 };

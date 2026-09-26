@@ -1,1 +1,1 @@
-export { CollectionEntries } from "./CollectionEntries/index.js";
+export { CollectionEntries, type CollectionListQuery } from "./CollectionEntries/index.js";
