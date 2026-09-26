@@ -1222,6 +1222,47 @@
     "/api/v1/admin/media": {
       "get": {
         "operationId": "getApiV1AdminMedia",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "pattern": "^[1-9][0-9]{0,2}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": ["-createdAt", "-filename", "-size", "createdAt", "filename", "size"]
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "enum": ["image/avif", "image/jpeg", "image/png", "image/webp"]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1235,15 +1276,27 @@
                         "properties": {
                           "createdAt": {},
                           "createdBy": {
-                            "maxLength": 255,
-                            "minLength": 1,
-                            "type": "string"
+                            "additionalProperties": false,
+                            "properties": {
+                              "displayName": {
+                                "maxLength": 320,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "id": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["displayName", "id"],
+                            "type": "object"
                           },
                           "filename": {
                             "type": "string"
                           },
                           "height": {
-                            "minimum": 0,
+                            "minimum": 1,
                             "type": "integer"
                           },
                           "id": {
@@ -1265,8 +1318,12 @@
                           "url": {
                             "type": "string"
                           },
-                          "width": {
+                          "usageCount": {
                             "minimum": 0,
+                            "type": "integer"
+                          },
+                          "width": {
+                            "minimum": 1,
                             "type": "integer"
                           }
                         },
@@ -1279,7 +1336,8 @@
                           "size",
                           "status",
                           "updatedAt",
-                          "url"
+                          "url",
+                          "usageCount"
                         ],
                         "type": "object"
                       },
@@ -1297,6 +1355,28 @@
               }
             },
             "description": "Media page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List media",
@@ -1313,15 +1393,27 @@
                   "properties": {
                     "createdAt": {},
                     "createdBy": {
-                      "maxLength": 255,
-                      "minLength": 1,
-                      "type": "string"
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
                     },
                     "filename": {
                       "type": "string"
                     },
                     "height": {
-                      "minimum": 0,
+                      "minimum": 1,
                       "type": "integer"
                     },
                     "id": {
@@ -1343,8 +1435,12 @@
                     "url": {
                       "type": "string"
                     },
-                    "width": {
+                    "usageCount": {
                       "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
                       "type": "integer"
                     }
                   },
@@ -1357,7 +1453,8 @@
                     "size",
                     "status",
                     "updatedAt",
-                    "url"
+                    "url",
+                    "usageCount"
                   ],
                   "type": "object"
                 }
@@ -1394,15 +1491,27 @@
                   "properties": {
                     "createdAt": {},
                     "createdBy": {
-                      "maxLength": 255,
-                      "minLength": 1,
-                      "type": "string"
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
                     },
                     "filename": {
                       "type": "string"
                     },
                     "height": {
-                      "minimum": 0,
+                      "minimum": 1,
                       "type": "integer"
                     },
                     "id": {
@@ -1424,8 +1533,12 @@
                     "url": {
                       "type": "string"
                     },
-                    "width": {
+                    "usageCount": {
                       "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
                       "type": "integer"
                     }
                   },
@@ -1438,7 +1551,8 @@
                     "size",
                     "status",
                     "updatedAt",
-                    "url"
+                    "url",
+                    "usageCount"
                   ],
                   "type": "object"
                 }
@@ -1470,6 +1584,229 @@
           }
         },
         "summary": "Request media deletion",
+        "tags": ["admin"]
+      },
+      "get": {
+        "operationId": "getApiV1AdminMediaByMediaId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mediaId",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "createdAt": {},
+                    "createdBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "height": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": ["active", "delete_failed", "deleting"]
+                    },
+                    "updatedAt": {},
+                    "url": {
+                      "type": "string"
+                    },
+                    "usage": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "entryId": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "locations": {
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "field": {
+                                      "maxLength": 255,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "source": {
+                                      "const": "field"
+                                    },
+                                    "states": {
+                                      "items": {
+                                        "enum": ["draft", "published"]
+                                      },
+                                      "maxItems": 2,
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": ["field", "source", "states"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "blockKey": {
+                                      "maxLength": 255,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "blockType": {
+                                      "maxLength": 255,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "maxLength": 255,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "source": {
+                                      "const": "block"
+                                    },
+                                    "states": {
+                                      "items": {
+                                        "enum": ["draft", "published"]
+                                      },
+                                      "maxItems": 2,
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "blockKey",
+                                    "blockType",
+                                    "field",
+                                    "source",
+                                    "states"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "modelKey": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "slug": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": ["changed", "draft", "published"]
+                          },
+                          "title": {
+                            "maxLength": 200,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": ["entryId", "locations", "modelKey", "status", "title"],
+                        "type": "object"
+                      },
+                      "maxItems": 50,
+                      "type": "array"
+                    },
+                    "usageCount": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "createdAt",
+                    "createdBy",
+                    "filename",
+                    "id",
+                    "mimeType",
+                    "size",
+                    "status",
+                    "updatedAt",
+                    "url",
+                    "usageCount",
+                    "usage"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Media item with the entries that use it"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {},
+                    "error": {
+                      "items": {},
+                      "type": "array"
+                    },
+                    "success": {
+                      "enum": [false],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success", "error", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get media details",
         "tags": ["admin"]
       }
     },
@@ -1540,15 +1877,27 @@
                   "properties": {
                     "createdAt": {},
                     "createdBy": {
-                      "maxLength": 255,
-                      "minLength": 1,
-                      "type": "string"
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayName": {
+                          "maxLength": 320,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["displayName", "id"],
+                      "type": "object"
                     },
                     "filename": {
                       "type": "string"
                     },
                     "height": {
-                      "minimum": 0,
+                      "minimum": 1,
                       "type": "integer"
                     },
                     "id": {
@@ -1570,8 +1919,12 @@
                     "url": {
                       "type": "string"
                     },
-                    "width": {
+                    "usageCount": {
                       "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
                       "type": "integer"
                     }
                   },
@@ -1584,7 +1937,8 @@
                     "size",
                     "status",
                     "updatedAt",
-                    "url"
+                    "url",
+                    "usageCount"
                   ],
                   "type": "object"
                 }

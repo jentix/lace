@@ -29,6 +29,8 @@ import {
   idempotencyKeySchema,
   isoTimestampSchema,
   jsonPointerSchema,
+  mediaDetailSchema,
+  mediaListQuerySchema,
   mediaListSchema,
   mediaMetadataSchema,
   mediaUrl,
@@ -44,6 +46,7 @@ import {
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
+  toMediaDetailDto,
   toMediaMetadataDto,
   toPublishContentEntryResultDto,
   toSiteBuildDto,
@@ -123,7 +126,7 @@ describe("shared REST contract DTOs", () => {
     const mediaDto = toMediaMetadataDto(
       {
         createdAt: timestamp,
-        createdBy: actor.id,
+        createdBy: { displayName: "Ada", id: actor.id },
         filename: "cover.png",
         height: 600,
         id: mediaId("media-1"),
@@ -132,6 +135,7 @@ describe("shared REST contract DTOs", () => {
         status: "active",
         storageKey: "private/media-1",
         updatedAt: timestamp,
+        usageCount: 2,
         width: 800,
       },
       "https://lace.example/api/v1/public/media/media-1",
@@ -342,6 +346,10 @@ describe("shared REST transport conventions", () => {
       },
       status: 409,
     });
+    expect(classifyError(new DomainError("MEDIA_IN_USE", "entry post-1 uses media"))).toEqual({
+      body: { error: { code: "MEDIA_IN_USE", message: "The media is still used by content." } },
+      status: 409,
+    });
     expect(JSON.stringify(classifyError(new Error("select * from secrets")))).not.toContain(
       "secrets",
     );
@@ -512,6 +520,83 @@ describe("admin entry list contracts", () => {
       },
     ]) {
       expect(v.safeParse(contentModelListSchema, { items: [invalid] }).success).toBe(false);
+    }
+  });
+
+  test("validates media list queries, uploader summaries, and bounded usage details", () => {
+    expect(
+      v.parse(mediaListQuerySchema, { q: "  Cover ", sort: "-size", type: "image/png", x: "1" }),
+    ).toMatchObject({ q: "Cover", sort: "-size", type: "image/png" });
+    for (const invalid of [
+      { q: "x".repeat(201) },
+      { type: "image/svg+xml" },
+      { sort: "width" },
+      { limit: "0" },
+    ]) {
+      expect(v.safeParse(mediaListQuerySchema, invalid).success).toBe(false);
+    }
+
+    const source = {
+      createdAt: unixMilliseconds(Date.UTC(2026, 0, 1)),
+      createdBy: { displayName: "Ada", id: "editor-1" },
+      filename: "cover.png",
+      height: 400,
+      id: "media-1",
+      mimeType: "image/png",
+      size: 42,
+      status: "active",
+      updatedAt: unixMilliseconds(Date.UTC(2026, 0, 1)),
+      usage: [
+        {
+          entryId: "post-1",
+          locations: [
+            { field: "cover", source: "field", states: ["draft", "published"] },
+            {
+              blockKey: "hero-1",
+              blockType: "hero",
+              field: "image",
+              source: "block",
+              states: ["published"],
+            },
+          ],
+          modelKey: "posts",
+          slug: "welcome",
+          status: "changed",
+          title: "Welcome",
+        },
+      ],
+      usageCount: 1,
+      width: 200,
+    };
+    const detail = toMediaDetailDto(source, "https://lace.example/api/v1/public/media/media-1");
+    expect(v.parse(mediaDetailSchema, detail)).toEqual(detail);
+    expect(detail.createdBy).toEqual({ displayName: "Ada", id: "editor-1" });
+    expect(v.safeParse(mediaMetadataSchema, { ...detail, usage: undefined }).success).toBe(false);
+
+    const { usage: _usage, ...metadata } = detail;
+    expect(v.parse(mediaMetadataSchema, metadata)).toEqual(metadata);
+    for (const invalid of [
+      { ...metadata, createdBy: "editor-1" },
+      { ...metadata, usageCount: -1 },
+      { ...metadata, width: 0 },
+    ]) {
+      expect(v.safeParse(mediaMetadataSchema, invalid).success).toBe(false);
+    }
+
+    const [entry] = detail.usage;
+    const location = entry.locations[0];
+    for (const invalid of [
+      { ...detail, usage: Array.from({ length: 51 }, () => entry) },
+      { ...detail, usage: [{ ...entry, locations: [] }] },
+      { ...detail, usage: [{ ...entry, locations: [{ ...location, states: [] }] }] },
+      {
+        ...detail,
+        usage: [{ ...entry, locations: [{ ...location, states: ["draft", "draft"] }] }],
+      },
+      { ...detail, usage: [{ ...entry, locations: [{ ...location, source: "block" }] }] },
+      { ...detail, usage: [{ ...entry, status: "archived" }] },
+    ]) {
+      expect(v.safeParse(mediaDetailSchema, invalid).success).toBe(false);
     }
   });
 });

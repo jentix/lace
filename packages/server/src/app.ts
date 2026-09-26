@@ -6,6 +6,7 @@ import {
   requireUsersManager,
 } from "@lacecms/application";
 import type {
+  MediaView,
   PublicContentReadPort,
   RateLimitDecision,
   SecurityService,
@@ -24,6 +25,8 @@ import {
   contentModelListSchema,
   managedUserListSchema,
   managedUserSchema,
+  mediaDetailSchema,
+  mediaListQuerySchema,
   mediaListSchema,
   mediaMetadataSchema,
   mediaUrl,
@@ -47,6 +50,7 @@ import {
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
+  toMediaDetailDto,
   toMediaMetadataDto,
   toPublishContentEntryResultDto,
   transportError,
@@ -530,11 +534,7 @@ export function createLaceApp(input: LaceAppInput): Hono {
     return input.media;
   }
 
-  function mediaDto(
-    value: Awaited<ReturnType<MediaUseCases["get"]>> extends infer Result
-      ? Exclude<Result, null>
-      : never,
-  ) {
+  function mediaDto(value: MediaView) {
     return toMediaMetadataDto(value, mediaUrl(input.publicBaseUrl!, value.id));
   }
 
@@ -642,10 +642,15 @@ export function createLaceApp(input: LaceAppInput): Hono {
       summary: "List media",
       tags: ["admin"],
     }),
+    validator("query", mediaListQuerySchema, validationHook),
     async (context) => {
+      const query = context.req.valid("query") as v.InferOutput<typeof mediaListQuerySchema>;
       const page = await media().list({
         actor: await actor(context),
         ...pagination(context.req.raw),
+        ...(query.q === undefined || query.q.length === 0 ? {} : { q: query.q }),
+        ...(query.sort === undefined ? {} : { sort: query.sort }),
+        ...(query.type === undefined ? {} : { type: query.type }),
       });
       return response(mediaListSchema, {
         items: page.items.map(mediaDto),
@@ -725,6 +730,33 @@ export function createLaceApp(input: LaceAppInput): Hono {
         mediaId: context.req.param("mediaId") as never,
       });
       return response(mediaMetadataSchema, mediaDto(deleted), 202);
+    },
+  );
+
+  app.get(
+    "/api/v1/admin/media/:mediaId",
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(mediaDetailSchema) } },
+          description: "Media item with the entries that use it",
+        },
+      },
+      summary: "Get media details",
+      tags: ["admin"],
+    }),
+    validator("param", mediaIdParams, validationHook),
+    async (context) => {
+      const detail = await media().get({
+        actor: await actor(context),
+        mediaId: context.req.param("mediaId") as never,
+      });
+      return detail === null
+        ? notFound()
+        : response(
+            mediaDetailSchema,
+            toMediaDetailDto(detail, mediaUrl(input.publicBaseUrl!, detail.id)),
+          );
     },
   );
 

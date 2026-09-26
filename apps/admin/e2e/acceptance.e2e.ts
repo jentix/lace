@@ -59,12 +59,22 @@ test("administrator completes the local editorial flow and preserves published o
 
   await sidebar.getByRole("link", { name: "Media", exact: true }).click();
   await expect(page.getByText("No media yet")).toBeVisible();
-  await page.getByLabel("Upload image").setInputFiles({
+  await page.getByLabel("Upload images").setInputFiles({
     name: "acceptance.png",
     mimeType: "image/png",
     buffer: image,
   });
-  await expect(page.getByText("Uploaded acceptance.png.")).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "Upload queue" })
+      .getByRole("listitem")
+      .filter({ hasText: "acceptance.png" }),
+  ).toContainText("Uploaded");
+  await expect(
+    page
+      .getByRole("list", { name: "Media library" })
+      .getByRole("button", { name: "acceptance.png" }),
+  ).toBeVisible();
 
   await sidebar.getByRole("link", { name: "Content", exact: true }).click();
   await main.getByRole("link", { name: "home" }).click();
@@ -72,7 +82,10 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("button", { name: "Add Image" }).click();
   await page.getByRole("textbox", { name: "Alt" }).fill("Acceptance image");
   await page.getByRole("button", { name: "Choose media for Media" }).click();
-  await page.getByRole("button", { name: "acceptance.png", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Choose media for Media" })
+    .getByRole("button", { name: "acceptance.png", exact: true })
+    .click();
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText(/Saved revision 2/u)).toBeVisible();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
@@ -178,7 +191,7 @@ test("administrator completes the local editorial flow and preserves published o
     } else {
       await expect(member.getByRole("button", { name: "Save draft" })).toHaveCount(0);
       await memberSidebar.getByRole("link", { name: "Media", exact: true }).click();
-      await expect(member.getByLabel("Upload image")).toHaveCount(0);
+      await expect(member.getByRole("button", { name: "Upload images" })).toHaveCount(0);
     }
     await member.close();
   }

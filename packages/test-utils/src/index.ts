@@ -1,6 +1,9 @@
 import {
   actorDisplayName,
+  ALLOWED_MEDIA_MIME_TYPES,
   DISPATCHER_LEASE_DURATION_MS,
+  MAX_MEDIA_USAGE_ENTRIES,
+  MEDIA_SORTS,
   foldAscii,
   dispatcherLeaseId,
   opaqueCursor,
@@ -44,9 +47,16 @@ import type {
   MarkMediaForDeletionInput,
   MarkMediaForDeletionResult,
   RetryDispatcherLeaseInput,
+  LoadMediaUsageInput,
+  MediaCatalogItem,
+  MediaCatalogPort,
   MediaCommandPort,
   MediaListPort,
   MediaReadPort,
+  MediaSort,
+  MediaUsageEntry,
+  MediaUsageLocation,
+  MediaUsageState,
   StoredContentModelState,
   ObjectStorage,
   OpaqueCursor,
@@ -78,6 +88,7 @@ import {
 } from "@lacecms/domain";
 import type {
   ActorId,
+  BlockKey,
   ContentEntry,
   DraftMediaReference,
   MediaMetadata,
@@ -434,6 +445,19 @@ function compareNoCase(left: string, right: string): number {
   return foldedLeft < foldedRight ? -1 : foldedLeft > foldedRight ? 1 : 0;
 }
 
+function compareMedia(left: MediaMetadata, right: MediaMetadata, sort: MediaSort): number {
+  const field = sort.startsWith("-") ? sort.slice(1) : sort;
+  const direction = sort.startsWith("-") ? -1 : 1;
+  const primary =
+    field === "filename"
+      ? compareNoCase(left.filename, right.filename)
+      : field === "size"
+        ? left.size - right.size
+        : left.createdAt - right.createdAt;
+  const tieBreaker = left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  return direction * (primary === 0 ? tieBreaker : primary);
+}
+
 function compareSummaries(
   left: ContentEntrySummary,
   right: ContentEntrySummary,
@@ -461,6 +485,7 @@ export class InMemoryContentStore
     ContentEntryCommandPort,
     ConfigurationSyncApplyPort,
     ConfigurationSyncStateReadPort,
+    MediaCatalogPort,
     MediaCommandPort,
     MediaListPort,
     MediaReadPort,
@@ -729,6 +754,8 @@ export class InMemoryContentStore
       updatedAt: input.publishedAt,
     });
     this.entries.set(published.id, published);
+    // Publication replaces the prior published snapshot, as SQLite cascades its references.
+    if (entry.published !== undefined) this.references.delete(entry.published.id);
     this.references.set(published.published!.id, clone(this.references.get(entry.draft.id) ?? []));
     this.routes.clear();
     for (const [routePath, route] of nextRoutes) this.routes.set(routePath, route);
@@ -817,15 +844,40 @@ export class InMemoryContentStore
 
   public async listMedia(
     input: import("@lacecms/application").ListMediaInput,
-  ): Promise<CursorPage<MediaMetadata>> {
+  ): Promise<CursorPage<MediaCatalogItem>> {
+    if (!MEDIA_SORTS.includes(input.sort)) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media sort is unsupported.");
+    }
+    if (input.type !== undefined && !ALLOWED_MEDIA_MIME_TYPES.includes(input.type)) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media type filter is unsupported.");
+    }
+    const term = input.q === undefined ? undefined : foldAscii(input.q);
     const items = [...this.media.values()]
-      .sort((left, right) =>
-        left.createdAt === right.createdAt
-          ? left.id.localeCompare(right.id)
-          : left.createdAt - right.createdAt,
+      .filter(
+        (value) =>
+          (term === undefined || foldAscii(value.filename).includes(term)) &&
+          (input.type === undefined || value.mimeType === input.type),
       )
-      .map((value) => clone(value));
-    return this.page(items, input.after, input.limit, "media");
+      .sort((left, right) => compareMedia(left, right, input.sort))
+      .map((value) => this.catalogItem(value));
+    const prefix = JSON.stringify(["media", input.sort, input.type ?? null, input.q ?? null]);
+    return this.page(items, input.after, input.limit, prefix);
+  }
+
+  public async loadMediaCatalogItem(id: string): Promise<MediaCatalogItem | null> {
+    const media = this.media.get(id);
+    return media === undefined ? null : this.catalogItem(media);
+  }
+
+  public async loadMediaUsage(input: LoadMediaUsageInput): Promise<readonly MediaUsageEntry[]> {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > MAX_MEDIA_USAGE_ENTRIES
+    ) {
+      throw new DomainError("CONTENT_INVALID_STATE", "Media usage limit is invalid.");
+    }
+    return Object.freeze(this.mediaUsage(input.mediaId).slice(0, input.limit));
   }
 
   public async loadMedia(id: string): Promise<MediaMetadata | null> {
@@ -840,11 +892,8 @@ export class InMemoryContentStore
     if (media === undefined || media.status !== "active") {
       throw new DomainError("CONTENT_INVALID_STATE", "Media is not eligible for deletion.");
     }
-    const referenced = [...this.references.values()].some((references) =>
-      references.some((reference) => reference.mediaId === input.mediaId),
-    );
-    if (referenced) {
-      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    if (this.mediaUsage(input.mediaId).length > 0) {
+      throw new DomainError("MEDIA_IN_USE", "Media is still referenced by content.");
     }
     const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
     this.media.set(input.mediaId, clone(deleting));
@@ -859,11 +908,8 @@ export class InMemoryContentStore
     if (media === undefined || media.status !== "delete_failed") {
       throw new DomainError("CONTENT_INVALID_STATE", "Media deletion cannot be retried.");
     }
-    const referenced = [...this.references.values()].some((references) =>
-      references.some((reference) => reference.mediaId === input.mediaId),
-    );
-    if (referenced) {
-      throw new DomainError("CONTENT_INVALID_STATE", "Media is still referenced by content.");
+    if (this.mediaUsage(input.mediaId).length > 0) {
+      throw new DomainError("MEDIA_IN_USE", "Media is still referenced by content.");
     }
     const deleting = { ...media, status: "deleting" as const, updatedAt: input.requestedAt };
     this.media.set(input.mediaId, clone(deleting));
@@ -892,6 +938,111 @@ export class InMemoryContentStore
         throw new DomainError("CONTENT_INVALID_STATE", "Media is unavailable for reference.");
       }
     }
+  }
+
+  private catalogItem(media: MediaMetadata): MediaCatalogItem {
+    return Object.freeze({
+      createdBy: this.actorSummary(media.createdBy),
+      media: clone(media),
+      usageCount: this.mediaUsage(media.id).length,
+    });
+  }
+
+  /** Usage from each entry's current draft and published reference projections only. */
+  private mediaUsage(mediaIdValue: string): MediaUsageEntry[] {
+    const usage: { readonly entry: MediaUsageEntry; readonly updatedAt: number }[] = [];
+    for (const entry of this.entries.values()) {
+      const locations = new Map<
+        string,
+        {
+          blockKey?: BlockKey;
+          blockType?: string;
+          field: string;
+          position: number;
+          states: Set<MediaUsageState>;
+        }
+      >();
+      const snapshots = [
+        ["draft", entry.draft] as const,
+        ...(entry.published === undefined ? [] : [["published", entry.published] as const]),
+      ];
+      for (const [state, snapshot] of snapshots) {
+        for (const reference of this.references.get(snapshot.id) ?? []) {
+          if (reference.mediaId !== mediaIdValue) continue;
+          const block =
+            reference.sourceKey === "$fields"
+              ? undefined
+              : snapshot.blocks.find((candidate) => candidate.key === reference.sourceKey);
+          if (reference.sourceKey !== "$fields" && block === undefined) {
+            throw new Error("A media reference names a block that does not exist.");
+          }
+          const key = `${reference.sourceKey}\u0000${reference.fieldPath}`;
+          const location = locations.get(key) ?? {
+            ...(block === undefined ? {} : { blockKey: block.key, blockType: block.type }),
+            field: reference.fieldPath,
+            position: block?.position ?? 0,
+            states: new Set<MediaUsageState>(),
+          };
+          if (block !== undefined) {
+            if (state === "draft") location.blockType = block.type;
+            location.position = Math.min(location.position, block.position);
+          }
+          location.states.add(state);
+          locations.set(key, location);
+        }
+      }
+      if (locations.size === 0) continue;
+      const ordered = [...locations.values()].sort((left, right) => {
+        if ((left.blockKey === undefined) !== (right.blockKey === undefined)) {
+          return left.blockKey === undefined ? -1 : 1;
+        }
+        if (left.position !== right.position) return left.position - right.position;
+        const leftKey = `${left.blockKey ?? ""}\u0000${left.field}`;
+        const rightKey = `${right.blockKey ?? ""}\u0000${right.field}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+      const states = (value: ReadonlySet<MediaUsageState>): readonly MediaUsageState[] =>
+        Object.freeze((["draft", "published"] as const).filter((state) => value.has(state)));
+      usage.push({
+        entry: Object.freeze({
+          entryId: entry.id,
+          locations: Object.freeze(
+            ordered.map((location): MediaUsageLocation =>
+              location.blockKey === undefined
+                ? Object.freeze({
+                    field: location.field,
+                    source: "field" as const,
+                    states: states(location.states),
+                  })
+                : Object.freeze({
+                    blockKey: location.blockKey,
+                    blockType: location.blockType!,
+                    field: location.field,
+                    source: "block" as const,
+                    states: states(location.states),
+                  }),
+            ),
+          ),
+          modelKey: entry.model.key,
+          ...(entry.draft.slug === undefined ? {} : { slug: entry.draft.slug }),
+          status: entryStatus(entry),
+          title: entry.draft.title,
+        }),
+        // Mirrors the Node `content_entries.updated_at`, which publication also advances.
+        updatedAt: Math.max(entry.draft.updatedAt, entry.published?.createdAt ?? 0),
+      });
+    }
+    return usage
+      .sort((left, right) =>
+        left.updatedAt === right.updatedAt
+          ? left.entry.entryId < right.entry.entryId
+            ? 1
+            : left.entry.entryId > right.entry.entryId
+              ? -1
+              : 0
+          : right.updatedAt - left.updatedAt,
+      )
+      .map(({ entry }) => entry);
   }
 
   private actorSummary(id: ActorId): ActorSummary {

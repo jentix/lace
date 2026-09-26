@@ -705,8 +705,21 @@ the draft snapshot's reference projection in the same atomic mutation;
 publication copies it with `INSERT ... SELECT`. A media item may be selected only
 while its status is `active`.
 
+The same projection is the only source of media usage. An entry uses an item
+when its current draft or current published snapshot references it in an entry
+field or a block field. Every admin media DTO carries `usageCount`, the number
+of distinct using entries, and the media detail read lists up to 50 of them with
+each location and whether the draft, the published version, or both use it.
+Because only current snapshots keep references, usage and the deletion guard
+always agree: an item is refused deletion exactly when its `usageCount` is
+greater than zero.
+
+`width` and `height` are the displayed dimensions, measured after the image's
+EXIF orientation is applied. Every upload records both values.
+
 Media deletion is asynchronous and recoverable. The delete use case refuses a
-referenced item, marks an unreferenced item `deleting`, and writes a
+referenced item with `MEDIA_IN_USE` (HTTP `409`), marks an unreferenced item
+`deleting`, and writes a
 `media.delete.requested` outbox event atomically. The dispatcher deletes the
 object and then the metadata row; failures set `delete_failed` and remain
 retryable. This avoids either a dangling published reference or an unrecoverable
@@ -978,7 +991,9 @@ DELETE /api/v1/admin/entries/:entryId
 
 GET    /api/v1/admin/media
 POST   /api/v1/admin/media
+GET    /api/v1/admin/media/:mediaId
 DELETE /api/v1/admin/media/:mediaId
+POST   /api/v1/admin/media/:mediaId/retry-deletion
 
 GET    /api/v1/admin/site-builds
 POST   /api/v1/admin/site-builds
@@ -1013,6 +1028,12 @@ preserve the same snapshot-revision invariant.
 - Admin entry summaries and entry responses name the last editor with an `id`
   and `displayName`, so lists never render raw user IDs. Public and
   build-export DTOs never carry display names.
+- The admin media list accepts `q` (filename substring), `type` (an allowed
+  image MIME type), and `sort` (`createdAt`, `filename`, or `size`, either
+  direction; default newest first), with cursors bound to that query. Media
+  DTOs name the uploader as `createdBy` with an `id` and `displayName`, and
+  carry `usageCount`. `GET /api/v1/admin/media/:mediaId` adds the bounded
+  `usage` list.
 - Mutable operations use optimistic concurrency through a revision or `If-Match` value.
 - Publish operations are idempotent.
 - Dates in JSON use ISO 8601 UTC strings.
@@ -1327,6 +1348,10 @@ Primary routes:
 The content-model response drives navigation and field forms. Pages open their singleton editor directly; collections open a paginated entry list.
 
 The shell groups its sidebar into Pages, Collections (with entry totals from the entry-list API), Library (Media and Builds, all roles), and Admin (Users and Settings, administrators only), shows the signed-in user's display name and role in a user menu, and locates each screen with breadcrumbs. Below the medium breakpoint the same navigation opens in a sheet. Shell surfaces never show internal entry or user IDs. Collection lists are TanStack Table views over the entry-list API: title with slug, derived status, the model's `listFields` columns, publication date, and relative last edit with the editor's display name; search, status filter, and sort live in the route's URL search parameters, while the opaque cursor pages with "Load more" and never enters the URL.
+
+The media library at `/media` follows the same URL-state rules for its filename search, type filter, sort, and grid/list view. Tiles and rows load their thumbnails lazily through the authenticated admin preview endpoint. Writers can drop files anywhere over the library or choose several at once. Each file is checked for type and size in the browser and then uploads with its own progress and server error. The default browser client sends uploads through `XMLHttpRequest` so it can report bytes sent; every other request uses `fetch`, and both paths share error mapping and response validation. A details side panel shows an item's facts, its usage from the media detail read, and its public URL. Deletion there requires confirmation and is unavailable while content uses the item.
+
+Model and block media fields choose through a picker dialog built from the same grid, search, type filter, sort, and upload queue. Its query is local state that resets on each opening and never enters the URL. It offers only active items, and a confirmed upload can be used directly from its queue row. A field with a value shows a thumbnail card with filename, Replace, and Remove. The card resolves the stored ID through the media detail read, so it never searches loaded pages. It names pending-deletion, missing (`NOT_FOUND`), and unreadable items explicitly, and it keeps the ID in the draft until the writer replaces or removes it. The raw ID is never shown.
 
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
 

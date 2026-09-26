@@ -2,6 +2,7 @@ import type { JsonObject } from "@lacecms/content";
 import type {
   Actor,
   ActorId,
+  BlockKey,
   Brand,
   CompleteDraftMutation,
   ContentEntry,
@@ -293,7 +294,8 @@ export type MediaMimeType = "image/avif" | "image/jpeg" | "image/png" | "image/w
 
 /**
  * A verified image result. Implementations MUST parse the complete byte sequence,
- * reject malformed or trailing data, and report dimensions from the image itself.
+ * reject malformed or trailing data, and report dimensions from the image itself
+ * after applying its embedded orientation, so they are the displayed dimensions.
  */
 export interface ImageInspector {
   inspect(bytes: Uint8Array, mimeType: MediaMimeType): Promise<ImageDimensions>;
@@ -515,13 +517,82 @@ export interface MediaReadPort {
   loadMedia(id: string): Promise<MediaMetadata | null>;
 }
 
+/** Admin media-list order; a leading `-` sorts descending. */
+export type MediaSort = "-createdAt" | "-filename" | "-size" | "createdAt" | "filename" | "size";
+
+export const MEDIA_SORTS: readonly MediaSort[] = Object.freeze([
+  "-createdAt",
+  "-filename",
+  "-size",
+  "createdAt",
+  "filename",
+  "size",
+]);
+
+export const DEFAULT_MEDIA_SORT: MediaSort = "-createdAt";
+export const MAX_MEDIA_SEARCH_LENGTH = 200;
+/** Upper bound on the referencing entries returned by one media usage read. */
+export const MAX_MEDIA_USAGE_ENTRIES = 50;
+
 export interface ListMediaInput {
   readonly after?: OpaqueCursor;
   readonly limit: number;
+  /** Trimmed, non-empty filename substring; matched case-insensitively for ASCII. */
+  readonly q?: string;
+  readonly sort: MediaSort;
+  readonly type?: MediaMimeType;
+}
+
+/** Media metadata with its uploader's display name and distinct referencing-entry count. */
+export interface MediaCatalogItem {
+  readonly createdBy: ActorSummary;
+  readonly media: MediaMetadata;
+  readonly usageCount: number;
 }
 
 export interface MediaListPort {
-  listMedia(input: ListMediaInput): Promise<CursorPage<MediaMetadata>>;
+  listMedia(input: ListMediaInput): Promise<CursorPage<MediaCatalogItem>>;
+}
+
+/** Which of an entry's current snapshots reference a media item at one location. */
+export type MediaUsageState = "draft" | "published";
+
+export type MediaUsageLocation =
+  | {
+      readonly field: string;
+      readonly source: "field";
+      readonly states: readonly MediaUsageState[];
+    }
+  | {
+      readonly blockKey: BlockKey;
+      readonly blockType: string;
+      readonly field: string;
+      readonly source: "block";
+      readonly states: readonly MediaUsageState[];
+    };
+
+/** One entry whose current draft or published snapshot references a media item. */
+export interface MediaUsageEntry {
+  readonly entryId: ContentEntryId;
+  readonly locations: readonly MediaUsageLocation[];
+  readonly modelKey: ContentModelKey;
+  readonly slug?: string;
+  readonly status: ContentEntryStatus;
+  readonly title: string;
+}
+
+export interface LoadMediaUsageInput {
+  readonly limit: number;
+  readonly mediaId: MediaId;
+}
+
+/**
+ * Presentation reads derived from the same reference projection that guards
+ * deletion; lifecycle reads stay on `MediaReadPort`.
+ */
+export interface MediaCatalogPort {
+  loadMediaCatalogItem(id: string): Promise<MediaCatalogItem | null>;
+  loadMediaUsage(input: LoadMediaUsageInput): Promise<readonly MediaUsageEntry[]>;
 }
 
 export interface CreateMediaMetadataInput {

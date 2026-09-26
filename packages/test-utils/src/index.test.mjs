@@ -1380,3 +1380,243 @@ test("validates list queries before reads and describes editors with fallbacks",
   });
   await expect(describe("gone")).resolves.toEqual({ displayName: "Unknown user", id: "gone" });
 });
+
+const postsRoute = { key: contentModelKey("posts"), kind: "collection", route: "/blog/:slug" };
+
+function mediaUsageEntry(id, { blocks = [], fields = {}, updatedAt }) {
+  const entryId = contentEntryId(id);
+  return createContentEntry({
+    id: entryId,
+    model: postsRoute,
+    draft: {
+      blocks,
+      createdAt: unixMilliseconds(updatedAt),
+      entryId,
+      fields,
+      id: contentSnapshotId(`${id}-draft`),
+      revision: 1,
+      slug: id,
+      state: "draft",
+      title: `Title ${id}`,
+      updatedAt: unixMilliseconds(updatedAt),
+      updatedBy: editor,
+    },
+  });
+}
+
+function imageBlock(key, type, position, image) {
+  return { data: { image }, key: blockKey(key), position, schemaVersion: 1, type };
+}
+
+function seedMediaCatalog(store) {
+  store.setActorDisplayNames({ editor: "Ada" });
+  for (const [id, filename, mimeType, size, createdAt, createdBy] of [
+    ["m-a", "Cover.png", "image/png", 30, 10, "editor"],
+    ["m-b", "cover-2.jpg", "image/jpeg", 10, 11, "gone"],
+    ["m-c", "100% _off_ 'deal'.webp", "image/webp", 20, 12, "system:content-sync"],
+    ["m-d", "banner.png", "image/png", 20, 12, "editor"],
+    ["m-e", "cover.png", "image/png", 30, 10, "editor"],
+  ]) {
+    store.registerMedia({
+      createdAt: unixMilliseconds(createdAt),
+      createdBy: actorId(createdBy),
+      filename,
+      height: 2,
+      id: mediaId(id),
+      mimeType,
+      size,
+      status: "active",
+      storageKey: `media/${id}`,
+      updatedAt: unixMilliseconds(createdAt),
+      width: 3,
+    });
+  }
+}
+
+test("mirrors Node media search, type filter, sorts, and query-bound cursors in memory", async () => {
+  const store = new InMemoryContentStore();
+  seedMediaCatalog(store);
+  const ids = async (input) =>
+    (await store.listMedia({ limit: 100, sort: "-createdAt", ...input })).items.map(
+      (item) => item.media.id,
+    );
+  const all = await store.listMedia({ limit: 100, sort: "-createdAt" });
+  expect(all.items.find((item) => item.media.id === "m-a")).toMatchObject({
+    createdBy: { displayName: "Ada", id: "editor" },
+    usageCount: 0,
+  });
+  expect(all.items.find((item) => item.media.id === "m-b").createdBy.displayName).toBe(
+    "Unknown user",
+  );
+  expect(all.items.find((item) => item.media.id === "m-c").createdBy.displayName).toBe("System");
+  expect(await ids({ q: "cover" })).toEqual(["m-b", "m-e", "m-a"]);
+  expect(await ids({ q: "COVER", type: "image/png" })).toEqual(["m-e", "m-a"]);
+  expect(await ids({ q: "%" })).toEqual(["m-c"]);
+  expect(await ids({ q: "o_f" })).toEqual([]);
+  const expectedOrders = {
+    "-createdAt": ["m-d", "m-c", "m-b", "m-e", "m-a"],
+    "-filename": ["m-e", "m-a", "m-b", "m-d", "m-c"],
+    "-size": ["m-e", "m-a", "m-d", "m-c", "m-b"],
+    createdAt: ["m-a", "m-e", "m-b", "m-c", "m-d"],
+    filename: ["m-c", "m-d", "m-b", "m-a", "m-e"],
+    size: ["m-b", "m-c", "m-d", "m-a", "m-e"],
+  };
+  for (const [sort, expected] of Object.entries(expectedOrders)) {
+    const paged = [];
+    let after;
+    do {
+      const page = await store.listMedia({ limit: 1, sort, ...(after ? { after } : {}) });
+      paged.push(...page.items.map((item) => item.media.id));
+      after = page.nextCursor;
+    } while (after !== undefined);
+    expect(paged).toEqual(expected);
+  }
+  const first = await store.listMedia({ limit: 1, sort: "filename" });
+  for (const mismatch of [{ sort: "-createdAt" }, { sort: "filename", type: "image/png" }]) {
+    await expect(
+      store.listMedia({ limit: 1, after: first.nextCursor, ...mismatch }),
+    ).rejects.toMatchObject({ code: "CONTENT_INVALID_STATE" });
+  }
+});
+
+test("derives in-memory media usage and in-use refusals from current snapshots", async () => {
+  const store = new InMemoryContentStore();
+  seedMediaCatalog(store);
+  const media = new MediaUseCases({
+    clock: new DeterministicClock(unixMilliseconds(60)),
+    idGenerator: new DeterministicIdGenerator("media"),
+    imageInspector: { inspect: async () => ({ height: 1, width: 1 }) },
+    logger: { error() {} },
+    media: store,
+    storage: new InMemoryObjectStorage(),
+  });
+  const entry = mediaUsageEntry("e-one", {
+    blocks: [
+      imageBlock("hero-1", "hero", 1000, "m-a"),
+      imageBlock("gallery-1", "gallery", 2000, "m-a"),
+    ],
+    fields: { cover: "m-a" },
+    updatedAt: 20,
+  });
+  await store.create({
+    entry,
+    mediaReferences: [
+      { fieldPath: "cover", mediaId: mediaId("m-a"), sourceKey: "$fields" },
+      { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("hero-1") },
+      { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("gallery-1") },
+    ],
+  });
+  await store.publish({
+    entryId: entry.id,
+    expectedRevision: 1,
+    publishedAt: unixMilliseconds(30),
+    publishedBy: editor,
+    publishedSnapshotId: contentSnapshotId("e-one-published"),
+  });
+  await store.saveCompleteDraft({
+    entryId: entry.id,
+    mutation: {
+      blocks: [imageBlock("gallery-1", "carousel", 1000, "m-a")],
+      expectedRevision: 1,
+      fields: { cover: "m-d" },
+      mediaReferences: [
+        { fieldPath: "cover", mediaId: mediaId("m-d"), sourceKey: "$fields" },
+        { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("gallery-1") },
+      ],
+      slug: "e-one",
+      title: "Title e-one",
+      updatedAt: unixMilliseconds(40),
+      updatedBy: editor,
+    },
+  });
+  await store.create({
+    entry: mediaUsageEntry("e-two", { fields: { cover: "m-a" }, updatedAt: 50 }),
+    mediaReferences: [{ fieldPath: "cover", mediaId: mediaId("m-a"), sourceKey: "$fields" }],
+  });
+
+  const viewer = { id: actorId("viewer"), role: "viewer" };
+  const detail = await media.get({ actor: viewer, mediaId: mediaId("m-a") });
+  expect(detail).toMatchObject({ createdBy: { displayName: "Ada" }, usageCount: 2 });
+  expect(detail.usage).toEqual([
+    {
+      entryId: "e-two",
+      locations: [{ field: "cover", source: "field", states: ["draft"] }],
+      modelKey: "posts",
+      slug: "e-two",
+      status: "draft",
+      title: "Title e-two",
+    },
+    {
+      entryId: "e-one",
+      locations: [
+        { field: "cover", source: "field", states: ["published"] },
+        {
+          blockKey: "gallery-1",
+          blockType: "carousel",
+          field: "image",
+          source: "block",
+          states: ["draft", "published"],
+        },
+        {
+          blockKey: "hero-1",
+          blockType: "hero",
+          field: "image",
+          source: "block",
+          states: ["published"],
+        },
+      ],
+      modelKey: "posts",
+      slug: "e-one",
+      status: "changed",
+      title: "Title e-one",
+    },
+  ]);
+  expect(
+    (await store.loadMediaUsage({ limit: 1, mediaId: mediaId("m-a") })).map((e) => e.entryId),
+  ).toEqual(["e-two"]);
+  await expect(store.loadMediaUsage({ limit: 51, mediaId: mediaId("m-a") })).rejects.toMatchObject({
+    code: "CONTENT_INVALID_STATE",
+  });
+
+  await expect(
+    media.requestDeletion({ actor: editor, mediaId: mediaId("m-d") }),
+  ).rejects.toMatchObject({ code: "MEDIA_IN_USE" });
+  expect(store.mediaDeletionRequests).toEqual([]);
+  // Removing the draft reference and republishing clears usage; deletion is then accepted.
+  await store.saveCompleteDraft({
+    entryId: entry.id,
+    mutation: {
+      blocks: [imageBlock("gallery-1", "carousel", 1000, "m-a")],
+      expectedRevision: 2,
+      fields: {},
+      mediaReferences: [
+        { fieldPath: "image", mediaId: mediaId("m-a"), sourceKey: blockKey("gallery-1") },
+      ],
+      slug: "e-one",
+      title: "Title e-one",
+      updatedAt: unixMilliseconds(55),
+      updatedBy: editor,
+    },
+  });
+  expect((await media.get({ actor: viewer, mediaId: mediaId("m-d") })).usageCount).toBe(0);
+  await expect(
+    media.requestDeletion({ actor: editor, mediaId: mediaId("m-d") }),
+  ).resolves.toMatchObject({ status: "deleting", usageCount: 0 });
+  await store.publish({
+    entryId: entry.id,
+    expectedRevision: 3,
+    publishedAt: unixMilliseconds(56),
+    publishedBy: editor,
+    publishedSnapshotId: contentSnapshotId("e-one-published-2"),
+  });
+  const afterRepublish = await media.get({ actor: viewer, mediaId: mediaId("m-a") });
+  expect(afterRepublish.usage.find((usage) => usage.entryId === "e-one").locations).toEqual([
+    {
+      blockKey: "gallery-1",
+      blockType: "carousel",
+      field: "image",
+      source: "block",
+      states: ["draft", "published"],
+    },
+  ]);
+});

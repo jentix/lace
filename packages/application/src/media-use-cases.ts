@@ -1,17 +1,28 @@
 import { DomainError, mediaId, requirePermission } from "@lacecms/domain";
 import type { Actor, MediaId, MediaMetadata, UnixMilliseconds } from "@lacecms/domain";
+import {
+  DEFAULT_MEDIA_SORT,
+  MAX_MEDIA_SEARCH_LENGTH,
+  MAX_MEDIA_USAGE_ENTRIES,
+  MEDIA_SORTS,
+} from "./index.js";
 import type {
+  ActorSummary,
   ByteStream,
   Clock,
   CursorPage,
   IdGenerator,
   ImageInspector,
-  ListMediaInput,
+  MediaCatalogItem,
+  MediaCatalogPort,
   MediaCommandPort,
   MediaListPort,
   MediaMimeType,
   MediaReadPort,
+  MediaSort,
+  MediaUsageEntry,
   ObjectStorage,
+  OpaqueCursor,
   OperationalLogger,
   PublicContentReadPort,
 } from "./index.js";
@@ -28,7 +39,7 @@ export const ALLOWED_MEDIA_MIME_TYPES = Object.freeze([
 
 export interface MediaView {
   readonly createdAt: UnixMilliseconds;
-  readonly createdBy: string;
+  readonly createdBy: ActorSummary;
   readonly filename: string;
   readonly height?: number;
   readonly id: MediaId;
@@ -36,7 +47,13 @@ export interface MediaView {
   readonly size: number;
   readonly status: MediaMetadata["status"];
   readonly updatedAt: UnixMilliseconds;
+  readonly usageCount: number;
   readonly width?: number;
+}
+
+/** A single media item with the bounded list of entries that use it. */
+export interface MediaDetailView extends MediaView {
+  readonly usage: readonly MediaUsageEntry[];
 }
 
 export interface CreateMediaUseCaseInput {
@@ -45,8 +62,13 @@ export interface CreateMediaUseCaseInput {
   readonly filename: string;
 }
 
-export interface ListMediaUseCaseInput extends ListMediaInput {
+export interface ListMediaUseCaseInput {
   readonly actor: Actor;
+  readonly after?: OpaqueCursor;
+  readonly limit: number;
+  readonly q?: string;
+  readonly sort?: string;
+  readonly type?: string;
 }
 
 export interface GetMediaUseCaseInput {
@@ -71,7 +93,7 @@ export interface MediaUseCaseDependencies {
   readonly idGenerator: IdGenerator;
   readonly imageInspector: ImageInspector;
   readonly logger: OperationalLogger;
-  readonly media: MediaReadPort & MediaListPort & MediaCommandPort;
+  readonly media: MediaReadPort & MediaListPort & MediaCatalogPort & MediaCommandPort;
   readonly publicMedia?: Pick<PublicContentReadPort, "loadPublicMedia">;
   readonly storage: ObjectStorage;
 }
@@ -152,14 +174,15 @@ function streamBytes(bytes: Uint8Array): ByteStream {
   };
 }
 
-function toMediaView(value: MediaMetadata): MediaView {
+function toMediaView(item: MediaCatalogItem): MediaView {
+  const value = item.media;
   const mimeType = value.mimeType;
   if (!ALLOWED_MEDIA_MIME_TYPES.includes(mimeType as MediaMimeType)) {
     failure("Media metadata has an unsupported MIME type.");
   }
   return Object.freeze({
     createdAt: value.createdAt,
-    createdBy: value.createdBy,
+    createdBy: Object.freeze({ displayName: item.createdBy.displayName, id: item.createdBy.id }),
     filename: value.filename,
     ...(value.height === undefined ? {} : { height: value.height }),
     id: value.id,
@@ -167,6 +190,7 @@ function toMediaView(value: MediaMetadata): MediaView {
     size: value.size,
     status: value.status,
     updatedAt: value.updatedAt,
+    usageCount: item.usageCount,
     ...(value.width === undefined ? {} : { width: value.width }),
   });
 }
@@ -212,7 +236,7 @@ export class MediaUseCases {
     }
     const now = this.dependencies.clock.now();
     try {
-      const media = await this.dependencies.media.createMedia({
+      await this.dependencies.media.createMedia({
         createdAt: now,
         createdBy: input.actor.id,
         filename: sanitizeMediaFilename(input.filename),
@@ -223,24 +247,49 @@ export class MediaUseCases {
         storageKey,
         width: dimensions.width,
       });
-      return toMediaView(detached(media));
     } catch (error) {
       await this.cleanupAfterMetadataFailure(storageKey, true);
       throw error;
     }
+    // Metadata is committed: a reload failure must not trigger object cleanup.
+    return this.catalogView(id, "Created media could not be reloaded.");
   }
 
-  public async get(input: GetMediaUseCaseInput): Promise<MediaView | null> {
+  public async get(input: GetMediaUseCaseInput): Promise<MediaDetailView | null> {
     requirePermission(input.actor, "content:read");
-    const media = await this.dependencies.media.loadMedia(input.mediaId);
-    return media === null ? null : toMediaView(detached(media));
+    const item = await this.dependencies.media.loadMediaCatalogItem(input.mediaId);
+    if (item === null) return null;
+    const usage = await this.dependencies.media.loadMediaUsage({
+      limit: MAX_MEDIA_USAGE_ENTRIES,
+      mediaId: input.mediaId,
+    });
+    return Object.freeze({
+      ...toMediaView(detached(item)),
+      usage: Object.freeze(detached(usage.slice(0, MAX_MEDIA_USAGE_ENTRIES))),
+    });
   }
 
   public async list(input: ListMediaUseCaseInput): Promise<CursorPage<MediaView>> {
     requirePermission(input.actor, "content:read");
+    const q = input.q?.trim();
+    if (q !== undefined && q.length > MAX_MEDIA_SEARCH_LENGTH) {
+      failure(`Search terms must not exceed ${MAX_MEDIA_SEARCH_LENGTH} characters.`);
+    }
+    if (
+      input.type !== undefined &&
+      !ALLOWED_MEDIA_MIME_TYPES.includes(input.type as MediaMimeType)
+    ) {
+      failure("Media type filter is unsupported.");
+    }
+    if (input.sort !== undefined && !MEDIA_SORTS.includes(input.sort as MediaSort)) {
+      failure("Media sort is unsupported.");
+    }
     const page = await this.dependencies.media.listMedia({
       ...(input.after === undefined ? {} : { after: input.after }),
       limit: input.limit,
+      ...(q === undefined || q.length === 0 ? {} : { q }),
+      sort: (input.sort as MediaSort | undefined) ?? DEFAULT_MEDIA_SORT,
+      ...(input.type === undefined ? {} : { type: input.type as MediaMimeType }),
     });
     return Object.freeze({
       items: Object.freeze(page.items.map((item) => toMediaView(detached(item)))),
@@ -255,7 +304,7 @@ export class MediaUseCases {
       requestedAt: this.dependencies.clock.now(),
       requestedBy: input.actor,
     });
-    return toMediaView(detached(result.media));
+    return this.catalogView(result.media.id, "Media deletion mark could not be reloaded.");
   }
 
   public async retryDeletion(input: DeleteMediaUseCaseInput): Promise<MediaView> {
@@ -265,7 +314,7 @@ export class MediaUseCases {
       requestedAt: this.dependencies.clock.now(),
       requestedBy: input.actor,
     });
-    return toMediaView(detached(result.media));
+    return this.catalogView(result.media.id, "Media deletion retry could not be reloaded.");
   }
 
   public async preview(input: GetMediaUseCaseInput): Promise<MediaBinary | null> {
@@ -279,6 +328,12 @@ export class MediaUseCases {
     return media === undefined || media === null || media.status !== "active"
       ? null
       : this.readBinary(media);
+  }
+
+  private async catalogView(id: MediaId, missing: string): Promise<MediaView> {
+    const item = await this.dependencies.media.loadMediaCatalogItem(id);
+    if (item === null) throw new Error(missing);
+    return toMediaView(detached(item));
   }
 
   private async readBinary(media: MediaMetadata): Promise<MediaBinary> {

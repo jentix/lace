@@ -8,6 +8,7 @@ import {
   contentModelListSchema,
   contractValidationIssueSchema,
   errorEnvelopeSchema,
+  mediaDetailSchema,
   mediaListSchema,
   mediaMetadataSchema,
   managedUserListSchema,
@@ -24,8 +25,11 @@ import {
   type ContentEntryStatusDto,
   type ContentEntryListDto,
   type ContentModelListDto,
+  type MediaDetailDto,
   type MediaListDto,
   type MediaMetadataDto,
+  type MediaMimeTypeDto,
+  type MediaSortDto,
   type ManagedUserDto,
   type ManagedUserListDto,
   type PublishContentEntryResultDto,
@@ -50,7 +54,18 @@ export const adminQueryKeys = Object.freeze({
   entryOverview: (modelKey: string) => ["admin", "entries", modelKey, "overview"] as const,
   /** Invalidation prefix covering every entry query of one model. */
   modelEntries: (modelKey: string) => ["admin", "entries", modelKey] as const,
-  media: (cursor?: string) => ["admin", "media", cursor ?? null] as const,
+  /** Invalidation prefix covering every media list and detail query. */
+  media: ["admin", "media"] as const,
+  /** One searched, filtered, and sorted media list; pages are held by the infinite query. */
+  mediaList: (query: Pick<MediaListQuery, "q" | "sort" | "type">) =>
+    [
+      "admin",
+      "media",
+      "list",
+      { q: query.q ?? null, sort: query.sort ?? null, type: query.type ?? null },
+    ] as const,
+  /** One media item with the entries that use it. */
+  mediaDetail: (mediaId: string) => ["admin", "media", "detail", mediaId] as const,
   models: ["admin", "models"] as const,
   session: ["admin", "session"] as const,
 });
@@ -100,8 +115,9 @@ export interface AdminClient {
     cursor?: string,
     query?: EntryListQuery,
   ): Promise<ContentEntryListDto>;
-  listMedia(cursor?: string): Promise<MediaListDto>;
-  uploadMedia(file: File): Promise<MediaMetadataDto>;
+  listMedia(cursor?: string, query?: MediaListQuery): Promise<MediaListDto>;
+  getMedia(mediaId: string): Promise<MediaDetailDto>;
+  uploadMedia(file: File, options?: MediaUploadOptions): Promise<MediaMetadataDto>;
   deleteMedia(mediaId: string): Promise<MediaMetadataDto>;
   retryMediaDeletion(mediaId: string): Promise<MediaMetadataDto>;
   listModels(): Promise<ContentModelListDto>;
@@ -134,25 +150,61 @@ export interface EntryListQuery {
   readonly status?: ContentEntryStatusDto;
 }
 
+/** The media-list order the API applies when no sort is requested. */
+export const DEFAULT_MEDIA_SORT: MediaSortDto = "-createdAt";
+
+/** Server-side filename search, type filter, and sort for the media library. */
+export interface MediaListQuery {
+  readonly limit?: number;
+  readonly q?: string;
+  readonly sort?: MediaSortDto;
+  readonly type?: MediaMimeTypeDto;
+}
+
+/** Per-upload callbacks; `onProgress` receives the sent fraction (0–1) when the browser reports it. */
+export interface MediaUploadOptions {
+  readonly onProgress?: (fraction: number) => void;
+}
+
+/** A completed upload exchange, independent of the browser API that performed it. */
+export interface UploadExchange {
+  readonly body: unknown;
+  readonly requestId: string | undefined;
+  readonly status: number;
+}
+
+/**
+ * Sends a multipart upload to a same-origin API path. Rejects only when the
+ * API cannot be reached; HTTP errors resolve with their status and body.
+ */
+export type MediaUploader = (
+  path: string,
+  body: FormData,
+  options: MediaUploadOptions,
+) => Promise<UploadExchange>;
+
 type Fetcher = typeof fetch;
 
-function responseError(response: Response, body: unknown): AdminClientError {
+function responseError(status: number, requestId: string | undefined, body: unknown) {
   const parsed = v.safeParse(errorEnvelopeSchema, body);
-  const requestId = response.headers.get("x-request-id") ?? undefined;
   const issues = parsed.success ? parseIssues(parsed.output.error.details?.issues) : undefined;
   return parsed.success
     ? new AdminClientError({
         code: parsed.output.error.code,
         message: parsed.output.error.message,
         ...(requestId === undefined ? {} : { requestId }),
-        status: response.status,
+        status,
         ...(issues === undefined ? {} : { issues }),
       })
     : new AdminClientError({
-        message: `The Lace API request failed (${response.status}).`,
+        message: `The Lace API request failed (${status}).`,
         ...(requestId === undefined ? {} : { requestId }),
-        status: response.status,
+        status,
       });
+}
+
+function unreachable(): AdminClientError {
+  return new AdminClientError({ message: "The Lace API could not be reached." });
 }
 
 function parseIssues(value: unknown): readonly ContractValidationIssue[] | undefined {
@@ -177,12 +229,63 @@ async function request(fetcher: Fetcher, path: string, init: RequestInit = {}): 
       headers: { accept: "application/json", ...init.headers },
     });
   } catch {
-    throw new AdminClientError({ message: "The Lace API could not be reached." });
+    throw unreachable();
   }
   const body = response.status === 204 ? undefined : await json(response);
-  if (!response.ok) throw responseError(response, body);
+  if (!response.ok)
+    throw responseError(response.status, response.headers.get("x-request-id") ?? undefined, body);
   return body;
 }
+
+/** Uploads through `fetch`, which cannot report intermediate upload progress. */
+export function fetchUploader(fetcher: Fetcher): MediaUploader {
+  return async (path, body) => {
+    let response: Response;
+    try {
+      response = await fetcher(path, {
+        body,
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+        method: "POST",
+      });
+    } catch {
+      throw unreachable();
+    }
+    return {
+      body: await json(response),
+      requestId: response.headers.get("x-request-id") ?? undefined,
+      status: response.status,
+    };
+  };
+}
+
+/** Uploads through same-origin `XMLHttpRequest` (cookies included) so the browser reports bytes sent. */
+export const xhrUploader: MediaUploader = (path, body, options) =>
+  new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", path);
+    request.setRequestHeader("accept", "application/json");
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && event.total > 0)
+        options.onProgress?.(Math.min(1, event.loaded / event.total));
+    });
+    request.addEventListener("load", () => {
+      let parsed: unknown;
+      try {
+        parsed = request.responseText === "" ? undefined : JSON.parse(request.responseText);
+      } catch {
+        parsed = undefined;
+      }
+      resolve({
+        body: parsed,
+        requestId: request.getResponseHeader("x-request-id") ?? undefined,
+        status: request.status,
+      });
+    });
+    request.addEventListener("error", () => reject(unreachable()));
+    request.addEventListener("abort", () => reject(unreachable()));
+    request.send(body);
+  });
 
 function parse<T>(schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, body: unknown): T {
   const result = v.safeParse(schema, body);
@@ -191,8 +294,18 @@ function parse<T>(schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, body: 
   return result.output;
 }
 
-/** Creates the credentialed browser client for the shared admin REST contracts. */
-export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
+/**
+ * Creates the credentialed browser client for the shared admin REST contracts.
+ * Uploads report progress through `XMLHttpRequest` unless a fetcher or an
+ * uploader is injected; an injected fetcher alone keeps uploads on fetch.
+ */
+export function createAdminClient(injected?: Fetcher, uploader?: MediaUploader): AdminClient {
+  const fetcher: Fetcher = injected ?? fetch;
+  const upload =
+    uploader ??
+    (injected === undefined && typeof XMLHttpRequest !== "undefined"
+      ? xhrUploader
+      : fetchUploader(fetcher));
   return Object.freeze({
     createUser: async (input: Parameters<AdminClient["createUser"]>[0]) =>
       parse(
@@ -273,17 +386,28 @@ export function createAdminClient(fetcher: Fetcher = fetch): AdminClient {
     },
     listModels: async () =>
       parse(contentModelListSchema, await request(fetcher, "/api/v1/admin/content-models")),
-    listMedia: async (cursor?: string) => {
-      const query = cursor === undefined ? "" : `?after=${encodeURIComponent(cursor)}`;
-      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${query}`));
+    listMedia: async (cursor?: string, query: MediaListQuery = {}) => {
+      const search = new URLSearchParams();
+      if (cursor !== undefined) search.set("after", cursor);
+      if (query.q !== undefined && query.q.trim().length > 0) search.set("q", query.q.trim());
+      if (query.type !== undefined) search.set("type", query.type);
+      if (query.sort !== undefined) search.set("sort", query.sort);
+      if (query.limit !== undefined) search.set("limit", String(query.limit));
+      const suffix = search.size === 0 ? "" : `?${search.toString()}`;
+      return parse(mediaListSchema, await request(fetcher, `/api/v1/admin/media${suffix}`));
     },
-    uploadMedia: async (file: File) => {
+    getMedia: async (mediaId: string) =>
+      parse(
+        mediaDetailSchema,
+        await request(fetcher, `/api/v1/admin/media/${encodeURIComponent(mediaId)}`),
+      ),
+    uploadMedia: async (file: File, options: MediaUploadOptions = {}) => {
       const body = new FormData();
       body.append("file", file);
-      return parse(
-        mediaMetadataSchema,
-        await request(fetcher, "/api/v1/admin/media", { body, method: "POST" }),
-      );
+      const exchange = await upload("/api/v1/admin/media", body, options);
+      if (exchange.status < 200 || exchange.status >= 300)
+        throw responseError(exchange.status, exchange.requestId, exchange.body);
+      return parse(mediaMetadataSchema, exchange.body);
     },
     deleteMedia: async (mediaId: string) =>
       parse(

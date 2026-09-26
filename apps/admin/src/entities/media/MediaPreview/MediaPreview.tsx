@@ -1,16 +1,20 @@
 import { useState } from "react";
+import { cn } from "../../../shared/lib/index.js";
 import { buttonVariants } from "../../../shared/ui/Button/index.js";
+import { mediaPreviewPath } from "../media-limits.js";
 
 export function MediaPreview({
+  className,
   filename,
   mediaId,
 }: {
+  readonly className?: string;
   readonly filename: string;
   readonly mediaId: string;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
-  const source = `/api/v1/admin/media/${encodeURIComponent(mediaId)}/preview${attempt === 0 ? "" : `?attempt=${attempt}`}`;
+  const source = `${mediaPreviewPath(mediaId)}${attempt === 0 ? "" : `?attempt=${attempt}`}`;
   return (
     <div className="grid gap-2">
       {state === "loading" ? <span role="status">Loading preview for {filename}…</span> : undefined}
@@ -31,7 +35,7 @@ export function MediaPreview({
       ) : (
         <img
           alt={`Preview of ${filename}`}
-          className="block h-auto max-h-64 max-w-full rounded-md object-contain"
+          className={cn("block h-auto max-h-64 max-w-full rounded-md object-contain", className)}
           onError={() => setState("failed")}
           onLoad={() => setState("ready")}
           src={source}

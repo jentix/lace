@@ -1,11 +1,15 @@
-import { pageClass } from "../../../shared/ui/layout/index.js";
+import { getRouteApi } from "@tanstack/react-router";
 import { MediaLibrary } from "../../../widgets/media-library/index.js";
 
+const mediaRoute = getRouteApi("/_protected/media");
+
 export function MediaPage() {
+  const search = mediaRoute.useSearch();
+  const navigate = mediaRoute.useNavigate();
   return (
-    <section className={pageClass} aria-labelledby="media-title">
-      <h1 id="media-title">Media</h1>
-      <MediaLibrary />
-    </section>
+    <MediaLibrary
+      onQueryChange={(query) => navigate({ replace: true, search: query })}
+      query={search}
+    />
   );
 }

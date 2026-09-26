@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ContentModelDto } from "@lacecms/contracts";
@@ -63,7 +63,7 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
         items: [
           {
             createdAt: "2026-09-20T00:00:00.000Z",
-            createdBy: "editor-1",
+            createdBy: { displayName: "editor@lace.test", id: "editor-1" },
             filename: "cover.png",
             id: "media-1",
             mimeType: "image/png",
@@ -71,6 +71,7 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
             status: "active",
             updatedAt: "2026-09-20T00:00:00.000Z",
             url: "https://lace.test/api/v1/public/media/media-1",
+            usageCount: 0,
           },
         ],
       }),
@@ -84,8 +85,16 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
   expect(screen.queryByRole("textbox", { name: /json/i })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Add Hero" }));
   await user.click(screen.getByRole("button", { name: "Choose media for Image" }));
-  await user.click(await screen.findByRole("button", { name: "cover.png" }));
-  expect(screen.getByText("Selected: media-1")).toBeInTheDocument();
+  await user.click(
+    await within(screen.getByRole("dialog", { name: "Choose media for Image" })).findByRole(
+      "button",
+      { name: "cover.png" },
+    ),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Replace media for Image" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("cover.png")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Duplicate" }));
   expect(screen.getAllByRole("heading", { name: "Hero" })).toHaveLength(2);
   await user.click(screen.getByRole("button", { name: "Add Quote" }));

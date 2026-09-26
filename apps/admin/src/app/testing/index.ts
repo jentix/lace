@@ -76,7 +76,7 @@ export const draftEntry = {
 };
 export const mediaItem = {
   createdAt: "2026-09-20T00:00:00.000Z",
-  createdBy: "editor-1",
+  createdBy: { displayName: "editor@lace.test", id: "editor-1" },
   filename: "cover.png",
   id: "media-1",
   mimeType: "image/png",
@@ -84,6 +84,7 @@ export const mediaItem = {
   status: "active" as const,
   updatedAt: "2026-09-20T00:00:00.000Z",
   url: "https://lace.test/api/v1/public/media/media-1",
+  usageCount: 0,
 };
 
 /** An admin client whose every call succeeds with neutral data unless overridden. */
@@ -104,6 +105,7 @@ export function stubClient(overrides: Partial<AdminClient> = {}): AdminClient {
         ? entryList([{ ...entry, id: "home-1", modelKey: "home", title: "Home" }])
         : entryList([entry]),
     listMedia: async () => ({ items: [] }),
+    getMedia: async () => ({ ...mediaItem, usage: [] }),
     uploadMedia: async () => ({}) as never,
     deleteMedia: async () => ({}) as never,
     retryMediaDeletion: async () => ({}) as never,

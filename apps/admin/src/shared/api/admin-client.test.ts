@@ -4,6 +4,7 @@ import {
   adminQueryKeys,
   createAdminClient,
   isSessionExpiredError,
+  type MediaUploadOptions,
 } from "./admin-client.js";
 
 const model = {
@@ -38,7 +39,13 @@ test("validates credentialed shared-contract responses and keeps cursors opaque"
     "list",
     { q: null, sort: null, status: "draft" },
   ]);
-  expect(adminQueryKeys.media("media+/=")).toEqual(["admin", "media", "media+/="]);
+  expect(adminQueryKeys.media).toEqual(["admin", "media"]);
+  expect(adminQueryKeys.mediaList({ q: "hero", type: "image/png" })).toEqual([
+    "admin",
+    "media",
+    "list",
+    { q: "hero", sort: null, type: "image/png" },
+  ]);
   expect(adminQueryKeys.entryOverview("posts")).toEqual(["admin", "entries", "posts", "overview"]);
   const prefix = adminQueryKeys.modelEntries("posts");
   for (const key of [adminQueryKeys.entryList("posts", {}), adminQueryKeys.entryOverview("posts")])
@@ -133,7 +140,7 @@ test("uses validated credentialed user, status, and token endpoints", async () =
 test("lists validated media through the credentialed admin API", async () => {
   const item = {
     createdAt: "2026-09-20T00:00:00.000Z",
-    createdBy: "admin-1",
+    createdBy: { displayName: "Admin", id: "admin-1" },
     filename: "hero.png",
     id: "media-1",
     mimeType: "image/png",
@@ -141,6 +148,7 @@ test("lists validated media through the credentialed admin API", async () => {
     status: "active",
     updatedAt: "2026-09-20T00:00:00.000Z",
     url: "https://lace.test/api/v1/public/media/media-1",
+    usageCount: 0,
   };
   const fetcher = vi.fn(async () => Response.json({ items: [item], nextCursor: "next" }));
   await expect(createAdminClient(fetcher).listMedia("previous+/=")).resolves.toEqual({
@@ -154,12 +162,58 @@ test("lists validated media through the credentialed admin API", async () => {
   await expect(
     createAdminClient(async () => Response.json({ items: [{ id: "bad" }] })).listMedia(),
   ).rejects.toBeInstanceOf(AdminClientError);
+  await createAdminClient(fetcher).listMedia(undefined, {
+    limit: 24,
+    q: "  hero ",
+    sort: "filename",
+    type: "image/png",
+  });
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/admin/media?q=hero&type=image%2Fpng&sort=filename&limit=24",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  await createAdminClient(fetcher).listMedia(undefined, { q: "   " });
+  expect(fetcher).toHaveBeenLastCalledWith("/api/v1/admin/media", expect.anything());
+});
+
+test("reads media details with usage through the credentialed admin API", async () => {
+  const detail = {
+    createdAt: "2026-09-20T00:00:00.000Z",
+    createdBy: { displayName: "Admin", id: "admin-1" },
+    filename: "hero.png",
+    id: "media/1",
+    mimeType: "image/png",
+    size: 12,
+    status: "active",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    url: "https://lace.test/api/v1/public/media/media-1",
+    usage: [
+      {
+        entryId: "entry-1",
+        locations: [{ field: "cover", source: "field", states: ["published"] }],
+        modelKey: "posts",
+        status: "published",
+        title: "Hello",
+      },
+    ],
+    usageCount: 1,
+  };
+  const fetcher = vi.fn(async () => Response.json(detail));
+  await expect(createAdminClient(fetcher).getMedia("media/1")).resolves.toEqual(detail);
+  expect(fetcher).toHaveBeenCalledWith("/api/v1/admin/media/media%2F1", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  expect(adminQueryKeys.mediaDetail("media-1")).toEqual(["admin", "media", "detail", "media-1"]);
+  await expect(
+    createAdminClient(async () => Response.json({ ...detail, usage: undefined })).getMedia("m"),
+  ).rejects.toBeInstanceOf(AdminClientError);
 });
 
 test("uploads and requests media deletion with validated credentialed responses", async () => {
   const item = {
     createdAt: "2026-09-20T00:00:00.000Z",
-    createdBy: "admin-1",
+    createdBy: { displayName: "Admin", id: "admin-1" },
     filename: "hero.png",
     id: "media-1",
     mimeType: "image/png",
@@ -167,6 +221,7 @@ test("uploads and requests media deletion with validated credentialed responses"
     status: "active",
     updatedAt: "2026-09-20T00:00:00.000Z",
     url: "https://lace.test/api/v1/public/media/media-1",
+    usageCount: 0,
   };
   const fetcher = vi.fn(async () => Response.json(item, { status: 201 }));
   const client = createAdminClient(fetcher);
@@ -372,4 +427,138 @@ test("identifies only authentication-status client errors as recovery candidates
   expect(isSessionExpiredError(new AdminClientError({ message: "Conflict", status: 409 }))).toBe(
     false,
   );
+});
+
+const uploadedItem = {
+  createdAt: "2026-09-20T00:00:00.000Z",
+  createdBy: { displayName: "Admin", id: "admin-1" },
+  filename: "hero.png",
+  id: "media-1",
+  mimeType: "image/png",
+  size: 12,
+  status: "active",
+  updatedAt: "2026-09-20T00:00:00.000Z",
+  url: "https://lace.test/api/v1/public/media/media-1",
+  usageCount: 0,
+};
+
+/** A scripted XMLHttpRequest double: `respond` settles the latest request. */
+class FakeXhr {
+  static latest: FakeXhr | undefined;
+  readonly headers: Record<string, string> = {};
+  readonly listeners: Record<string, (() => void)[]> = {};
+  readonly uploadListeners: ((event: ProgressEvent) => void)[] = [];
+  readonly upload = {
+    addEventListener: (_type: string, listener: (event: ProgressEvent) => void) =>
+      this.uploadListeners.push(listener),
+  };
+  method = "";
+  path = "";
+  body: unknown;
+  status = 0;
+  responseText = "";
+  responseHeaders: Record<string, string> = {};
+
+  constructor() {
+    FakeXhr.latest = this;
+  }
+  open(method: string, path: string) {
+    this.method = method;
+    this.path = path;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value;
+  }
+  addEventListener(type: string, listener: () => void) {
+    (this.listeners[type] ??= []).push(listener);
+  }
+  getResponseHeader(name: string) {
+    return this.responseHeaders[name] ?? null;
+  }
+  send(body: unknown) {
+    this.body = body;
+  }
+  progress(loaded: number, total: number) {
+    for (const listener of this.uploadListeners)
+      listener({ lengthComputable: true, loaded, total } as ProgressEvent);
+  }
+  respond(status: number, body: unknown, headers: Record<string, string> = {}) {
+    this.status = status;
+    this.responseText = body === undefined ? "" : JSON.stringify(body);
+    this.responseHeaders = headers;
+    for (const listener of this.listeners.load ?? []) listener();
+  }
+  fail() {
+    for (const listener of this.listeners.error ?? []) listener();
+  }
+}
+
+test("the default client uploads through XHR and reports byte progress", async () => {
+  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  try {
+    const progress = vi.fn();
+    const file = new File(["image"], "hero.png", { type: "image/png" });
+    const pending = createAdminClient().uploadMedia(file, { onProgress: progress });
+    const request = FakeXhr.latest as FakeXhr;
+    expect(request.method).toBe("POST");
+    expect(request.path).toBe("/api/v1/admin/media");
+    expect(request.headers.accept).toBe("application/json");
+    expect((request.body as FormData).get("file")).toEqual(file);
+    request.progress(50, 100);
+    request.progress(100, 100);
+    expect(progress.mock.calls).toEqual([[0.5], [1]]);
+    request.respond(201, uploadedItem);
+    await expect(pending).resolves.toEqual(uploadedItem);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("XHR uploads map error envelopes, invalid bodies, and network failures", async () => {
+  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  try {
+    const client = createAdminClient();
+    const file = new File(["bad"], "bad.png", { type: "image/png" });
+    const rejected = client.uploadMedia(file);
+    (FakeXhr.latest as FakeXhr).respond(
+      422,
+      { error: { code: "VALIDATION_FAILED", message: "Invalid image" } },
+      { "x-request-id": "request-7" },
+    );
+    await expect(rejected).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: "Invalid image",
+      requestId: "request-7",
+      status: 422,
+    });
+    const malformed = client.uploadMedia(file);
+    (FakeXhr.latest as FakeXhr).respond(201, { id: "invalid" });
+    await expect(malformed).rejects.toMatchObject({
+      message: "The Lace API returned an invalid response.",
+    });
+    const offline = client.uploadMedia(file);
+    (FakeXhr.latest as FakeXhr).fail();
+    await expect(offline).rejects.toMatchObject({ message: "The Lace API could not be reached." });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("an injected uploader replaces the default transport", async () => {
+  const uploader = vi.fn(async (_path: string, _body: FormData, options: MediaUploadOptions) => {
+    options.onProgress?.(1);
+    return { body: uploadedItem, requestId: undefined, status: 201 };
+  });
+  const fetcher = vi.fn(async () => Response.json({}));
+  const progress = vi.fn();
+  await expect(
+    createAdminClient(fetcher, uploader).uploadMedia(new File(["x"], "hero.png"), {
+      onProgress: progress,
+    }),
+  ).resolves.toEqual(uploadedItem);
+  expect(uploader).toHaveBeenCalledWith("/api/v1/admin/media", expect.any(FormData), {
+    onProgress: progress,
+  });
+  expect(progress).toHaveBeenCalledWith(1);
+  expect(fetcher).not.toHaveBeenCalled();
 });

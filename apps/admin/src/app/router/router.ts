@@ -23,6 +23,7 @@ import { createAdminClient, type AdminClient } from "../../shared/api/index.js";
 import { safeReturnPath } from "../../shared/lib/index.js";
 import { AdminShellLayout } from "../../widgets/admin-shell/index.js";
 import { parseCollectionSearch } from "./collection-search.js";
+import { parseMediaSearch } from "./media-search.js";
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -105,6 +106,7 @@ const mediaRoute = createRoute({
   component: MediaPage,
   getParentRoute: () => protectedRoute,
   path: "/media",
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => parseMediaSearch(search),
 });
 const buildsRoute = createRoute({
   component: BuildsPage,
