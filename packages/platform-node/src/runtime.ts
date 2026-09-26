@@ -287,15 +287,17 @@ class NodeRequestRateLimiter implements RequestRateLimiter {
     readonly request: Request;
   }): Promise<boolean | import("@lacecms/application").RateLimitDecision> {
     const pathname = new URL(input.request.url).pathname;
-    const operation = pathname.startsWith("/api/auth/")
-      ? "auth"
-      : pathname === "/api/v1/setup/admin"
-        ? "setup"
-        : pathname.startsWith("/api/v1/admin/api-tokens")
-          ? "token"
-          : pathname.startsWith("/api/v1/admin/media")
-            ? "upload"
-            : undefined;
+    const method = input.request.method;
+    const operation =
+      pathname.startsWith("/api/auth/") && method !== "GET"
+        ? "auth"
+        : pathname === "/api/v1/setup/admin"
+          ? "setup"
+          : pathname.startsWith("/api/v1/admin/api-tokens") && method !== "GET"
+            ? "token"
+            : pathname === "/api/v1/admin/media" && method === "POST"
+              ? "upload"
+              : undefined;
     if (operation === undefined) return true;
     const subject =
       input.request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown-client";

@@ -149,7 +149,7 @@ The local Node stack SHALL support an explicit live site mode that reads the loc
 - **THEN** the browser response contains neither the build credential nor a client-side request bearing it
 
 ### Requirement: Local publication refresh and credential setup are documented
-The developer guide SHALL explain how an administrator creates a read-only build token through the existing admin API, configures the local server-side site process without committing the plaintext token, and refreshes or restarts the site after publication. It SHALL explain that saving a draft does not change public site content and that automated build dispatch is not yet part of this workflow.
+The developer guide SHALL explain how an administrator creates a read-only build token through the Admin Settings screen, configures the local server-side site process without committing the plaintext token, and refreshes or restarts the site after publication. The documented editorial path SHALL not require a browser-console API call or direct content API call. It SHALL explain that saving a draft does not change public site content and that automated build dispatch is not yet part of this workflow.
 
 #### Scenario: Contributor publishes a changed draft
 - **WHEN** a contributor follows the guide after publishing an edited entry
@@ -158,6 +158,10 @@ The developer guide SHALL explain how an administrator creates a read-only build
 #### Scenario: Contributor saves without publishing
 - **WHEN** a contributor saves a draft and follows the same refresh or restart step
 - **THEN** the public site continues displaying the prior published content
+
+#### Scenario: Administrator configures the live site through Admin
+- **WHEN** an administrator follows the documented local setup after first sign-in
+- **THEN** Settings issues the once-shown read-only build token and the administrator can enable live site mode without calling an API from the browser console
 
 ### Requirement: Contributor workflow proves code-owned content end to end
 The local developer workflow SHALL demonstrate adding a page and collection in code, explicitly synchronizing their models, editing drafts in Admin, publishing entries, reading published-only API output, and refreshing the Astro site to observe the corresponding URLs. It SHALL state the field and block registration steps and distinguish structural model changes that require a version increase from display-only metadata changes that do not.

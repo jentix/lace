@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "acceptance:start": "node scripts/dev-stack.mjs acceptance:start",
+    "acceptance:stop": "node scripts/dev-stack.mjs acceptance:stop",
+    "acceptance:bootstrap": "node scripts/dev-stack.mjs acceptance:bootstrap",
+    "acceptance:restart-site": "node scripts/dev-stack.mjs acceptance:restart-site",
     "build": "turbo run build",
     "content:sync": "node scripts/dev-stack.mjs sync",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",

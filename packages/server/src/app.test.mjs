@@ -120,6 +120,63 @@ test("keeps liveness, readiness, request IDs, and logs separate", async () => {
   expect(JSON.stringify(logs)).not.toContain("authorization");
 });
 
+test("settings status exposes only useful read-only state to administrators", async () => {
+  const adminFixture = await fixture({ ready: false });
+  expect(await json(adminFixture.app, "/api/v1/admin/settings/status")).toMatchObject({
+    body: { configuredModels: 2, ready: false },
+    response: { status: 200 },
+  });
+  const editorFixture = await fixture({ actor: editor });
+  expect(await json(editorFixture.app, "/api/v1/admin/settings/status")).toMatchObject({
+    body: { error: { code: "AUTHORIZATION_DENIED" } },
+    response: { status: 403 },
+  });
+});
+
+test("editor and viewer mutations are denied by the API independently of Admin controls", async () => {
+  const editorApp = (await fixture({ actor: editor })).app;
+  const viewerApp = (await fixture({ actor: { id: actorId("viewer"), role: "viewer" } })).app;
+  const post = (body) => ({
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  for (const [path, init] of [
+    [
+      "/api/v1/admin/entries/missing/publish",
+      {
+        ...post({ expectedRevision: 1 }),
+        headers: { "content-type": "application/json", "idempotency-key": "acceptance" },
+      },
+    ],
+    [
+      "/api/v1/admin/users",
+      post({ email: "other@example.test", password: "long-password-123", role: "viewer" }),
+    ],
+    ["/api/v1/admin/api-tokens", post({ name: "disallowed" })],
+  ]) {
+    expect((await json(editorApp, path, init)).response.status).toBe(403);
+  }
+  expect(
+    (
+      await json(
+        viewerApp,
+        "/api/v1/admin/models/posts/entries",
+        post({ title: "Denied", slug: "denied", fields: {}, blocks: [] }),
+      )
+    ).response.status,
+  ).toBe(403);
+  const media = new FormData();
+  media.append("file", new File([new Uint8Array([1])], "denied.png", { type: "image/png" }));
+  expect(
+    (
+      await viewerApp.fetch(
+        new Request("https://lace.test/api/v1/admin/media", { body: media, method: "POST" }),
+      )
+    ).status,
+  ).toBe(403);
+});
+
 test("serves public content and short-circuits matching build exports", async () => {
   const { app, content, exportLoads } = await fixture();
   const entry = await content.create({
@@ -245,6 +302,30 @@ test("renders stable body-limit and rate-limit envelopes", async () => {
     body: { error: { code: "RATE_LIMITED" } },
     response: { status: 429 },
   });
+});
+
+test("bodyless media lifecycle requests reach the use case without bypassing body limits elsewhere", async () => {
+  const { app } = await fixture();
+  const emptyBody = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    });
+  for (const [method, path] of [
+    ["DELETE", "/api/v1/admin/media/missing"],
+    ["POST", "/api/v1/admin/media/missing/retry-deletion"],
+  ]) {
+    const response = await app.fetch(
+      new Request(`https://lace.test${path}`, {
+        body: emptyBody(),
+        duplex: "half",
+        method,
+      }),
+    );
+    expect(response.status).toBe(422);
+    expect((await response.json()).error.code).toBe("CONTENT_INVALID_STATE");
+  }
 });
 
 test("keeps media uploads, previews, and draft-only public reads separate", async () => {

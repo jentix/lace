@@ -6,8 +6,13 @@ import {
   S3Client,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
-import type { ByteStream, ObjectStorage, PutObjectInput, StoredObject } from "@lacecms/application";
-import { Readable } from "node:stream";
+import {
+  MAX_MEDIA_BYTES,
+  type ByteStream,
+  type ObjectStorage,
+  type PutObjectInput,
+  type StoredObject,
+} from "@lacecms/application";
 
 export interface NodeMinioSettings {
   readonly accessKeyId: string;
@@ -53,20 +58,6 @@ function streamFromNode(value: unknown): ByteStream {
       for await (const chunk of iterable) {
         if (!(chunk instanceof Uint8Array)) throw new NodeObjectStorageError();
         yield new Uint8Array(chunk);
-      }
-    },
-  };
-}
-
-function countBytes(body: ByteStream, onSize: (size: number) => void): AsyncIterable<Uint8Array> {
-  return {
-    async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
-      let size = 0;
-      for await (const chunk of body) {
-        if (!(chunk instanceof Uint8Array)) throw new NodeObjectStorageError();
-        size += chunk.byteLength;
-        onSize(size);
-        yield chunk;
       }
     },
   };
@@ -127,12 +118,20 @@ export class NodeMinioObjectStorage implements ObjectStorage {
   }
 
   public async put(input: PutObjectInput): Promise<StoredObject> {
+    const chunks: Buffer[] = [];
     let size = 0;
-    const body = Readable.from(countBytes(input.body, (value) => (size = value)));
+    for await (const chunk of input.body) {
+      if (!(chunk instanceof Uint8Array)) throw new NodeObjectStorageError();
+      size += chunk.byteLength;
+      if (size > MAX_MEDIA_BYTES) throw new NodeObjectStorageError();
+      chunks.push(Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks, size);
     await this.send(
       new PutObjectCommand({
         Body: body,
         Bucket: this.settings.bucket,
+        ContentLength: size,
         ContentType: input.contentType,
         Key: input.key,
       }),

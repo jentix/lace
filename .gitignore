@@ -9,3 +9,5 @@ coverage/
 !.env.example
 .wrangler/
 dev-data/
+.lace-acceptance/
+**/test-results/

@@ -218,7 +218,9 @@ test("security service completes bootstrap once, protects its final admin, and r
         token: setup.token,
       }),
     ).rejects.toThrow();
-    await expect(security.disableUser({ userId: first.user.id })).rejects.toThrow();
+    await expect(security.disableUser({ userId: first.user.id })).rejects.toMatchObject({
+      code: "LAST_ADMIN_PROTECTED",
+    });
     const build = await security.createBuildToken({ name: "builder", now: unixMilliseconds(now) });
     await expect(
       security.verifyBuildToken({ now: unixMilliseconds(now), token: build.token }),
@@ -346,9 +348,8 @@ test("MinIO storage streams objects, distinguishes missing keys, and sanitizes f
         return { Body: Readable.from([Buffer.from("media-bytes")]) };
       }
       if (command.constructor.name === "PutObjectCommand") {
-        for await (const _chunk of command.input.Body) {
-          // A real S3 client consumes the request stream before resolving.
-        }
+        expect(command.input.Body).toEqual(Buffer.from([1, 2, 3]));
+        expect(command.input.ContentLength).toBe(3);
       }
       return {};
     },
@@ -494,6 +495,38 @@ test("Node composition maps a Better Auth session into a protected actor", async
         )
       ).status,
     ).toBe(200);
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      expect(
+        (
+          await runtime.app.fetch(
+            new Request("https://lace.test/api/auth/get-session", { headers: { cookie } }),
+          )
+        ).status,
+      ).toBe(200);
+    }
+    for (let attempt = 0; attempt < 35; attempt += 1) {
+      expect(
+        (
+          await runtime.app.fetch(
+            new Request("https://lace.test/api/v1/admin/media", { headers: { cookie } }),
+          )
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await runtime.app.fetch(
+          new Request("https://lace.test/api/auth/sign-in/email", {
+            body: JSON.stringify({
+              email: "node-auth@lace.test",
+              password: "correct horse battery staple",
+            }),
+            headers: { "content-type": "application/json", origin: "https://lace.test" },
+            method: "POST",
+          }),
+        )
+      ).status,
+    ).toBe(200);
     runtime.close();
   } finally {
     await rm(directory, { force: true, recursive: true });
@@ -577,6 +610,88 @@ test("Better Auth rejects public enrollment and applies same-origin session poli
     const cookie = signIn.headers.getSetCookie()[0].split(";")[0];
     expect(signIn.status).toBe(200);
     expect(signIn.headers.get("set-cookie")).toContain("Secure");
+    const localBoundary = createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: new URL("http://127.0.0.1:3000/"),
+      production: false,
+      schema: betterAuthSchema,
+      secret: "test-auth-secret-that-is-long-enough-for-better-auth",
+    });
+    const localSignIn = await localBoundary.fetch(
+      new Request("http://localhost:3000/api/auth/sign-in/email", {
+        body: JSON.stringify({ email: "auth@lace.test", password: "correct horse battery staple" }),
+        headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+        method: "POST",
+      }),
+    );
+    expect(localSignIn.status).toBe(200);
+    expect(localSignIn.headers.get("set-cookie")).toContain("better-auth.session_token");
+    const localCookie = localSignIn.headers.getSetCookie()[0].split(";")[0];
+    await expect(
+      localBoundary.actors.resolve(
+        new Request("http://localhost:3000/api/v1/admin/content-models", {
+          headers: { cookie: localCookie },
+        }),
+      ),
+    ).resolves.toMatchObject({ id: "auth-user", role: "viewer" });
+    const reverseLocalBoundary = createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: new URL("http://localhost:3000/"),
+      production: false,
+      schema: betterAuthSchema,
+      secret: "test-auth-secret-that-is-long-enough-for-better-auth",
+    });
+    expect(
+      (
+        await reverseLocalBoundary.fetch(
+          new Request("http://127.0.0.1:3000/api/auth/sign-in/email", {
+            body: JSON.stringify({
+              email: "auth@lace.test",
+              password: "correct horse battery staple",
+            }),
+            headers: { "content-type": "application/json", origin: "http://127.0.0.1:3000" },
+            method: "POST",
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    const productionLoopback = createBetterAuthBoundary({
+      database: database.drizzle,
+      origin: new URL("http://127.0.0.1:3000/"),
+      production: true,
+      schema: betterAuthSchema,
+      secret: "test-auth-secret-that-is-long-enough-for-better-auth",
+    });
+    expect(
+      (
+        await productionLoopback.fetch(
+          new Request("http://localhost:3000/api/auth/sign-in/email", {
+            body: JSON.stringify({
+              email: "auth@lace.test",
+              password: "correct horse battery staple",
+            }),
+            headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+            method: "POST",
+          }),
+        )
+      ).status,
+    ).toBe(403);
+    const foreignSignIn = await localBoundary.fetch(
+      new Request("http://localhost:3000/api/auth/sign-in/email", {
+        body: JSON.stringify({ email: "auth@lace.test", password: "correct horse battery staple" }),
+        headers: { "content-type": "application/json", origin: "http://attacker.test:3000" },
+        method: "POST",
+      }),
+    );
+    expect(foreignSignIn.status).toBe(403);
+    const wrongPortSignIn = await localBoundary.fetch(
+      new Request("http://localhost:3000/api/auth/sign-in/email", {
+        body: JSON.stringify({ email: "auth@lace.test", password: "correct horse battery staple" }),
+        headers: { "content-type": "application/json", origin: "http://localhost:3001" },
+        method: "POST",
+      }),
+    );
+    expect(wrongPortSignIn.status).toBe(403);
     await expect(
       boundary.actors.resolve(
         new Request("https://lace.test/api/v1/admin/content-models", { headers: { cookie } }),

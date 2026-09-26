@@ -156,3 +156,66 @@ test("limits publication to admins and preserves public output after a later dra
   );
   await admin.close();
 });
+
+test("admin routes distinguish empty, failure, and planned Builds states at a narrow width", async ({
+  browser,
+}) => {
+  const empty = await browser.newPage({ viewport: { width: 375, height: 740 } });
+  let releaseModels: (() => void) | undefined;
+  const modelsGate = new Promise<void>((resolve) => {
+    releaseModels = resolve;
+  });
+  await empty.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/auth/get-session")
+      return json(route, { user: { id: "admin-1", role: "admin" } });
+    if (path === "/api/v1/admin/content-models") {
+      await modelsGate;
+      return json(route, { items: [] });
+    }
+    if (path === "/api/v1/admin/media") return json(route, { items: [] });
+    if (path === "/api/v1/admin/users") return json(route, { items: [] });
+    if (path === "/api/v1/admin/settings/status")
+      return json(route, { configuredModels: 0, ready: true });
+    if (path === "/api/v1/admin/api-tokens") return json(route, { items: [] });
+    return route.fallback();
+  });
+  await empty.goto("/admin/content");
+  await expect(empty.getByRole("status", { name: "Loading content models" })).toBeVisible();
+  releaseModels?.();
+  await expect(empty.getByText("No content models configured")).toBeVisible();
+  await empty.getByRole("button", { name: "Menu" }).focus();
+  await expect(empty.getByRole("button", { name: "Menu" })).toBeFocused();
+  const focus = await empty
+    .getByRole("button", { name: "Menu" })
+    .evaluate((element) => getComputedStyle(element).outlineStyle);
+  expect(focus).not.toBe("none");
+  await empty.getByRole("button", { name: "Menu" }).press("Enter");
+  await expect(empty.getByRole("link", { name: "Media" })).toBeVisible();
+  for (const [route, message] of [
+    ["media", "No media yet"],
+    ["users", "No users found"],
+    ["settings", "No build tokens"],
+  ] as const) {
+    await empty.goto(`/admin/${route}`);
+    await expect(empty.getByText(message)).toBeVisible();
+  }
+  await empty.goto("/admin/builds");
+  await expect(
+    empty.getByText("Build status will be connected to remote state in a later session."),
+  ).toBeVisible();
+  expect(await empty.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  await empty.close();
+
+  for (const route of ["content", "media", "users", "settings"]) {
+    const failed = await browser.newPage();
+    await failed.route("**/api/**", async (requestRoute) => {
+      if (new URL(requestRoute.request().url()).pathname === "/api/auth/get-session")
+        return json(requestRoute, { user: { id: "admin-1", role: "admin" } });
+      return requestRoute.abort();
+    });
+    await failed.goto(`/admin/${route}`);
+    await expect(failed.getByRole("alert").first()).toBeVisible();
+    await failed.close();
+  }
+});

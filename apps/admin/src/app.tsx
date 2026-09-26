@@ -12,6 +12,10 @@ import type {
   ContentEntryDto,
   ContentEntryListDto,
   ContentModelDto,
+  MediaListDto,
+  MediaMetadataDto,
+  ManagedUserDto,
+  BuildTokenCreatedDto,
 } from "@lacecms/contracts";
 import { canonicalizeJson, type JsonValue } from "@lacecms/content";
 import {
@@ -29,7 +33,7 @@ import {
   useRouter,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Controller, useFieldArray, useForm, type Control } from "react-hook-form";
 import {
   DndContext,
@@ -73,6 +77,7 @@ import {
 } from "./components/ui.js";
 import type { AdminRole, AdminSession, AdminSessionSource } from "./session.js";
 import { RichTextEditor } from "./rich-text-editor.js";
+import { MediaPreview } from "./media-preview.js";
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -87,6 +92,11 @@ function errorDescription(error: unknown): string {
 }
 function technicalDetails(error: unknown): string | undefined {
   return error instanceof AdminClientError ? error.requestId : undefined;
+}
+function mediaDeletionDescription(error: unknown): string {
+  return error instanceof AdminClientError && error.code === "CONTENT_INVALID_STATE"
+    ? "Deletion was refused. This media may be referenced by content or no longer active. Remove references and refresh before retrying."
+    : errorDescription(error);
 }
 
 const rootRoute = createRootRouteWithContext<AdminRouterContext>()({
@@ -122,6 +132,13 @@ const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "_protected",
 });
+const adminIndexRoute = createRoute({
+  beforeLoad: () => {
+    throw redirect({ to: "/content" });
+  },
+  getParentRoute: () => protectedRoute,
+  path: "/",
+});
 const contentRoute = createRoute({
   component: ContentPage,
   getParentRoute: () => protectedRoute,
@@ -153,12 +170,7 @@ const entryRoute = createRoute({
   path: "/content/$modelKey/$entryId",
 });
 const mediaRoute = createRoute({
-  component: () => (
-    <RoutePlaceholder
-      description="Media browsing and upload are connected in a later session."
-      title="Media"
-    />
-  ),
+  component: MediaPage,
   getParentRoute: () => protectedRoute,
   path: "/media",
 });
@@ -187,6 +199,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   loginRoute,
   protectedRoute.addChildren([
+    adminIndexRoute,
     contentRoute,
     modelRoute,
     entryRoute,
@@ -332,20 +345,22 @@ function AdminShell({
             </Link>
           ))}
         </nav>
-        <Button disabled={signOut.isPending} onClick={() => signOut.mutate()} variant="quiet">
-          {signOut.isPending ? "Signing out…" : "Sign out"}
-        </Button>
       </aside>
       <main className="lace-main">
-        <button
-          aria-controls="admin-navigation"
-          aria-expanded={navOpen}
-          className="lace-button lace-button--secondary lace-menu-button"
-          onClick={() => setNavOpen((open) => !open)}
-          type="button"
-        >
-          Menu
-        </button>
+        <div className="lace-shell-header">
+          <button
+            aria-controls="admin-navigation"
+            aria-expanded={navOpen}
+            className="lace-button lace-button--secondary lace-menu-button"
+            onClick={() => setNavOpen((open) => !open)}
+            type="button"
+          >
+            Menu
+          </button>
+          <Button disabled={signOut.isPending} onClick={() => signOut.mutate()} variant="quiet">
+            {signOut.isPending ? "Signing out…" : "Log out"}
+          </Button>
+        </div>
         {signOut.error === null ? undefined : (
           <ErrorState
             description={errorDescription(signOut.error)}
@@ -623,7 +638,19 @@ function DeleteEntryDialog({
 
 function draftValues(model: ContentModelDto, entry: ContentEntryDto): DraftEditorValues {
   return {
-    blocks: [...entry.draft.blocks],
+    blocks: entry.draft.blocks.map((block) => {
+      const definition = model.blockDefinitions?.find((item) => item.type === block.type);
+      if (definition === undefined) return block;
+      return {
+        ...block,
+        data: Object.fromEntries(
+          Object.entries(definition.fields).map(([key, field]) => [
+            key,
+            block.data[key] ?? ("defaultValue" in field ? field.defaultValue : undefined),
+          ]),
+        ) as ContentBlockDto["data"],
+      };
+    }),
     fields: initialModelFieldValues(model, entry.draft.fields),
     ...(entry.draft.slug === undefined ? {} : { slug: entry.draft.slug }),
     title: entry.draft.title,
@@ -676,18 +703,9 @@ function MediaPicker({
   readonly onChange: (value: string | undefined) => void;
   readonly value: unknown;
 }) {
-  const { client } = useRouteContext({ from: rootRoute.id });
   const [open, setOpen] = useState(false);
-  const media = useQuery({
-    enabled: open,
-    queryFn: () => client.listMedia(),
-    queryKey: adminQueryKeys.media(),
-  });
   return (
     <div className="lace-media-picker">
-      <p aria-live="polite">
-        {typeof value === "string" ? `Selected: ${value}` : "No media selected"}
-      </p>
       <Button
         aria-expanded={open}
         onClick={() => setOpen((visible) => !visible)}
@@ -696,35 +714,240 @@ function MediaPicker({
       >
         Choose media for {fieldLabel(fieldKey, undefined)}
       </Button>
-      {!open ? undefined : media.isPending ? <p role="status">Loading media…</p> : undefined}
-      {!open || media.error === null ? undefined : <p role="alert">Media could not be loaded.</p>}
-      {!open || media.data === undefined ? undefined : media.data.items.filter(
-          (item) => item.status === "active",
-        ).length === 0 ? (
-        <p>No active media is available.</p>
+      {open ? (
+        <MediaSurface
+          onSelect={(id) => {
+            onChange(id);
+            setOpen(false);
+          }}
+          selectionLabel={fieldLabel(fieldKey, undefined)}
+          value={typeof value === "string" ? value : undefined}
+        />
       ) : (
+        <p aria-live="polite">
+          {typeof value === "string" ? `Selected: ${value}` : "No media selected"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const maxMediaBytes = 10 * 1024 * 1024;
+const mediaTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+
+function MediaPage() {
+  return (
+    <section className="lace-page" aria-labelledby="media-title">
+      <h1 id="media-title">Media</h1>
+      <MediaSurface />
+    </section>
+  );
+}
+
+function MediaSurface({
+  onSelect,
+  selectionLabel,
+  value,
+}: {
+  readonly onSelect?: (id: string | undefined) => void;
+  readonly selectionLabel?: string;
+  readonly value?: string | undefined;
+}) {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const { session } = useRouteContext({ from: protectedRoute.id });
+  const uploadId = useId();
+  const queryClient = useQueryClient();
+  const [recent, setRecent] = useState<MediaMetadataDto | undefined>();
+  const [updates, setUpdates] = useState<Record<string, MediaMetadataDto>>({});
+  const [previewId, setPreviewId] = useState<string | undefined>();
+  const [uploadError, setUploadError] = useState<string | undefined>();
+  const media = useInfiniteQuery<
+    MediaListDto,
+    Error,
+    InfiniteData<MediaListDto>,
+    ReturnType<typeof adminQueryKeys.media>,
+    string | undefined
+  >({
+    getNextPageParam: (page) => page.nextCursor,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => client.listMedia(pageParam),
+    queryKey: adminQueryKeys.media(),
+  });
+  const upload = useMutation({
+    mutationFn: (file: File) => client.uploadMedia(file),
+    onSuccess: async (item) => {
+      setRecent(item);
+      setUploadError(undefined);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+    },
+  });
+  const deletion = useMutation({
+    mutationFn: ({ id, retry }: { id: string; retry: boolean }) =>
+      retry ? client.retryMediaDeletion(id) : client.deleteMedia(id),
+    onSuccess: async (item) => {
+      setUpdates((current) => ({ ...current, [item.id]: item }));
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+    },
+  });
+  useSessionRecovery(media.error ?? upload.error ?? deletion.error);
+  const listed = media.data?.pages.flatMap((page) => page.items) ?? [];
+  const items = (
+    recent === undefined || listed.some((item) => item.id === recent.id)
+      ? listed
+      : [recent, ...listed]
+  ).map((item) => updates[item.id] ?? item);
+  const visible = onSelect === undefined ? items : items.filter((item) => item.status === "active");
+  const current = items.find((item) => item.id === value);
+  const canWrite = session.role !== "viewer";
+  return (
+    <div className="lace-media-surface">
+      {onSelect === undefined ? undefined : (
+        <div aria-live="polite">
+          <p>{value === undefined ? "No media selected" : `Selected: ${value}`}</p>
+          {value !== undefined && current === undefined ? (
+            <p>
+              {media.hasNextPage || media.isPending
+                ? "Selection not found in loaded pages yet."
+                : "Selected media is unavailable or inaccessible."}
+            </p>
+          ) : current !== undefined && current.status !== "active" ? (
+            <p>Selected media is unavailable or inaccessible.</p>
+          ) : undefined}
+          {value === undefined ? undefined : (
+            <Button onClick={() => onSelect(undefined)} type="button" variant="secondary">
+              Clear selection
+            </Button>
+          )}
+        </div>
+      )}
+      {canWrite ? (
+        <div className="lace-media-upload">
+          <label htmlFor={uploadId}>Upload image</label>
+          <p>JPEG, PNG, WebP, or AVIF. Maximum 10 MiB.</p>
+          <input
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            disabled={upload.isPending}
+            id={uploadId}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file === undefined) return;
+              if (file.size > maxMediaBytes || (file.type !== "" && !mediaTypes.has(file.type))) {
+                setUploadError("Choose a JPEG, PNG, WebP, or AVIF image no larger than 10 MiB.");
+                return;
+              }
+              setUploadError(undefined);
+              upload.mutate(file);
+            }}
+            type="file"
+          />
+          {upload.isPending ? <p role="status">Uploading image…</p> : undefined}
+          {uploadError === undefined && upload.error === null ? undefined : (
+            <p role="alert">{uploadError ?? errorDescription(upload.error)}</p>
+          )}
+          {recent === undefined ? undefined : (
+            <p role="status">
+              Uploaded {recent.filename}.{onSelect === undefined ? "" : " Select it to use it."}
+            </p>
+          )}
+        </div>
+      ) : undefined}
+      {media.isPending ? <Skeleton label="Loading media" lines={3} /> : undefined}
+      {media.error === null ? undefined : (
+        <ErrorState
+          description={errorDescription(media.error)}
+          technicalDetails={technicalDetails(media.error)}
+        />
+      )}
+      {media.data !== undefined && visible.length === 0 ? (
+        <EmptyState
+          title={onSelect === undefined ? "No media yet" : "No active media is available"}
+          description={
+            canWrite ? "Upload an image to get started." : "No images are available to select."
+          }
+        />
+      ) : undefined}
+      {visible.length === 0 ? undefined : (
         <ul
-          aria-label={`Media choices for ${fieldLabel(fieldKey, undefined)}`}
+          aria-label={
+            selectionLabel === undefined ? "Media library" : `Media choices for ${selectionLabel}`
+          }
           className="lace-media-list"
         >
-          {media.data.items
-            .filter((item) => item.status === "active")
-            .map((item) => (
-              <li key={item.id}>
-                <button
-                  aria-pressed={value === item.id}
-                  onClick={() => {
-                    onChange(item.id);
-                    setOpen(false);
-                  }}
-                  type="button"
-                >
-                  {item.filename}
-                </button>
-              </li>
-            ))}
+          {visible.map((item) => (
+            <li className="lace-media-item" key={item.id}>
+              <div>
+                <strong>{item.filename}</strong>
+                <span>
+                  {item.mimeType} · {item.size} bytes
+                </span>
+                <span>
+                  {item.status === "deleting"
+                    ? "Deletion pending"
+                    : item.status === "delete_failed"
+                      ? "Deletion failed"
+                      : "Active"}
+                </span>
+              </div>
+              <div className="lace-actions">
+                {item.status === "active" ? (
+                  <Button
+                    onClick={() => setPreviewId(previewId === item.id ? undefined : item.id)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {previewId === item.id ? "Hide preview" : `Preview ${item.filename}`}
+                  </Button>
+                ) : undefined}
+                {onSelect === undefined || item.status !== "active" ? undefined : (
+                  <button
+                    aria-pressed={value === item.id}
+                    onClick={() => onSelect(item.id)}
+                    type="button"
+                  >
+                    {item.filename}
+                  </button>
+                )}
+                {onSelect !== undefined || !canWrite || item.status === "deleting" ? undefined : (
+                  <Button
+                    disabled={deletion.isPending}
+                    onClick={() => {
+                      if (
+                        item.status === "active" &&
+                        !window.confirm(`Request deletion of ${item.filename}?`)
+                      )
+                        return;
+                      deletion.mutate({ id: item.id, retry: item.status === "delete_failed" });
+                    }}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {item.status === "delete_failed"
+                      ? `Retry deletion of ${item.filename}`
+                      : `Delete ${item.filename}`}
+                  </Button>
+                )}
+              </div>
+              {previewId === item.id ? (
+                <MediaPreview filename={item.filename} mediaId={item.id} />
+              ) : undefined}
+            </li>
+          ))}
         </ul>
       )}
+      {deletion.error === null ? undefined : (
+        <p role="alert">{mediaDeletionDescription(deletion.error)}</p>
+      )}
+      {media.hasNextPage ? (
+        <Button
+          disabled={media.isFetchingNextPage}
+          onClick={() => media.fetchNextPage()}
+          type="button"
+          variant="secondary"
+        >
+          {media.isFetchingNextPage ? "Loading more media…" : "Load more media"}
+        </Button>
+      ) : undefined}
     </div>
   );
 }
@@ -1128,12 +1351,9 @@ function EntryEditor() {
     onSuccess: async (saved) => {
       const savedModel = modelRef.current;
       if (savedModel === undefined) return;
-      const values = draftValues(savedModel, saved);
       queryClient.setQueryData(adminQueryKeys.entry(entryId), saved);
       setSavedEntry(saved);
-      loaded.current = `${saved.id}:${saved.draft.revision}`;
       suggestingSlugRef.current = false;
-      form.reset(values);
       setSuggestingSlug(false);
       setSlugManuallyEdited(false);
       setConflict(undefined);
@@ -1461,22 +1681,408 @@ function AdminRoutePage({
 }
 function UsersPage() {
   const { permitted } = useRouteContext({ from: usersRoute.id });
-  return (
-    <AdminRoutePage
-      description="User administration is connected in a later session."
-      permitted={permitted}
-      title="Users"
-    />
+  return permitted ? (
+    <UsersManager />
+  ) : (
+    <AdminRoutePage description="" permitted={false} title="Users" />
   );
 }
 function SettingsPage() {
   const { permitted } = useRouteContext({ from: settingsRoute.id });
+  return permitted ? (
+    <SettingsManager />
+  ) : (
+    <AdminRoutePage description="" permitted={false} title="Settings" />
+  );
+}
+
+const roleOptions = ["admin", "editor", "viewer"] as const;
+
+function UsersManager() {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<(typeof roleOptions)[number]>("viewer");
+  const [notice, setNotice] = useState<string>();
+  const [roleReset, setRoleReset] = useState(0);
+  const users = useQuery({ queryKey: adminQueryKeys.users, queryFn: client.listUsers });
+  const creation = useMutation({
+    mutationFn: () => client.createUser({ email, password, role }),
+    onSuccess: async (created) => {
+      setPassword("");
+      setEmail("");
+      setNotice(`Created ${created.email}.`);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+  });
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      change,
+    }: {
+      id: string;
+      change: { disabled?: boolean; role?: (typeof roleOptions)[number] };
+    }) => client.updateUser(id, change),
+    onSuccess: async (changed) => {
+      setNotice(`Updated ${changed.email}.`);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+    onError: () => setRoleReset((value) => value + 1),
+  });
+  useSessionRecovery(users.error ?? creation.error ?? update.error);
   return (
-    <AdminRoutePage
-      description="Settings are connected in a later session."
-      permitted={permitted}
-      title="Settings"
-    />
+    <section className="lace-page">
+      <h1>Users</h1>
+      <p>
+        Manage access to this Lace site. The final active administrator cannot be disabled or
+        demoted.
+      </p>
+      <form
+        className="lace-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setNotice(undefined);
+          creation.mutate();
+        }}
+      >
+        <h2>Create user</h2>
+        <Input
+          autoComplete="email"
+          label="Email"
+          onChange={(event) => setEmail(event.target.value)}
+          required
+          type="email"
+          value={email}
+        />
+        <Input
+          autoComplete="new-password"
+          label="Password"
+          minLength={12}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+          type="password"
+          value={password}
+        />
+        <label className="lace-field">
+          Role
+          <select
+            onChange={(event) => setRole(event.target.value as (typeof roleOptions)[number])}
+            value={role}
+          >
+            {roleOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button disabled={creation.isPending} type="submit">
+          {creation.isPending ? "Creating…" : "Create user"}
+        </Button>
+      </form>
+      {creation.error === null ? undefined : (
+        <ErrorState
+          description={errorDescription(creation.error)}
+          technicalDetails={technicalDetails(creation.error)}
+        />
+      )}
+      {update.error === null ? undefined : (
+        <ErrorState
+          description={
+            update.error instanceof AdminClientError && update.error.code === "LAST_ADMIN_PROTECTED"
+              ? "The final active administrator cannot be disabled or demoted."
+              : errorDescription(update.error)
+          }
+          technicalDetails={technicalDetails(update.error)}
+        />
+      )}
+      {notice === undefined ? undefined : <p role="status">{notice}</p>}
+      <h2>Accounts</h2>
+      {users.isPending ? (
+        <Skeleton label="Loading users" />
+      ) : users.error !== null ? (
+        <ErrorState
+          description={errorDescription(users.error)}
+          technicalDetails={technicalDetails(users.error)}
+        />
+      ) : users.data?.items.length === 0 ? (
+        <EmptyState
+          description="Create the first additional account above."
+          title="No users found"
+        />
+      ) : (
+        <Table label="Users">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.data?.items.map((account) => (
+              <UserRow
+                account={account}
+                key={account.id}
+                onUpdate={(change) => {
+                  setNotice(undefined);
+                  update.mutate({ id: account.id, change });
+                }}
+                pending={update.isPending}
+                roleReset={roleReset}
+              />
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
+function UserRow({
+  account,
+  onUpdate,
+  pending,
+  roleReset,
+}: {
+  readonly account: ManagedUserDto;
+  readonly onUpdate: (change: { disabled?: boolean; role?: (typeof roleOptions)[number] }) => void;
+  readonly pending: boolean;
+  readonly roleReset: number;
+}) {
+  const [selectedRole, setSelectedRole] = useState(account.role);
+  useEffect(() => setSelectedRole(account.role), [account.role, roleReset]);
+  return (
+    <tr>
+      <td>{account.email}</td>
+      <td>
+        <label className="lace-field">
+          Role for {account.email}
+          <select
+            disabled={pending || account.disabled}
+            onChange={(event) =>
+              setSelectedRole(event.target.value as (typeof roleOptions)[number])
+            }
+            value={selectedRole}
+          >
+            {roleOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      </td>
+      <td>
+        <Badge tone={account.disabled ? "warning" : "positive"}>
+          {account.disabled ? "Disabled" : "Active"}
+        </Badge>
+      </td>
+      <td>
+        <div className="lace-actions">
+          <Button
+            disabled={pending || account.disabled || selectedRole === account.role}
+            onClick={() => onUpdate({ role: selectedRole })}
+            variant="secondary"
+          >
+            Save role
+          </Button>
+          <Button
+            disabled={pending || account.disabled}
+            onClick={() => {
+              if (window.confirm(`Disable ${account.email}?`)) onUpdate({ disabled: true });
+            }}
+            variant="quiet"
+          >
+            Disable
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function SettingsManager() {
+  const { client } = useRouteContext({ from: rootRoute.id });
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [issued, setIssued] = useState<BuildTokenCreatedDto>();
+  const [notice, setNotice] = useState<string>();
+  const status = useQuery({
+    queryKey: adminQueryKeys.settingsStatus,
+    queryFn: client.loadSettingsStatus,
+  });
+  const tokens = useQuery({ queryKey: adminQueryKeys.tokens, queryFn: client.listTokens });
+  const creation = useMutation({
+    mutationFn: async () => {
+      setIssued(await client.createToken(name));
+    },
+    onSuccess: async () => {
+      setName("");
+      setNotice(undefined);
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.tokens });
+    },
+  });
+  const revocation = useMutation({
+    mutationFn: client.revokeToken,
+    onSuccess: async () => {
+      setNotice("Token revoked.");
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.tokens });
+    },
+  });
+  useSessionRecovery(status.error ?? tokens.error ?? creation.error ?? revocation.error);
+  return (
+    <section className="lace-page">
+      <h1>Settings</h1>
+      <p>Inspect the local API and manage read-only build credentials.</p>
+      <section className="lace-state" aria-label="Site status">
+        <div className="lace-page-heading">
+          <h2>Site status</h2>
+          <Button
+            onClick={() => {
+              void status.refetch();
+            }}
+            variant="secondary"
+          >
+            Refresh status
+          </Button>
+        </div>
+        {status.isPending ? (
+          <Skeleton label="Loading site status" />
+        ) : status.error !== null ? (
+          <ErrorState
+            description={errorDescription(status.error)}
+            technicalDetails={technicalDetails(status.error)}
+          />
+        ) : (
+          <p>
+            API: {status.data?.ready ? "Ready" : "Not ready"} · Configured models:{" "}
+            {status.data?.configuredModels}
+          </p>
+        )}
+      </section>
+      <section aria-label="Build tokens">
+        <h2>Build tokens</h2>
+        <p>
+          Build tokens can read published content. Store new values in the server-side site
+          configuration; they cannot be shown again.
+        </p>
+        <form
+          className="lace-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setIssued(undefined);
+            setNotice(undefined);
+            creation.mutate();
+          }}
+        >
+          <Input
+            label="Token name"
+            maxLength={120}
+            onChange={(event) => setName(event.target.value)}
+            required
+            value={name}
+          />
+          <Button disabled={creation.isPending} type="submit">
+            {creation.isPending ? "Creating…" : "Create build token"}
+          </Button>
+        </form>
+        {creation.error === null ? undefined : (
+          <ErrorState
+            description={errorDescription(creation.error)}
+            technicalDetails={technicalDetails(creation.error)}
+          />
+        )}
+        {issued === undefined ? undefined : (
+          <div className="lace-state" role="status">
+            <h3>Copy this token now</h3>
+            <p>It will not be shown again.</p>
+            <code className="lace-token-value">{issued.token}</code>
+            <div className="lace-actions">
+              <Button
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(issued.token)
+                    .then(() => setNotice("Token copied."))
+                    .catch(() => setNotice("Copy failed. Select the token text manually."));
+                }}
+                variant="secondary"
+              >
+                Copy token
+              </Button>
+              <Button onClick={() => setIssued(undefined)} variant="quiet">
+                Dismiss token
+              </Button>
+            </div>
+          </div>
+        )}
+        {revocation.error === null ? undefined : (
+          <ErrorState
+            description={errorDescription(revocation.error)}
+            technicalDetails={technicalDetails(revocation.error)}
+          />
+        )}
+        {notice === undefined ? undefined : <p role="status">{notice}</p>}
+        {tokens.isPending ? (
+          <Skeleton label="Loading tokens" />
+        ) : tokens.error !== null ? (
+          <ErrorState
+            description={errorDescription(tokens.error)}
+            technicalDetails={technicalDetails(tokens.error)}
+          />
+        ) : tokens.data?.items.length === 0 ? (
+          <EmptyState
+            description="Create a token to connect the local Astro site."
+            title="No build tokens"
+          />
+        ) : (
+          <Table label="Build tokens">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Prefix</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tokens.data?.items.map((token) => (
+                <tr key={token.id}>
+                  <td>{token.name}</td>
+                  <td>
+                    <code>{token.tokenPrefix}</code>
+                  </td>
+                  <td>{new Date(token.createdAt).toLocaleString()}</td>
+                  <td>
+                    {token.lastUsedAt === undefined
+                      ? "Never"
+                      : new Date(token.lastUsedAt).toLocaleString()}
+                  </td>
+                  <td>{token.revokedAt === undefined ? "Active" : "Revoked"}</td>
+                  <td>
+                    {token.revokedAt === undefined ? (
+                      <Button
+                        disabled={revocation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Revoke ${token.name}?`)) revocation.mutate(token.id);
+                        }}
+                        variant="quiet"
+                      >
+                        Revoke {token.name}
+                      </Button>
+                    ) : undefined}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </section>
+    </section>
   );
 }
 const sharedNavigation = [

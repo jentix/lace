@@ -357,6 +357,13 @@ export const managedUserSchema = v.strictObject({
   role: roleSchema,
 });
 export const managedUserListSchema = v.strictObject({ items: v.array(managedUserSchema) });
+export const adminSettingsStatusSchema = v.strictObject({
+  configuredModels: nonNegativeIntegerSchema,
+  ready: v.boolean(),
+});
+export type AdminSettingsStatusDto = v.InferOutput<typeof adminSettingsStatusSchema>;
+export type ManagedUserDto = v.InferOutput<typeof managedUserSchema>;
+export type ManagedUserListDto = v.InferOutput<typeof managedUserListSchema>;
 export const buildTokenCreateRequestSchema = v.strictObject({
   name: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
 });
@@ -374,6 +381,9 @@ export const buildTokenCreatedSchema = v.strictObject({
   token: v.string(),
 });
 export const buildTokenListSchema = v.strictObject({ items: v.array(buildTokenSchema) });
+export type BuildTokenDto = v.InferOutput<typeof buildTokenSchema>;
+export type BuildTokenCreatedDto = v.InferOutput<typeof buildTokenCreatedSchema>;
+export type BuildTokenListDto = v.InferOutput<typeof buildTokenListSchema>;
 
 export const mediaMetadataSchema = v.strictObject({
   createdAt: isoTimestampSchema,
@@ -412,6 +422,7 @@ export const errorCodeSchema = v.picklist([
   "CONTENT_PUBLISHED_IMMUTABLE",
   "CONTENT_REVISION_CONFLICT",
   "CONTENT_ROUTE_CONFLICT",
+  "LAST_ADMIN_PROTECTED",
   "INTERNAL_ERROR",
   "NOT_FOUND",
   "PAYLOAD_TOO_LARGE",
@@ -642,6 +653,7 @@ const domainErrorStatus: Readonly<Record<DomainErrorCode, 403 | 409 | 422>> = {
   CONTENT_PUBLISHED_IMMUTABLE: 409,
   CONTENT_REVISION_CONFLICT: 409,
   CONTENT_ROUTE_CONFLICT: 409,
+  LAST_ADMIN_PROTECTED: 409,
 };
 
 const domainErrorMessage: Readonly<Record<DomainErrorCode, string>> = {
@@ -651,6 +663,7 @@ const domainErrorMessage: Readonly<Record<DomainErrorCode, string>> = {
   CONTENT_PUBLISHED_IMMUTABLE: "Published content cannot be modified.",
   CONTENT_REVISION_CONFLICT: "The draft was modified by another request.",
   CONTENT_ROUTE_CONFLICT: "The public route is already in use.",
+  LAST_ADMIN_PROTECTED: "The final active administrator cannot be disabled or demoted.",
 };
 
 export interface ClassifiedError {

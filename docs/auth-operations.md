@@ -21,10 +21,12 @@ to disable or demote the final active administrator. Build credentials are
 created at the admin token endpoint, reveal their plaintext value once, and
 can only read the published build export with `Authorization: Bearer <token>`.
 Revoke a suspected credential immediately; listing never reveals it again.
-For local Astro development before the Settings screen exists, the root
-[README](../README.md#show-published-content-on-the-local-site) documents an
-administrator's same-origin `POST /api/v1/admin/api-tokens` request and the
-ignored server-side environment setup.
+In the browser, open `/admin/users` to manage accounts and `/admin/settings`
+to inspect API readiness and configured models, create a named build token,
+and revoke it later. Copy the new token before dismissing it; Settings cannot
+retrieve its plaintext again. The root
+[README](../README.md#show-published-content-on-the-local-site) also documents
+the same-origin API request and ignored server-side environment setup.
 
 ## Request limits
 
