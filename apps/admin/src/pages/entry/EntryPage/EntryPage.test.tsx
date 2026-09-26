@@ -82,24 +82,29 @@ test("entry editor renders metadata fields, preserves blocks, suggests a slug, a
   await screen.findByRole("heading", { name: "Edit posts" });
   expect(screen.getByLabelText("Summary")).toBeInstanceOf(HTMLTextAreaElement);
   expect(screen.getByRole("textbox", { name: "Rich Body" })).toBeInTheDocument();
-  expect(screen.getByLabelText("Enabled")).toHaveAttribute("type", "checkbox");
+  expect(screen.getByRole("switch", { name: "Enabled" })).toHaveAttribute("aria-checked", "false");
   expect(screen.getByLabelText("Score")).toHaveAttribute("type", "number");
-  expect(screen.getByLabelText("Date")).toHaveAttribute("type", "date");
-  expect(screen.getByLabelText("Datetime")).toHaveAttribute("type", "text");
+  expect(screen.getByRole("button", { name: "Date" })).toHaveTextContent("Pick a date");
+  expect(screen.getByRole("button", { name: "Datetime" })).toHaveTextContent("Pick a date");
+  expect(screen.getByLabelText("Datetime time (UTC)")).toBeDisabled();
   expect(screen.getByLabelText("Link")).toHaveAttribute("type", "url");
+  expect(screen.getByRole("combobox", { name: "Topic" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Choose media for Hero" })).toBeInTheDocument();
   await user.click(screen.getByLabelText("Suggest from title"));
   await user.clear(screen.getByLabelText("Title"));
   await user.type(screen.getByLabelText("Title"), "Release notes");
   expect(screen.getByLabelText("Slug")).toHaveValue("release-notes");
-  await user.selectOptions(screen.getByLabelText("Topic"), "release");
+  await user.click(screen.getByRole("switch", { name: "Enabled" }));
+  screen.getByRole("combobox", { name: "Topic" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "release" }));
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() =>
     expect(saveDraft).toHaveBeenCalledWith(
       "entry-1",
       expect.objectContaining({
         expectedRevision: 2,
-        fields: expect.objectContaining({ topic: "release" }),
+        fields: expect.objectContaining({ enabled: true, topic: "release" }),
       }),
     ),
   );
@@ -160,15 +165,14 @@ test("entry editor shows separate draft and publication facts without offering p
     }),
   );
   await screen.findByRole("heading", { name: "Edit posts" });
-  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
-    "Draft revision 4",
-  );
-  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
-    "Last edited by editor-1",
-  );
-  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
-    "Public path: /posts/published-post",
-  );
+  const publication = screen.getByRole("region", { name: "Publication status" });
+  expect(publication).toHaveTextContent("LiveRevision 3");
+  expect(publication).toHaveTextContent("DraftRevision 4");
+  expect(publication).toHaveTextContent("Last editededitor@lace.test");
+  expect(publication).toHaveTextContent("/posts/published-post");
+  expect(publication).toHaveTextContent("No build requested from this editor.");
+  expect(publication).not.toHaveTextContent("editor-1");
+  expect(publication).not.toHaveTextContent("2026-09-20T00:00:00.000Z");
   expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
 });
 
@@ -288,7 +292,10 @@ test("a later draft save preserves the published public output", async () => {
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("Saved revision 5")).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
-    "Public path: /posts/published-path",
+    "/posts/published-path",
+  );
+  expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent(
+    "DraftRevision 5",
   );
 });
 
@@ -522,4 +529,137 @@ test("server validation issues remain on their field and keep the draft editable
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("Summary is unavailable.")).toHaveAttribute("role", "alert");
   expect(screen.getByLabelText("Summary")).toHaveValue("Retain me");
+});
+
+test("header actions sit in the shell header and the save shortcut saves once", async () => {
+  const user = userEvent.setup();
+  const saveDraft = vi.fn(async (_id: string, input: Parameters<AdminClient["saveDraft"]>[1]) => ({
+    ...draftEntry,
+    draft: { ...draftEntry.draft, ...input, revision: 3 },
+  })) as unknown as AdminClient["saveDraft"];
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({ saveDraft }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  const header = screen.getByRole("banner");
+  const save = within(header).getByRole("button", { name: "Save draft" });
+  expect(save).toBeDisabled();
+  expect(within(header).getByRole("status")).toHaveTextContent("Saved revision 2");
+  expect(within(screen.getByRole("main")).queryByRole("button", { name: "Save draft" })).toBe(null);
+  await user.keyboard("{Control>}s{/Control}");
+  expect(saveDraft).not.toHaveBeenCalled();
+  await user.type(screen.getByLabelText("Title"), " again");
+  expect(within(header).getByRole("status")).toHaveTextContent("Unsaved changes");
+  const event = new KeyboardEvent("keydown", { cancelable: true, ctrlKey: true, key: "s" });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+  expect(saveDraft).toHaveBeenCalledWith(
+    "entry-1",
+    expect.objectContaining({ expectedRevision: 2, title: "First post again" }),
+  );
+  expect(await within(header).findByRole("status")).toHaveTextContent("Saved revision 3");
+});
+
+test("a failed save keeps local changes and reads as not saved", async () => {
+  const user = userEvent.setup();
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      saveDraft: async () => {
+        throw new AdminClientError({ message: "The Lace API could not be reached." });
+      },
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.type(screen.getByLabelText("Title"), " again");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await within(screen.getByRole("banner")).findByText("Not saved")).toBeInTheDocument();
+  expect(screen.getByLabelText("Title")).toHaveValue("First post again");
+});
+
+test("viewers see the entry read-only with no save or publish action", async () => {
+  const user = userEvent.setup();
+  const saveDraft = vi.fn(async () => draftEntry);
+  const viewerModel: ContentModelDto = {
+    blocks: [],
+    fields: {
+      enabled: { required: false, type: "boolean" },
+      summary: { required: false, type: "text" },
+    },
+    key: "posts",
+    kind: "collection",
+    route: "/posts/:slug",
+    version: 1,
+  };
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "viewer-1", role: "viewer" }),
+    client({
+      listModels: async () => ({ items: [models.items[0]!, viewerModel] }) as never,
+      saveDraft,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  expect(within(screen.getByRole("banner")).getByRole("status")).toHaveTextContent("View only");
+  expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Title")).toBeDisabled();
+  expect(screen.getByLabelText("Slug")).toBeDisabled();
+  expect(screen.getByLabelText("Summary")).toBeDisabled();
+  expect(screen.getByRole("switch", { name: "Enabled" })).toBeDisabled();
+  await user.keyboard("{Control>}s{/Control}");
+  expect(saveDraft).not.toHaveBeenCalled();
+});
+
+test("an admin can cancel the publish confirmation without publishing", async () => {
+  const user = userEvent.setup();
+  const publishEntry = vi.fn();
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ publishEntry }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  await user.click(within(screen.getByRole("banner")).getByRole("button", { name: "Publish" }));
+  const dialog = screen.getByRole("dialog", { name: "Publish this entry?" });
+  expect(dialog).toHaveTextContent("Draft revision 2 becomes the public version");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(publishEntry).not.toHaveBeenCalled();
+});
+
+test("a writer clears a saved optional date and saves without it", async () => {
+  const user = userEvent.setup();
+  const saveDraft = vi.fn(async () => draftEntry);
+  const dateModel: ContentModelDto = {
+    blocks: [],
+    fields: { eventDate: { required: false, type: "date" } },
+    key: "posts",
+    kind: "collection",
+    route: "/posts/:slug",
+    version: 1,
+  };
+  renderRoute(
+    "/content/posts/entry-1",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({
+      listModels: async () => ({ items: [models.items[0]!, dateModel] }) as never,
+      loadEntry: async () => ({
+        ...draftEntry,
+        draft: { ...draftEntry.draft, fields: { eventDate: "2026-09-01" } },
+      }),
+      saveDraft,
+    }),
+  );
+  await screen.findByRole("heading", { name: "Edit posts" });
+  expect(screen.getByRole("button", { name: "Event Date" })).toHaveTextContent("Sep 1, 2026");
+  await user.click(screen.getByRole("button", { name: "Clear Event Date" }));
+  expect(screen.getByRole("button", { name: "Event Date" })).toHaveTextContent("Pick a date");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+  expect(saveDraft).toHaveBeenCalledWith("entry-1", expect.objectContaining({ fields: {} }));
 });

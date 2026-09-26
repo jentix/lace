@@ -1355,6 +1355,20 @@ Model and block media fields choose through a picker dialog built from the same 
 
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
 
+The shell header stays pinned while a screen scrolls. It gives the screen an actions slot beside the breadcrumbs. The entry editor fills that slot with a save-state indicator (unsaved, saving, not saved, saved revision, or view only), one Save button, and Publish for administrators. Save is bound to the draft form and to `⌘S`/`Ctrl+S`, and the shortcut always suppresses the browser's page save. The title is a large input at the top of the main column, and the blocks follow it. A right-hand column, which stacks after the blocks on narrow screens, holds two cards:
+
+- Publication: the derived status, the live and draft revisions, the last editor's display name, relative times with the absolute time on hover, the public path, and the latest build state. Raw IDs and ISO timestamps never appear.
+- Fields: the entry's slug and model fields.
+
+Until the Builds screen reads persisted builds in Step 21, the latest build state is the dispatch result of the most recent publish from the editor. The field controls are built on the shared primitives:
+
+- Select is a Radix listbox.
+- Date and datetime use a calendar popover. Datetime adds a time input in UTC, and both parse values textually so days never shift.
+- Boolean is a switch.
+- URL can open http(s) values in a new tab.
+
+Controls hold a cleared value as `null` in form state, because React Hook Form would show the loaded default again for `undefined`. The editor strips those values before it saves or copies a draft. Viewers see the editor read-only: native controls sit in a disabled fieldset, rich text is not editable, media fields show their item without picker actions, and there is no Save or Publish. Publication is confirmed in a dialog that names the revision and path and can be cancelled. The discard-changes prompt is a modal alert dialog.
+
 ### Component source and design tokens
 
 Admin UI components are Lace-owned source. shadcn/ui is used as a generator:

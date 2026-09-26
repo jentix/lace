@@ -14,6 +14,8 @@ function Harness({ onConfirm, pending = false }: { onConfirm: () => void; pendin
       onOpenChange={setOpen}
       open={open}
       pending={pending}
+      publicPath="/posts/first-post"
+      revision={4}
     />
   );
 }
@@ -25,10 +27,24 @@ test("confirms publication only from the explained dialog", async () => {
 
   await user.click(screen.getByRole("button", { name: "Publish" }));
   const dialog = screen.getByRole("dialog", { name: "Publish this entry?" });
-  expect(dialog).toHaveAccessibleDescription(/A later draft save will not change it/u);
+  expect(dialog).toHaveAccessibleDescription(
+    "Draft revision 4 becomes the public version at /posts/first-post. A later draft save will not change it.",
+  );
   expect(confirm).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Confirm publication" }));
   expect(confirm).toHaveBeenCalledTimes(1);
+});
+
+test("cancelling the dialog closes it without confirming", async () => {
+  const user = userEvent.setup();
+  const confirm = vi.fn();
+  render(<Harness onConfirm={confirm} />);
+  const trigger = screen.getByRole("button", { name: "Publish" });
+  await user.click(trigger);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(confirm).not.toHaveBeenCalled();
 });
 
 test("disables the trigger and describes build dispatch outcomes separately", () => {

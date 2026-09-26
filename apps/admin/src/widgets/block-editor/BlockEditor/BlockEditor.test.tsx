@@ -162,5 +162,5 @@ test("server block validation stays on the nested editable block field", async (
   await user.type(screen.getByLabelText("Heading"), "Retain me");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("Heading is unavailable.")).toHaveAttribute("role", "alert");
-  expect(screen.getByLabelText("Heading")).toHaveValue("OriginalRetain me");
+  expect(screen.getByLabelText("Heading")).toHaveValue("Retain me");
 });

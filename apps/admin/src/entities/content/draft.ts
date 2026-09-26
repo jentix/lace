@@ -1,6 +1,15 @@
 import { canonicalizeJson, type JsonValue } from "@lacecms/content";
-import type { ContentBlockDto, ContentEntryDto, ContentModelDto } from "@lacecms/contracts";
-import { initialModelFieldValues, type DraftEditorValues } from "./editor-form.js";
+import type {
+  ContentBlockDto,
+  ContentEntryDto,
+  ContentEntryStatusDto,
+  ContentModelDto,
+} from "@lacecms/contracts";
+import {
+  initialModelFieldValues,
+  withoutClearedValues,
+  type DraftEditorValues,
+} from "./editor-form.js";
 
 /** Form values for an entry draft, with block defaults filled from the block definitions. */
 export function draftValues(model: ContentModelDto, entry: ContentEntryDto): DraftEditorValues {
@@ -34,8 +43,18 @@ export function resolvedPublicPath(
   return slug === undefined ? undefined : model.route?.replace(":slug", slug);
 }
 
+/**
+ * The entry's derived publication status, using the server's rule: no published
+ * snapshot is a draft, and a published revision behind the draft is changed.
+ */
+export function entryStatus(entry: ContentEntryDto): ContentEntryStatusDto {
+  if (entry.published === undefined) return "draft";
+  return entry.published.revision === entry.draft.revision ? "published" : "changed";
+}
+
 /** Canonical JSON of the local draft so an author can keep it during a conflict. */
-export function localDraftJson(values: DraftEditorValues): string {
+export function localDraftJson(draft: DraftEditorValues): string {
+  const values = withoutClearedValues(draft);
   return canonicalizeJson({
     blocks: values.blocks,
     fields: values.fields,

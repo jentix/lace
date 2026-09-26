@@ -6,6 +6,7 @@ import {
   pointerToFormField,
   suggestSlug,
   validateDraftValues,
+  withoutClearedValues,
 } from "./editor-form.js";
 
 const model = {
@@ -128,5 +129,29 @@ describe("metadata-driven draft validation", () => {
 
   test("suggests a stable collection slug", () => {
     expect(suggestSlug("  Crème brûlée — Launch! ")).toBe("creme-brulee-launch");
+  });
+});
+
+test("cleared values are removed from fields and block data before saving", () => {
+  expect(
+    withoutClearedValues({
+      blocks: [
+        {
+          data: { alt: null, media: "media-1" },
+          key: "k",
+          position: 0,
+          schemaVersion: 1,
+          type: "image",
+        },
+      ],
+      fields: { date: null, title: "Kept", zero: 0 },
+      title: "T",
+    } as never),
+  ).toEqual({
+    blocks: [
+      { data: { media: "media-1" }, key: "k", position: 0, schemaVersion: 1, type: "image" },
+    ],
+    fields: { title: "Kept", zero: 0 },
+    title: "T",
   });
 });

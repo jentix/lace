@@ -34,7 +34,7 @@ function facts(item: MediaMetadataDto): string {
  * A media field's value, resolved through the single-item media read: a
  * thumbnail with filename and facts, or an explicit pending-deletion, missing,
  * or unreadable state. The stored identifier is never shown; Replace and
- * Remove stay available in every state.
+ * Remove stay available in every state unless the field is read-only.
  */
 export function SelectedMedia({
   actionRef,
@@ -43,6 +43,7 @@ export function SelectedMedia({
   onRemove,
   onReplace,
   placeholder,
+  readOnly = false,
 }: {
   readonly actionRef?: Ref<HTMLButtonElement>;
   readonly label: string;
@@ -51,6 +52,8 @@ export function SelectedMedia({
   readonly onReplace: () => void;
   /** The item just chosen for this field, shown while its read is pending. */
   readonly placeholder?: MediaMetadataDto | undefined;
+  /** Hides Replace and Remove for view-only editors. */
+  readonly readOnly?: boolean;
 }) {
   const client = useAdminClient();
   const detail = useQuery<MediaDetailDto>({
@@ -106,24 +109,28 @@ export function SelectedMedia({
             Try again
           </Button>
         ) : undefined}
-        <Button
-          aria-haspopup="dialog"
-          aria-label={`Replace media for ${label}`}
-          onClick={onReplace}
-          ref={actionRef}
-          size="sm"
-          variant="outline"
-        >
-          Replace
-        </Button>
-        <Button
-          aria-label={`Remove media from ${label}`}
-          onClick={onRemove}
-          size="sm"
-          variant="ghost"
-        >
-          Remove
-        </Button>
+        {readOnly ? undefined : (
+          <>
+            <Button
+              aria-haspopup="dialog"
+              aria-label={`Replace media for ${label}`}
+              onClick={onReplace}
+              ref={actionRef}
+              size="sm"
+              variant="outline"
+            >
+              Replace
+            </Button>
+            <Button
+              aria-label={`Remove media from ${label}`}
+              onClick={onRemove}
+              size="sm"
+              variant="ghost"
+            >
+              Remove
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -5,9 +5,16 @@ export {
   pointerToFormField,
   suggestSlug,
   validateDraftValues,
+  withoutClearedValues,
   type DraftEditorValues,
 } from "./editor-form.js";
-export { draftValues, fieldLabel, localDraftJson, resolvedPublicPath } from "./draft.js";
+export {
+  draftValues,
+  entryStatus,
+  fieldLabel,
+  localDraftJson,
+  resolvedPublicPath,
+} from "./draft.js";
 export {
   FieldRenderer,
   FieldRendererProvider,

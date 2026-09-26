@@ -49,6 +49,7 @@ export function RichTextEditor({
   label,
   onBlur,
   onChange,
+  readOnly = false,
   value,
 }: {
   readonly describedBy?: string;
@@ -56,10 +57,12 @@ export function RichTextEditor({
   readonly label: string;
   readonly onBlur: () => void;
   readonly onChange: (value: unknown) => void;
+  readonly readOnly?: boolean;
   readonly value: unknown;
 }) {
   const editor = useEditor({
     content: value ?? { content: [], type: "doc" },
+    editable: !readOnly,
     editorProps: {
       attributes: {
         "aria-label": label,
@@ -79,6 +82,9 @@ export function RichTextEditor({
     if (JSON.stringify(editor.getJSON()) !== next)
       editor.commands.setContent(value, { emitUpdate: false });
   }, [editor, value]);
+  useEffect(() => {
+    if (editor !== null && editor.isEditable === readOnly) editor.setEditable(!readOnly, false);
+  }, [editor, readOnly]);
   if (editor === null) return <div aria-busy="true" className={surfaceClass} />;
   const setLink = () => {
     const href = window.prompt("Link URL");

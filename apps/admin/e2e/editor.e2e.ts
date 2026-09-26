@@ -111,6 +111,29 @@ test("authors, reorders, and saves blocks through the browser", async ({ page })
   expect(savedTypes).toEqual(["quote", "hero"]);
 });
 
+test("saves with the keyboard shortcut while header actions stay visible", async ({ page }) => {
+  let saves = 0;
+  await mockEditor(page, "editor", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/v1/admin/entries/entry-1/draft")
+      saves += 1;
+    return false;
+  });
+  await page.setViewportSize({ height: 600, width: 1280 });
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  for (let index = 0; index < 6; index += 1)
+    await page.getByRole("button", { name: "Add Hero" }).click();
+  const header = page.getByRole("banner");
+  await expect(header.getByRole("status")).toHaveText("Unsaved changes");
+  await page.mouse.wheel(0, 4000);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInViewport();
+  await expect(header.getByRole("button", { name: "Save draft" })).toBeInViewport();
+  await page.keyboard.press("Control+s");
+  await expect(header.getByRole("status")).toHaveText("Saved revision 3");
+  expect(saves).toBe(1);
+});
+
 test("offers only explicit conflict recovery after a concurrent save", async ({ page }) => {
   let conflicted = false;
   await mockEditor(page, "editor", async (route) => {
@@ -157,7 +180,7 @@ test("limits publication to admins and preserves public output after a later dra
   await admin.getByRole("textbox", { name: "Title" }).fill("Later private draft");
   await admin.getByRole("button", { name: "Save draft" }).click();
   await expect(admin.getByRole("region", { name: "Publication status" })).toContainText(
-    "Public path: /posts/first-post",
+    "/posts/first-post",
   );
   await admin.close();
 });

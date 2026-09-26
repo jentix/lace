@@ -37,7 +37,7 @@ function fieldErrors(
   const fieldIssues: Record<string, { readonly message: string; readonly type: "validate" }> = {};
   for (const [key, definition] of Object.entries(model.fields)) {
     const value = values.fields[key];
-    if (value === undefined) continue;
+    if (value === undefined || value === null) continue;
     try {
       validateFieldValue(definition as FieldMetadata, value, ["fields", key]);
     } catch (caught) {
@@ -82,7 +82,7 @@ function validateBlockData(
   }
   for (const [key, fieldDefinition] of Object.entries(definition.fields)) {
     const value = data[key];
-    if (value === undefined) continue;
+    if (value === undefined || value === null) continue;
     try {
       validateFieldValue(fieldDefinition, value, ["blocks", key]);
     } catch (caught) {
@@ -92,6 +92,28 @@ function validateBlockData(
     }
   }
   return issues;
+}
+
+function withoutCleared<Value>(record: Record<string, Value>): Record<string, Value> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== null && value !== undefined),
+  );
+}
+
+/**
+ * Removes cleared values from model fields and block data. Controls store a
+ * cleared value as `null` in form state, because React Hook Form shows the
+ * loaded default again for `undefined`; drafts never carry those `null`s.
+ */
+export function withoutClearedValues(values: DraftEditorValues): DraftEditorValues {
+  return {
+    ...values,
+    blocks: values.blocks.map((block) => ({
+      ...block,
+      data: withoutCleared(block.data) as ContentBlockDto["data"],
+    })),
+    fields: withoutCleared(values.fields),
+  };
 }
 
 export function validateDraftValues(

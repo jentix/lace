@@ -5,7 +5,13 @@ import { mediaItem, renderInRouter, stubClient } from "../../../app/testing/inde
 import type { AdminClient } from "../../../shared/api/index.js";
 import { MediaPickerDialog } from "./index.js";
 
-async function mount(client: Partial<AdminClient>) {
+async function mount(
+  client: Partial<AdminClient>,
+  session: { readonly id: string; readonly role: "admin" | "editor" | "viewer" } = {
+    id: "editor-1",
+    role: "editor",
+  },
+) {
   const onChoose = vi.fn();
   renderInRouter(
     <MediaPickerDialog
@@ -16,7 +22,7 @@ async function mount(client: Partial<AdminClient>) {
       onOpenChange={vi.fn()}
       open
     />,
-    { client: stubClient(client) },
+    { client: stubClient(client), session },
   );
   return {
     dialog: await screen.findByRole("dialog", { name: "Choose media for Hero" }),
@@ -56,4 +62,14 @@ test("empty and no-match states are distinguished and filters can be cleared", a
   await user.click(within(dialog).getAllByRole("button", { name: "Clear filters" })[0]!);
   await waitFor(() => expect(listMedia).toHaveBeenLastCalledWith(undefined, {}));
   expect(await within(dialog).findByText("No media yet")).toBeInTheDocument();
+});
+
+test("a viewer can browse the picker without upload controls", async () => {
+  const { dialog } = await mount(
+    { listMedia: async () => ({ items: [mediaItem] }) },
+    { id: "viewer-1", role: "viewer" },
+  );
+  expect(await within(dialog).findByRole("button", { name: "cover.png" })).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Upload images" })).not.toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Upload images")).not.toBeInTheDocument();
 });
