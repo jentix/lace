@@ -21,3 +21,36 @@ test("rejects a forbidden architecture import", () => {
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain("forbidden dependency");
 });
+
+const adminFixtureDirectory = join(testDirectory, "fixtures", "admin-structure");
+
+function checkAdminFixture(name) {
+  return spawnSync(process.execPath, [checker, join(adminFixtureDirectory, name)], {
+    encoding: "utf8",
+  });
+}
+
+test("allows downward admin imports through public indexes and test-only harness imports", () => {
+  const result = checkAdminFixture("allowed");
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+});
+
+test.each([
+  ["upward", "admin upward import in entities/item/index.ts: entities may not import features"],
+  [
+    "app-import",
+    "admin upward import in pages/home/HomePage/HomePage.tsx: pages may not import app",
+  ],
+  ["cross-slice", "admin cross-slice import in pages/home/HomePage/HomePage.tsx"],
+  ["slice-deep-import", "bypasses widgets/panel/index.ts"],
+  ["component-deep-import", "bypasses pages/home/HomePage/index.ts"],
+  ["incomplete-component", "admin component folder shared/ui/Button is missing Button.test.tsx"],
+  ["misplaced-component", "pages/home/HomePage/Helper.tsx"],
+  ["missing-slice-index", "admin slice has no public index: widgets/orphan/index.ts is missing"],
+  ["outside-layer", "admin source outside the layers: components/cn.ts"],
+])("rejects the %s admin structure violation", (name, message) => {
+  const result = checkAdminFixture(name);
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain(message);
+});

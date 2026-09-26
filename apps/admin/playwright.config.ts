@@ -10,7 +10,7 @@ const acceptanceState = acceptance
   : undefined;
 
 export default defineConfig({
-  testDir: "./src",
+  testDir: "./e2e",
   testMatch: acceptance ? "acceptance.e2e.ts" : "editor.e2e.ts",
   use: { baseURL: `http://127.0.0.1:${acceptanceState?.port ?? 4173}` },
   webServer: acceptance

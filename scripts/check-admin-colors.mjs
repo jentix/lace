@@ -7,7 +7,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultRoot = resolve(scriptDirectory, "..");
 const adminSource = join("apps", "admin", "src");
 // The theme file is the only admin source allowed to define color values.
-const themeFile = "theme.css";
+const themeFile = "app/styles/theme.css";
 const checkedExtensions = new Set([".ts", ".tsx", ".css"]);
 
 const namedColors = new Set(

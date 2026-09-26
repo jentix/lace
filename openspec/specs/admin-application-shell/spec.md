@@ -9,10 +9,11 @@ before their session and role have been resolved.
 ## Requirements
 
 ### Requirement: The admin application provides a coherent accessible UI system
-The admin application SHALL provide Lace-owned Button, Input, Select, Dialog,
-Toast, Table, Badge, Skeleton, EmptyState, and ErrorState controls, styled only
-through the `admin-design-system` color, typography, spacing, radius, shadow,
-focus, and motion tokens using utility classes rather than hand-written
+The admin application SHALL provide Lace-owned Button, Input, Textarea, Select,
+Dialog, Sheet, DropdownMenu, Popover, Tooltip, Toaster, Table, Tabs, Badge,
+Skeleton, Calendar, ScrollArea, EmptyState, and ErrorState controls, styled
+only through the `admin-design-system` color, typography, spacing, radius,
+shadow, focus, and motion tokens using utility classes rather than hand-written
 component CSS. Interactive controls SHALL have an accessible name, visible
 keyboard focus indication, and contrast suitable for their state. The
 application SHALL honour reduced-motion preferences and remain usable at narrow
@@ -37,6 +38,11 @@ viewport widths without requiring a horizontal page scroll.
 - **WHEN** a theme token value changes
 - **THEN** every owned control using that token reflects the new value without
   a component source change
+
+#### Scenario: A notification is raised
+- **WHEN** admin code raises a notification through the Toaster
+- **THEN** the notification is rendered in a polite live region and offers a
+  dismiss control with an accessible name
 
 ### Requirement: Typed client routes cover the Session 11A admin surface
 The admin application SHALL provide typed client routes for `/login`,

@@ -1357,9 +1357,30 @@ A module may import only from layers to its right. Slices within the same
 layer do not import each other. Every slice exposes its public API only through
 its `index.ts`; imports into a slice's internal files are forbidden. Every
 React component lives in its own PascalCase folder containing the component,
-its test, and an `index.ts`. Layer direction and slice public APIs are enforced
-by the repository boundary check run by `pnpm lint` once the layered folders
-exist (roadmap Session 16B).
+its test, and an `index.ts`; code outside that folder imports it only through
+its `index.ts`.
+
+- `pages`, `widgets`, `features`, and `entities` are divided into slices
+  (`pages/<route>`, `widgets/<section>`, …). `app` and `shared` are not sliced;
+  their public units are the shallowest directories that carry an `index.ts`
+  (for example `app/router`, `shared/api`, `shared/lib`, `shared/ui/Button`),
+  and units of the same unsliced layer may import each other through those
+  indexes.
+- The source-root entry module (`main.tsx`) may import any layer's public API,
+  and `test/` holds only test-environment setup. No other admin source lives
+  outside the layers.
+- Test files may import any layer's public API, including higher layers, so a
+  page or widget test can mount the real router through the `app` test
+  harness. They still may not import another unit's internal files.
+- Router state is read below `app` through TanStack Router `getRouteApi` with
+  string route ids typed by the `Register` augmentation in `app/router`, so no
+  runtime import points upward.
+- Imports are relative with explicit `.js` extensions; the admin uses no path
+  aliases.
+
+Layer direction, slice and component-folder public APIs, and component folder
+completeness are enforced by `scripts/check-boundaries.mjs`, run by
+`pnpm lint`.
 
 ## 18. Development modes
 
@@ -1435,7 +1456,8 @@ The static Astro site does not require the Cloudflare Astro SSR adapter.
 - Tiptap packages;
 - dnd-kit;
 - Tailwind CSS;
-- Radix UI primitives, consumed through shadcn/ui-generated Lace-owned components;
+- Radix UI primitives as individual `@radix-ui/react-*` packages, consumed
+  through shadcn/ui-generated Lace-owned components in `shared/ui`;
 - `clsx`, `tailwind-merge`, and `class-variance-authority` for component class composition;
 - `lucide-react` icons;
 - `sonner` notifications;
@@ -1449,7 +1471,8 @@ The admin does not adopt a themed component library as a runtime dependency.
 shadcn/ui is a source generator whose output is committed and owned by Lace, so
 visual design and accessibility behavior remain under Lace's control. An
 approved admin dependency is added to the workspace catalog by the change that
-first imports it.
+first imports it. Generated components do not use an animation plugin such as
+`tw-animate-css`; motion is expressed through the Lace motion tokens.
 
 ### API and validation
 
