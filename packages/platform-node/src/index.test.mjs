@@ -495,6 +495,38 @@ test("Node composition maps a Better Auth session into a protected actor", async
         )
       ).status,
     ).toBe(200);
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      expect(
+        (
+          await runtime.app.fetch(
+            new Request("https://lace.test/api/auth/get-session", { headers: { cookie } }),
+          )
+        ).status,
+      ).toBe(200);
+    }
+    for (let attempt = 0; attempt < 35; attempt += 1) {
+      expect(
+        (
+          await runtime.app.fetch(
+            new Request("https://lace.test/api/v1/admin/media", { headers: { cookie } }),
+          )
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await runtime.app.fetch(
+          new Request("https://lace.test/api/auth/sign-in/email", {
+            body: JSON.stringify({
+              email: "node-auth@lace.test",
+              password: "correct horse battery staple",
+            }),
+            headers: { "content-type": "application/json", origin: "https://lace.test" },
+            method: "POST",
+          }),
+        )
+      ).status,
+    ).toBe(200);
     runtime.close();
   } finally {
     await rm(directory, { force: true, recursive: true });

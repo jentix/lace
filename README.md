@@ -78,20 +78,10 @@ an administrator or build credential exists. After first-admin setup, run
 `pnpm content:sync`, open `/admin/content`, and publish the `home` page. The
 local site needs a published home entry to enter live mode.
 
-Sign in as an administrator at `/admin/`. Until Settings adds token management,
-open that page's browser developer console and create a read-only build token
-through the existing same-origin admin API:
-
-```js
-const response = await fetch("/api/v1/admin/api-tokens", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ name: "local-astro-site" }),
-});
-const credential = await response.json();
-if (!response.ok) throw new Error(`Token creation failed (${response.status})`);
-credential.token; // Copy the once-shown value; do not save it in site source.
-```
+Sign in as an administrator at `/admin/`, open **Settings**, enter a name such
+as `local-astro-site` under **Build tokens**, and choose **Create build token**.
+Copy the once-shown value and dismiss it after placing it in the server-side
+environment file. The token list cannot reveal it later.
 
 In the ignored `.env` created by `pnpm dev:env`, set
 `LACE_SITE_DATA_MODE=live` and paste that value as `LACE_BUILD_TOKEN`. Restart
@@ -107,7 +97,48 @@ the SDK. After each publication, repeat the two restart commands and reload the
 browser to refresh Astro's cached export and routes. Saving a draft alone does
 not change the public site, even after a restart. Automated build dispatch is
 not part of this local workflow yet. Keep `.env` private and revoke a lost
-token through `DELETE /api/v1/admin/api-tokens/:tokenId`.
+token in **Settings**.
+
+### Local product acceptance (Session 15C)
+
+The isolated acceptance run uses its own Compose project, random host port,
+credentials, SQLite and MinIO volumes. It does not reset `lace-dev`. Docker,
+Node/pnpm, installed dependencies, and a Playwright Chromium browser are
+required. Start from a clean acceptance project:
+
+```sh
+pnpm acceptance:start
+pnpm --filter @lacecms/app-admin test:acceptance
+pnpm acceptance:stop
+```
+
+`acceptance:start` applies committed migrations, explicitly synchronizes the
+root `lace.config.ts`, and prints the assigned origin. It creates page drafts
+for `home` and `about`; `posts` and `notes` begin as empty collections. The
+browser check creates a random first-admin password through the local setup
+flow, signs in, uploads and reuses a private image, publishes `home` and a
+`notes` entry, issues a read-only token in Settings, switches the site to live
+mode, and restarts only Astro. It verifies `/` and `/notes/acceptance-note`,
+then saves a new note title and slug without publishing and confirms that the
+build export and public route still show the previous publication. It also
+creates editor and viewer accounts and checks their browser permissions.
+Focused browser and API checks cover conflicts, error and empty states,
+keyboard and narrow-screen navigation, and server-side authorization.
+
+For a manual walkthrough, run `pnpm acceptance:start`, then
+`pnpm acceptance:bootstrap` and complete first-admin setup as described above
+using the printed acceptance origin. Open its `/admin/` URL, edit and publish
+`home`, create and publish a `notes` entry, and upload an image on **Media** to
+reuse in an image block. In **Settings**, create a build token, copy it into
+the ignored `.lace-acceptance/.env` as `LACE_BUILD_TOKEN`, and set
+`LACE_SITE_DATA_MODE=live`. Run `pnpm acceptance:restart-site`, then check `/`
+and `/notes/<published-slug>` at the acceptance origin. Save a changed title
+and slug without publishing, restart the site again, and confirm the old public
+route and content remain. Content, Media, Users, and Settings have actionable
+empty and error states. **Builds** explicitly describes its current state;
+history and retry controls arrive in Step 16. Finish with
+`pnpm acceptance:stop`, which removes only the named acceptance project and its
+volumes. Do not use `pnpm dev:reset` for acceptance cleanup.
 
 ### Project content configuration
 

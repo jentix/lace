@@ -52,16 +52,25 @@ inside the Compose network, and its persistent data is preserved unless the
 explicit root reset is requested.
 
 Astro starts in fixture mode for bootstrap. After an administrator creates a
-read-only build credential in `/admin/settings` (or with
-`POST /api/v1/admin/api-tokens`) and publishes
+read-only build credential in `/admin/settings` and publishes
 the `home` page, set `LACE_SITE_DATA_MODE=live` and `LACE_BUILD_TOKEN` in the
 ignored `.env` and restart the stack. The site process uses
 `LACE_API_BASE_URL=http://api:3000` inside Compose to read the export, while
 `LACE_PUBLIC_BASE_URL` supplies browser-reachable media URLs. The token is not
 available to browser code. See the [README](../README.md#show-published-content-on-the-local-site)
-for the admin-console request and refresh commands. A draft save alone does not
+for the Settings token flow and refresh commands. A draft save alone does not
 change the site; restart Astro after publication to refresh cached routes and
 content. There is no automatic build dispatch in the local workflow yet.
+
+For an isolated local product acceptance run, use `pnpm acceptance:start`,
+`pnpm --filter @lacecms/app-admin test:acceptance`, and
+`pnpm acceptance:stop`. The first command applies committed migrations and
+explicitly synchronizes code-owned models in separate SQLite and MinIO volumes;
+the browser check uses Admin for page and collection editing, media reuse,
+publication, and Settings token issuance. It refreshes Astro in live mode,
+checks the published routes and later-draft isolation, and checks editor/viewer
+affordances. See the [README](../README.md#local-product-acceptance-session-15c)
+for the exact browser observations, manual variant, prerequisites, and cleanup.
 
 ## Editing content models
 

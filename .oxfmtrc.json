@@ -8,6 +8,7 @@
     "SECURITY.md",
     "**/dist/**",
     "**/coverage/**",
+    "**/test-results/**",
     "node_modules/**"
   ]
 }

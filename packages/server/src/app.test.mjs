@@ -133,6 +133,50 @@ test("settings status exposes only useful read-only state to administrators", as
   });
 });
 
+test("editor and viewer mutations are denied by the API independently of Admin controls", async () => {
+  const editorApp = (await fixture({ actor: editor })).app;
+  const viewerApp = (await fixture({ actor: { id: actorId("viewer"), role: "viewer" } })).app;
+  const post = (body) => ({
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  for (const [path, init] of [
+    [
+      "/api/v1/admin/entries/missing/publish",
+      {
+        ...post({ expectedRevision: 1 }),
+        headers: { "content-type": "application/json", "idempotency-key": "acceptance" },
+      },
+    ],
+    [
+      "/api/v1/admin/users",
+      post({ email: "other@example.test", password: "long-password-123", role: "viewer" }),
+    ],
+    ["/api/v1/admin/api-tokens", post({ name: "disallowed" })],
+  ]) {
+    expect((await json(editorApp, path, init)).response.status).toBe(403);
+  }
+  expect(
+    (
+      await json(
+        viewerApp,
+        "/api/v1/admin/models/posts/entries",
+        post({ title: "Denied", slug: "denied", fields: {}, blocks: [] }),
+      )
+    ).response.status,
+  ).toBe(403);
+  const media = new FormData();
+  media.append("file", new File([new Uint8Array([1])], "denied.png", { type: "image/png" }));
+  expect(
+    (
+      await viewerApp.fetch(
+        new Request("https://lace.test/api/v1/admin/media", { body: media, method: "POST" }),
+      )
+    ).status,
+  ).toBe(403);
+});
+
 test("serves public content and short-circuits matching build exports", async () => {
   const { app, content, exportLoads } = await fixture();
   const entry = await content.create({
