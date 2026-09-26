@@ -2,7 +2,7 @@ import { useState } from "react";
 import { fieldLabel, type FieldRendererProps } from "../../../entities/content/index.js";
 import { Button } from "../../../shared/ui/Button/index.js";
 import { cardClass } from "../../../shared/ui/layout/index.js";
-import { MediaLibrary } from "../MediaLibrary/index.js";
+import { MediaChoices } from "../MediaChoices/index.js";
 
 /** The media field renderer: opens the library as a chooser for one media item. */
 export function MediaPicker({
@@ -22,7 +22,7 @@ export function MediaPicker({
         Choose media for {fieldLabel(fieldKey, undefined)}
       </Button>
       {open ? (
-        <MediaLibrary
+        <MediaChoices
           onSelect={(id) => {
             onChange(id);
             setOpen(false);

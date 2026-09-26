@@ -24,7 +24,7 @@ export function MediaUpload({
       setUploaded(item);
       onUploaded(item);
       setUploadError(undefined);
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media });
     },
   });
   useSessionRecovery(upload.error);

@@ -16,7 +16,7 @@ export function useMediaDeletion(onChanged: (item: MediaMetadataDto) => void) {
       retry ? client.retryMediaDeletion(id) : client.deleteMedia(id),
     onSuccess: async (item) => {
       onChanged(item);
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.media });
     },
   });
 }

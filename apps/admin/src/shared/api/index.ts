@@ -8,6 +8,8 @@ export {
   type AdminClient,
   type EntryListQuery,
   type MediaListQuery,
+  type MediaUploader,
+  type MediaUploadOptions,
 } from "./admin-client.js";
 export { errorDescription, technicalDetails } from "./errors.js";
 export { useAdminClient } from "./useAdminClient.js";
