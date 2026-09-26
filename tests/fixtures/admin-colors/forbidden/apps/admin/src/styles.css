@@ -1,0 +1,5 @@
+body {
+  /* #abcdef in a comment is ignored */
+  background: white;
+  color: oklch(0.2 0 0);
+}

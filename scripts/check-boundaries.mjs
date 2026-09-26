@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,6 +151,172 @@ function assertNoCycles(graph) {
   for (const member of graph.keys()) visit(member, []);
 }
 
+// Admin source layers, highest first. A module may import only lower layers.
+const adminLayers = ["app", "pages", "widgets", "features", "entities", "shared"];
+const slicedAdminLayers = new Set(["pages", "widgets", "features", "entities"]);
+const adminEntryFiles = new Set(["main.tsx", "vite-env.d.ts"]);
+const pascalCase = /^[A-Z][A-Za-z0-9]*$/;
+const testFilePattern = /\.test\.tsx?$/;
+const typeScriptPattern = /\.(?:c|m)?tsx?$/;
+
+function toPosix(path) {
+  return path.split(sep).join("/");
+}
+
+function classifyAdminPath(relativePath) {
+  const parts = relativePath.split("/");
+  if (parts.length === 1) return adminEntryFiles.has(parts[0]) ? "entry" : "outside";
+  if (parts[0] === "test") return "setup";
+  return adminLayers.includes(parts[0]) ? "layer" : "outside";
+}
+
+function adminUnitOf(sourceDirectory, relativePath) {
+  const parts = relativePath.split("/");
+  const layer = parts[0];
+  if (slicedAdminLayers.has(layer)) {
+    if (parts.length < 3) throw new Error(`admin ${layer} module outside a slice: ${relativePath}`);
+    const slice = parts.slice(0, 2).join("/");
+    if (!existsSync(join(sourceDirectory, slice, "index.ts"))) {
+      throw new Error(`admin slice has no public index: ${slice}/index.ts is missing`);
+    }
+    return slice;
+  }
+  for (let depth = 1; depth < parts.length; depth += 1) {
+    const unit = parts.slice(0, depth).join("/");
+    if (existsSync(join(sourceDirectory, unit, "index.ts"))) return unit;
+  }
+  return parts.slice(0, Math.min(2, parts.length - 1)).join("/");
+}
+
+function componentFolderOf(relativePath) {
+  const parts = relativePath.split("/").slice(0, -1);
+  for (let index = parts.length - 1; index >= 1; index -= 1) {
+    if (pascalCase.test(parts[index])) return parts.slice(0, index + 1).join("/");
+  }
+  return undefined;
+}
+
+function resolveAdminImport(filePath, specifier) {
+  const target = resolve(dirname(filePath), specifier.replace(/\?.*$/u, ""));
+  const withoutJs = target.replace(/\.(?:c|m)?js$/u, "");
+  const candidates = [
+    ...(withoutJs === target ? [] : [`${withoutJs}.ts`, `${withoutJs}.tsx`]),
+    target,
+    `${target}.ts`,
+    `${target}.tsx`,
+    join(target, "index.ts"),
+  ];
+  return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+}
+
+function isInside(unit, relativePath) {
+  return relativePath === unit || relativePath.startsWith(`${unit}/`);
+}
+
+function checkAdminComponentFolders(sourceDirectory, relativeFiles) {
+  const directories = new Set();
+  for (const relativePath of relativeFiles) {
+    if (classifyAdminPath(relativePath) !== "layer") continue;
+    const parts = relativePath.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      directories.add(parts.slice(0, index).join("/"));
+    }
+    const fileName = parts.at(-1);
+    if (!fileName.endsWith(".tsx") || testFilePattern.test(fileName)) continue;
+    const folder = parts.at(-2);
+    if (!pascalCase.test(folder) || fileName !== `${folder}.tsx`) {
+      throw new Error(
+        `admin component module must be <Name>/<Name>.tsx in a PascalCase folder: ${relativePath}`,
+      );
+    }
+  }
+  for (const directory of directories) {
+    const name = directory.split("/").at(-1);
+    if (!pascalCase.test(name)) continue;
+    for (const required of [`${name}.tsx`, "index.ts", `${name}.test.tsx`]) {
+      if (!existsSync(join(sourceDirectory, directory, required))) {
+        throw new Error(`admin component folder ${directory} is missing ${required}`);
+      }
+    }
+  }
+}
+
+export function checkAdminStructure(rootDirectory = defaultRoot) {
+  const sourceDirectory = join(rootDirectory, "apps", "admin", "src");
+  if (!existsSync(sourceDirectory)) return;
+  const files = collectFiles(sourceDirectory);
+  const relativeFiles = files.map((filePath) => toPosix(relative(sourceDirectory, filePath)));
+
+  for (const relativePath of relativeFiles) {
+    if (classifyAdminPath(relativePath) === "outside") {
+      throw new Error(
+        `admin source outside the layers: ${relativePath} (use ${adminLayers.join(", ")})`,
+      );
+    }
+  }
+  checkAdminComponentFolders(sourceDirectory, relativeFiles);
+
+  for (const [index, filePath] of files.entries()) {
+    const sourcePath = relativeFiles[index];
+    const sourceKind = classifyAdminPath(sourcePath);
+    const unrestricted = sourceKind !== "layer" || testFilePattern.test(sourcePath);
+    const sourceLayer = sourcePath.split("/")[0];
+    const sourceUnit = sourceKind === "layer" ? adminUnitOf(sourceDirectory, sourcePath) : "";
+    const sourceFolder = componentFolderOf(sourcePath);
+
+    for (const specifier of importsIn(filePath)) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveAdminImport(filePath, specifier);
+      if (resolved === undefined) {
+        throw new Error(`unresolved admin import in ${sourcePath}: ${specifier}`);
+      }
+      const targetPath = toPosix(relative(sourceDirectory, resolved));
+      if (classifyAdminPath(targetPath) !== "layer") {
+        if (sourceKind === "layer") {
+          throw new Error(`admin layer import of non-layer module in ${sourcePath}: ${specifier}`);
+        }
+        continue;
+      }
+      const targetLayer = targetPath.split("/")[0];
+      const typeScriptTarget = typeScriptPattern.test(targetPath);
+      const sameUnit = sourceUnit !== "" && isInside(sourceUnit, targetPath);
+
+      if (!unrestricted && !sameUnit) {
+        const sourceRank = adminLayers.indexOf(sourceLayer);
+        const targetRank = adminLayers.indexOf(targetLayer);
+        if (targetRank < sourceRank) {
+          throw new Error(
+            `admin upward import in ${sourcePath}: ${sourceLayer} may not import ${targetLayer} (${specifier})`,
+          );
+        }
+        if (targetRank === sourceRank && slicedAdminLayers.has(targetLayer)) {
+          throw new Error(
+            `admin cross-slice import in ${sourcePath}: ${sourceUnit} may not import ${adminUnitOf(sourceDirectory, targetPath)} (${specifier})`,
+          );
+        }
+      }
+      if (!typeScriptTarget) continue;
+
+      const targetUnit = adminUnitOf(sourceDirectory, targetPath);
+      if (!sameUnit && targetPath !== `${targetUnit}/index.ts`) {
+        throw new Error(
+          `admin deep import in ${sourcePath}: ${specifier} bypasses ${targetUnit}/index.ts`,
+        );
+      }
+      const targetFolder = componentFolderOf(targetPath);
+      if (
+        targetFolder !== undefined &&
+        targetFolder !== sourceFolder &&
+        targetPath !== `${targetFolder}/index.ts`
+      ) {
+        throw new Error(
+          `admin deep import in ${sourcePath}: ${specifier} bypasses ${targetFolder}/index.ts`,
+        );
+      }
+    }
+  }
+}
+
 export function checkBoundaries(rootDirectory = defaultRoot) {
   const members = readMembers(rootDirectory);
   const memberNames = new Set(members.map((member) => member.name));
@@ -180,6 +346,7 @@ export function checkBoundaries(rootDirectory = defaultRoot) {
     }
   }
   assertNoCycles(graph);
+  checkAdminStructure(rootDirectory);
 }
 
 if (resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
