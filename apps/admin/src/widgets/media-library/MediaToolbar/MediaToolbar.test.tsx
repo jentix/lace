@@ -47,3 +47,20 @@ test("search reports after a pause or on submit, and clear appears only when fil
   await user.type(screen.getByRole("searchbox", { name: "Search media" }), "hero{Enter}");
   expect(props.onSearchChange).toHaveBeenLastCalledWith("hero");
 });
+
+test("the view toggle is omitted when the caller does not handle views", () => {
+  render(
+    <MediaToolbar
+      onClear={vi.fn()}
+      onSearchChange={vi.fn()}
+      onSortChange={vi.fn()}
+      onTypeChange={vi.fn()}
+      search=""
+      sort="-createdAt"
+      type={undefined}
+    />,
+  );
+  expect(screen.getByRole("searchbox", { name: "Search media" })).toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Layout" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Grid view" })).not.toBeInTheDocument();
+});

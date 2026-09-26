@@ -26,7 +26,8 @@ const viewOptions = [
 
 /**
  * Filename search, type filter, sort, and grid/list toggle of the media
- * library. Typing updates the search after a pause.
+ * library. Typing updates the search after a pause. The toggle renders only
+ * when the caller handles view changes.
  */
 export function MediaToolbar({
   onClear,
@@ -43,11 +44,11 @@ export function MediaToolbar({
   readonly onSearchChange: (search: string) => void;
   readonly onSortChange: (sort: MediaSortDto) => void;
   readonly onTypeChange: (type: MediaMimeTypeDto | undefined) => void;
-  readonly onViewChange: (view: MediaView) => void;
+  readonly onViewChange?: ((view: MediaView) => void) | undefined;
   readonly search: string;
   readonly sort: MediaSortDto;
   readonly type: MediaMimeTypeDto | undefined;
-  readonly view: MediaView;
+  readonly view?: MediaView | undefined;
 }) {
   const [draft, setDraft] = useState(search);
   const pending = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -128,31 +129,33 @@ export function MediaToolbar({
             ))}
           </SelectContent>
         </Select>
-        <div
-          aria-label="Layout"
-          className="flex rounded-md border border-border p-0.5"
-          role="group"
-        >
-          {viewOptions.map((option) => {
-            const pressed = view === option.value;
-            const Icon = option.icon;
-            return (
-              <Button
-                aria-label={option.label}
-                aria-pressed={pressed}
-                className={cn(
-                  pressed ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-                )}
-                key={option.value}
-                onClick={() => onViewChange(option.value)}
-                size="icon-xs"
-                variant="ghost"
-              >
-                <Icon aria-hidden="true" />
-              </Button>
-            );
-          })}
-        </div>
+        {onViewChange === undefined ? undefined : (
+          <div
+            aria-label="Layout"
+            className="flex rounded-md border border-border p-0.5"
+            role="group"
+          >
+            {viewOptions.map((option) => {
+              const pressed = view === option.value;
+              const Icon = option.icon;
+              return (
+                <Button
+                  aria-label={option.label}
+                  aria-pressed={pressed}
+                  className={cn(
+                    pressed ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+                  )}
+                  key={option.value}
+                  onClick={() => onViewChange(option.value)}
+                  size="icon-xs"
+                  variant="ghost"
+                >
+                  <Icon aria-hidden="true" />
+                </Button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import type { MediaMetadataDto } from "@lacecms/contracts";
 import { CircleAlert, CircleCheck, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { formatBytes } from "../../../shared/lib/index.js";
 import { Button } from "../../../shared/ui/Button/index.js";
@@ -32,13 +33,18 @@ function stateText(upload: MediaUploadEntry): string {
   }
 }
 
-/** Per-file upload rows with progress, errors, retry, and dismissal. */
+/**
+ * Per-file upload rows with progress, errors, retry, and dismissal. With
+ * `onChoose`, an uploaded row also offers to use its item.
+ */
 export function UploadQueue({
+  onChoose,
   onClearFinished,
   onDismiss,
   onRetry,
   uploads,
 }: {
+  readonly onChoose?: ((item: MediaMetadataDto) => void) | undefined;
   readonly onClearFinished: () => void;
   readonly onDismiss: (key: string) => void;
   readonly onRetry: (key: string) => void;
@@ -97,6 +103,20 @@ export function UploadQueue({
                     variant="ghost"
                   >
                     <RotateCcw aria-hidden="true" />
+                  </Button>
+                ) : undefined}
+                {onChoose !== undefined &&
+                upload.state === "uploaded" &&
+                upload.item !== undefined ? (
+                  <Button
+                    aria-label={`Use ${name}`}
+                    onClick={() => {
+                      if (upload.item !== undefined) onChoose(upload.item);
+                    }}
+                    size="xs"
+                    variant="outline"
+                  >
+                    Use
                   </Button>
                 ) : undefined}
                 {upload.state === "queued" || upload.state === "uploading" ? undefined : (

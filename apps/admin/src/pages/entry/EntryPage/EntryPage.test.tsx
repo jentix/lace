@@ -410,11 +410,28 @@ test("a server-normalized media draft becomes clean after save", async () => {
   );
   await screen.findByRole("heading", { name: "Edit posts" });
   await user.click(screen.getByRole("button", { name: "Choose media for Hero Image" }));
-  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  await user.click(
+    await within(screen.getByRole("dialog", { name: "Choose media for Hero Image" })).findByRole(
+      "button",
+      { name: "cover.png" },
+    ),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Replace media for Hero Image" }),
+  ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Add Image" }));
   await user.type(screen.getByRole("textbox", { name: "Alt" }), "Test image");
   await user.click(screen.getByRole("button", { name: "Choose media for Media" }));
-  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  await user.click(
+    await within(screen.getByRole("dialog", { name: "Choose media for Media" })).findByRole(
+      "button",
+      { name: "cover.png" },
+    ),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Replace media for Media" }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByText("cover.png")).toHaveLength(2);
   await user.type(screen.getByRole("textbox", { name: "Slug" }), "media-reuse-test");
   fireEvent.change(screen.getByLabelText("Published At"), { target: { value: "2026-09-25" } });
   await user.click(screen.getByRole("button", { name: "Save draft" }));

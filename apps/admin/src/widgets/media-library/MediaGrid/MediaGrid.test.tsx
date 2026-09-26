@@ -22,3 +22,24 @@ test("tiles show lazy thumbnails, filenames, and non-active status, and open det
   await user.click(screen.getByRole("button", { name: "cover.png" }));
   expect(onOpen).toHaveBeenCalledWith(mediaItem, tiles[0]);
 });
+
+test("choose mode marks the current tile and does not announce a details popup", async () => {
+  const user = userEvent.setup();
+  const onOpen = vi.fn();
+  const later = { ...mediaItem, filename: "later.png", id: "media-2" };
+  render(
+    <MediaGrid
+      currentId="media-2"
+      items={[mediaItem, later]}
+      label="Media choices for Hero"
+      mode="choose"
+      onOpen={onOpen}
+    />,
+  );
+  const current = screen.getByRole("button", { name: "later.png" });
+  expect(current).toHaveAttribute("aria-current", "true");
+  expect(current).not.toHaveAttribute("aria-haspopup");
+  expect(screen.getByRole("button", { name: "cover.png" })).not.toHaveAttribute("aria-current");
+  await user.click(screen.getByRole("button", { name: "cover.png" }));
+  expect(onOpen).toHaveBeenCalledWith(mediaItem, expect.any(HTMLButtonElement));
+});

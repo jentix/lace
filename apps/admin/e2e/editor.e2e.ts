@@ -397,3 +397,131 @@ test("browses, uploads several files, and inspects media in the library", async 
   await expect(opener).toBeFocused();
   await page.close();
 });
+
+test("uploads in the picker dialog and reuses images in a block from the keyboard", async ({
+  page,
+}) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  const item = (id: string, filename: string) => ({
+    createdAt: "2026-09-20T00:00:00.000Z",
+    createdBy: { displayName: "Ada Editor", id: "editor-1" },
+    filename,
+    height: 600,
+    id,
+    mimeType: "image/png",
+    size: 2048,
+    status: "active",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    url: `https://lace.test/api/v1/public/media/${id}`,
+    usageCount: 0,
+    width: 800,
+  });
+  const listed = [item("media-1", "hero.png")];
+  const mediaModel = {
+    ...model,
+    blockDefinitions: [
+      {
+        defaultValue: { heading: "Hero" },
+        fields: {
+          heading: { required: true, type: "text" },
+          image: { required: false, type: "media" },
+        },
+        type: "hero",
+        version: 1,
+      },
+    ],
+    blocks: ["hero"],
+  };
+  let savedImage: unknown;
+  await mockEditor(page, "editor", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/admin/content-models") {
+      await json(route, { items: [mediaModel] });
+      return true;
+    }
+    if (url.pathname.endsWith("/preview")) {
+      await route.fulfill({ body: png, contentType: "image/png" });
+      return true;
+    }
+    if (url.pathname === "/api/v1/admin/media" && request.method() === "GET") {
+      await json(route, { items: listed });
+      return true;
+    }
+    if (url.pathname === "/api/v1/admin/media" && request.method() === "POST") {
+      const body = request.postDataBuffer()?.toString("latin1") ?? "";
+      if (body.includes('filename="broken.png"')) {
+        await json(
+          route,
+          { error: { code: "VALIDATION_FAILED", message: "The image data is invalid." } },
+          422,
+        );
+        return true;
+      }
+      const created = item("media-2", "fresh.png");
+      listed.unshift(created);
+      await json(route, created, 201);
+      return true;
+    }
+    const detail = /^\/api\/v1\/admin\/media\/([^/]+)$/u.exec(url.pathname);
+    if (detail !== null) {
+      const found = listed.find((candidate) => candidate.id === detail[1]);
+      await (found === undefined
+        ? json(route, { error: { code: "NOT_FOUND", message: "Not found." } }, 404)
+        : json(route, { ...found, usage: [] }));
+      return true;
+    }
+    if (url.pathname === "/api/v1/admin/entries/entry-1/draft" && request.method() === "PUT") {
+      savedImage = (request.postDataJSON() as { blocks: Array<{ data: { image?: unknown } }> })
+        .blocks[0]?.data.image;
+    }
+    return false;
+  });
+
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  await page.getByRole("button", { name: "Add Hero" }).click();
+  const choose = page.getByRole("button", { name: "Choose media for Image" });
+  await choose.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Choose media for Image" });
+  await expect(dialog.getByRole("button", { name: "hero.png" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(choose).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await dialog.getByLabel("Upload images").setInputFiles([
+    { buffer: png, mimeType: "image/png", name: "fresh.png" },
+    { buffer: png, mimeType: "image/png", name: "broken.png" },
+  ]);
+  const queue = dialog.getByRole("list", { name: "Upload queue" });
+  await expect(queue.getByRole("listitem").filter({ hasText: "broken.png" })).toContainText(
+    "The image data is invalid.",
+  );
+  await expect(queue.getByRole("listitem").filter({ hasText: "fresh.png" })).toContainText(
+    "Uploaded",
+  );
+  await expect(page.getByText("No media selected")).toBeVisible();
+  await dialog.getByRole("button", { name: "Use fresh.png" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("fresh.png")).toBeVisible();
+  const replace = page.getByRole("button", { name: "Replace media for Image" });
+  await expect(replace).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  const tile = dialog.getByRole("button", { name: "hero.png" });
+  await tile.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("hero.png")).toBeVisible();
+  await expect(replace).toBeFocused();
+  await expect(page.getByText("media-1")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Saved revision 3")).toBeVisible();
+  expect(savedImage).toBe("media-1");
+});

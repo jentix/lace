@@ -82,7 +82,10 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("button", { name: "Add Image" }).click();
   await page.getByRole("textbox", { name: "Alt" }).fill("Acceptance image");
   await page.getByRole("button", { name: "Choose media for Media" }).click();
-  await page.getByRole("button", { name: "acceptance.png", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Choose media for Media" })
+    .getByRole("button", { name: "acceptance.png", exact: true })
+    .click();
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText(/Saved revision 2/u)).toBeVisible();
   await page.getByRole("button", { name: "Publish", exact: true }).click();

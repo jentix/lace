@@ -1,5 +1,4 @@
 export { DropOverlay } from "./DropOverlay/index.js";
-export { MediaUpload } from "./MediaUpload/index.js";
 export { UploadQueue } from "./UploadQueue/index.js";
 export { useMediaDropzone } from "./useMediaDropzone.js";
 export {

@@ -66,3 +66,29 @@ test("an empty queue renders nothing", () => {
   );
   expect(container).toBeEmptyDOMElement();
 });
+
+test("uploaded rows offer their item only when the caller can choose it", async () => {
+  const user = userEvent.setup();
+  const onChoose = vi.fn();
+  const { rerender } = render(
+    <UploadQueue
+      onClearFinished={vi.fn()}
+      onDismiss={vi.fn()}
+      onRetry={vi.fn()}
+      uploads={uploads}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: /^Use / })).not.toBeInTheDocument();
+  rerender(
+    <UploadQueue
+      onChoose={onChoose}
+      onClearFinished={vi.fn()}
+      onDismiss={vi.fn()}
+      onRetry={vi.fn()}
+      uploads={uploads}
+    />,
+  );
+  expect(screen.getAllByRole("button", { name: /^Use / })).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Use a.png" }));
+  expect(onChoose).toHaveBeenCalledWith(mediaItem);
+});
