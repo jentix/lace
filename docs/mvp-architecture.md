@@ -1288,8 +1288,8 @@ Core client stack:
 - Valibot-backed form validation through `@hookform/resolvers/valibot`;
 - Tiptap for rich text;
 - dnd-kit for accessible block ordering;
-- Tailwind CSS for layout and design tokens;
-- Radix UI primitives wrapped in Lace-owned components.
+- Tailwind CSS utilities over Lace design tokens;
+- shadcn/ui components generated on Radix UI primitives as Lace-owned source.
 
 State strategy:
 
@@ -1314,6 +1314,52 @@ Primary routes:
 The content-model response drives navigation and field forms. Pages open their singleton editor directly; collections open a paginated entry list.
 
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
+
+### Component source and design tokens
+
+Admin UI components are Lace-owned source. shadcn/ui is used as a generator:
+its Radix-based components are copied into the admin source once and then
+edited like any other Lace code; no themed component library is a runtime
+dependency. See [ADR 0005](adr/0005-admin-owned-component-source.md).
+
+Design tokens are CSS custom properties in the shadcn naming convention
+(`background`, `foreground`, `primary`, `muted`, `border`, `ring`, the
+`sidebar` family, and Lace `success`/`warning` pairs) plus typography,
+spacing, radius, shadow, focus, and motion tokens. One theme file in the admin
+source is the only place that may contain color values; Tailwind's default
+color palette is removed and components are styled only through utilities that
+resolve to tokens. `pnpm lint` rejects raw color literals elsewhere in admin
+source.
+
+The MVP ships the light theme only. Token values are scoped by a `data-theme`
+selector on the document root so a dark theme can be added later by supplying
+alternative values, without component changes. Inter is self-hosted and body
+text uses a 13px base size.
+
+### Source layers
+
+Admin source is organized into layers with a single import direction:
+
+```text
+app → pages → widgets → features → entities → shared
+```
+
+- `app` owns bootstrap, providers, the router tree, and global styles.
+- `pages` holds one slice per route screen.
+- `widgets` holds composite screen sections such as the shell or an entry list.
+- `features` holds user actions such as publish, upload, or sign in.
+- `entities` holds domain-facing models, queries, and presentation of content,
+  media, users, and sessions.
+- `shared` holds the API client, generic UI primitives, utilities, and
+  configuration with no knowledge of Lace domain slices.
+
+A module may import only from layers to its right. Slices within the same
+layer do not import each other. Every slice exposes its public API only through
+its `index.ts`; imports into a slice's internal files are forbidden. Every
+React component lives in its own PascalCase folder containing the component,
+its test, and an `index.ts`. Layer direction and slice public APIs are enforced
+by the repository boundary check run by `pnpm lint` once the layered folders
+exist (roadmap Session 16B).
 
 ## 18. Development modes
 
@@ -1388,11 +1434,22 @@ The static Astro site does not require the Cloudflare Astro SSR adapter.
 - React Hook Form;
 - Tiptap packages;
 - dnd-kit;
+- Tailwind CSS;
+- Radix UI primitives, consumed through shadcn/ui-generated Lace-owned components;
+- `clsx`, `tailwind-merge`, and `class-variance-authority` for component class composition;
+- `lucide-react` icons;
+- `sonner` notifications;
+- `@tanstack/react-table` for headless data tables;
+- `react-dropzone` for file selection and drag-and-drop upload;
+- `react-day-picker` for date selection;
+- `@fontsource-variable/inter` for the self-hosted Inter font;
 - shared contract and content packages.
 
-The admin does not adopt a full themed component library. Tailwind and Radix
-provide styling and behavior primitives; reusable components live in the admin
-source so visual design remains under Lace's control.
+The admin does not adopt a themed component library as a runtime dependency.
+shadcn/ui is a source generator whose output is committed and owned by Lace, so
+visual design and accessibility behavior remain under Lace's control. An
+approved admin dependency is added to the workspace catalog by the change that
+first imports it.
 
 ### API and validation
 
@@ -1543,6 +1600,7 @@ This is not the detailed implementation plan, but it establishes dependency orde
 - Valibot is the canonical runtime schema library for REST contracts, configuration, content, blocks, and admin forms.
 - Hono integrates with schemas through Standard Schema validation, and OpenAPI is derived through the Valibot JSON Schema conversion path.
 - The admin is a React/Vite SPA using TanStack Router and TanStack Query.
+- Admin UI components are shadcn/ui-generated, Lace-owned source styled only through design tokens, organized in the `app → pages → widgets → features → entities → shared` layers.
 - Drizzle uses the SQLite dialect for both D1 and VPS SQLite.
 - Better Auth provides authentication.
 - Authorization uses admin, editor, and viewer roles mapped to permissions.
@@ -1568,7 +1626,8 @@ The implementation plan uses these resolved defaults:
 
 - pnpm workspaces plus Turborepo;
 - `better-sqlite3` for the Node adapter;
-- Tailwind CSS, Radix UI primitives, and Lace-owned admin components;
+- Tailwind CSS over Lace design tokens and shadcn/ui-generated, Lace-owned
+  admin components on Radix UI primitives;
 - the `hero`, `richText`, `image`, `quote`, and `cta` built-in blocks;
 - no reference fields in the MVP;
 - no-op cache by default and optional KV only after the uncached path is correct;

@@ -71,8 +71,28 @@ test("owned state and data components render semantic accessible output", () => 
   expect(screen.getByText("Saved")).toBeInTheDocument();
 });
 
-test("global styles preserve focus, motion, and narrow-screen rules", () => {
+test("global styles expose the light theme focus and motion tokens", () => {
   const rootStyles = getComputedStyle(document.documentElement);
-  expect(rootStyles.getPropertyValue("--lace-color-focus").trim()).toBe("#db7c00");
-  expect(rootStyles.getPropertyValue("--lace-motion-standard").trim()).toBe("220ms");
+  expect(rootStyles.getPropertyValue("--ring").trim()).toMatch(/^oklch\(/);
+  expect(rootStyles.getPropertyValue("--primary").trim()).toMatch(/^oklch\(/);
+  expect(rootStyles.getPropertyValue("--duration-normal").trim()).toBe("220ms");
+});
+
+test("owned controls are styled through token utilities", () => {
+  render(
+    <>
+      <Button>Primary action</Button>
+      <Button variant="secondary">Secondary action</Button>
+      <Badge tone="warning">Disabled</Badge>
+    </>,
+  );
+  expect(screen.getByRole("button", { name: "Primary action" })).toHaveClass(
+    "bg-primary",
+    "text-primary-foreground",
+  );
+  expect(screen.getByRole("button", { name: "Secondary action" })).toHaveClass(
+    "border-border",
+    "bg-background",
+  );
+  expect(screen.getByText("Disabled")).toHaveClass("bg-warning", "text-warning-foreground");
 });

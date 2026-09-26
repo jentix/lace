@@ -65,9 +65,26 @@ import {
   suggestSlug,
   type DraftEditorValues,
 } from "./editor-form.js";
+import { cn } from "./components/cn.js";
+import {
+  actionsClass,
+  cardClass,
+  checkboxClass,
+  controlClass,
+  fieldClass,
+  fieldErrorClass,
+  formClass,
+  listClass,
+  mainClass,
+  pageClass,
+  pageHeadingClass,
+  panelClass,
+  panelErrorClass,
+} from "./components/layout.js";
 import {
   Badge,
   Button,
+  buttonVariants,
   Dialog,
   EmptyState,
   ErrorState,
@@ -78,6 +95,8 @@ import {
 import type { AdminRole, AdminSession, AdminSessionSource } from "./session.js";
 import { RichTextEditor } from "./rich-text-editor.js";
 import { MediaPreview } from "./media-preview.js";
+
+const compactButtonClass = buttonVariants({ size: "sm", variant: "secondary" });
 
 export interface AdminRouterContext {
   readonly client: AdminClient;
@@ -102,7 +121,7 @@ function mediaDeletionDescription(error: unknown): string {
 const rootRoute = createRootRouteWithContext<AdminRouterContext>()({
   component: Outlet,
   notFoundComponent: () => (
-    <main className="lace-main">
+    <main className={mainClass}>
       <ErrorState description="This route does not exist in Lace admin." title="Page not found" />
     </main>
   ),
@@ -257,12 +276,12 @@ function LoginPage() {
     },
   });
   return (
-    <main className="lace-main">
-      <section className="lace-page" aria-labelledby="login-title">
+    <main className={mainClass}>
+      <section className={pageClass} aria-labelledby="login-title">
         <p>Lace</p>
         <h1 id="login-title">Sign in</h1>
         <form
-          className="lace-form"
+          className={formClass}
           onSubmit={(event) => {
             event.preventDefault();
             signIn.mutate();
@@ -300,7 +319,7 @@ function LoginPage() {
 }
 function PendingRoute() {
   return (
-    <main className="lace-main" aria-label="Checking access">
+    <main className={mainClass} aria-label="Checking access">
       <Skeleton label="Checking access" lines={3} />
     </main>
   );
@@ -333,25 +352,40 @@ function AdminShell({
     },
   });
   return (
-    <div className="lace-shell" data-nav-open={navOpen}>
-      <aside className="lace-sidebar" aria-label="Admin navigation">
-        <Link className="lace-brand" onClick={() => setNavOpen(false)} to="/content">
+    <div
+      className="group min-h-screen md:grid md:grid-cols-[16rem_minmax(0,1fr)]"
+      data-nav-open={navOpen}
+    >
+      <aside
+        className="hidden grid-rows-[auto_1fr] gap-6 border-r border-sidebar-border bg-sidebar p-6 text-sidebar-foreground md:grid max-md:group-data-[nav-open=true]:fixed max-md:group-data-[nav-open=true]:inset-[0_4rem_0_0] max-md:group-data-[nav-open=true]:z-10 max-md:group-data-[nav-open=true]:grid max-md:group-data-[nav-open=true]:shadow-lg"
+        aria-label="Admin navigation"
+      >
+        <Link
+          className="text-xl font-bold text-sidebar-foreground"
+          onClick={() => setNavOpen(false)}
+          to="/content"
+        >
           Lace
         </Link>
-        <nav className="lace-nav" id="admin-navigation">
+        <nav className="grid content-start gap-1" id="admin-navigation">
           {navigationFor(session.role).map((item) => (
-            <Link key={item.path} onClick={() => setNavOpen(false)} to={item.path as never}>
+            <Link
+              className="rounded-md px-3 py-2 text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground"
+              key={item.path}
+              onClick={() => setNavOpen(false)}
+              to={item.path as never}
+            >
               {item.label}
             </Link>
           ))}
         </nav>
       </aside>
-      <main className="lace-main">
-        <div className="lace-shell-header">
+      <main className={mainClass}>
+        <div className="mb-4 flex justify-end gap-3">
           <button
             aria-controls="admin-navigation"
             aria-expanded={navOpen}
-            className="lace-button lace-button--secondary lace-menu-button"
+            className={cn(buttonVariants({ variant: "secondary" }), "mr-auto md:hidden")}
             onClick={() => setNavOpen((open) => !open)}
             type="button"
           >
@@ -378,7 +412,7 @@ function ContentPage() {
   const models = useQuery({ queryFn: client.listModels, queryKey: adminQueryKeys.models });
   useSessionRecovery(models.error);
   return (
-    <section className="lace-page" aria-labelledby="content-title">
+    <section className={pageClass} aria-labelledby="content-title">
       <h1 id="content-title">Content</h1>
       {models.isPending ? <Skeleton label="Loading content models" lines={3} /> : undefined}
       {models.error === null ? undefined : (
@@ -394,7 +428,7 @@ function ContentPage() {
         />
       ) : undefined}
       {models.data === undefined || models.data.items.length === 0 ? undefined : (
-        <div className="lace-model-list">
+        <div className="grid gap-2 [&>a]:rounded-md [&>a]:border [&>a]:border-border [&>a]:bg-card [&>a]:p-3 [&>a]:text-card-foreground [&>a]:transition-colors [&>a:hover]:bg-accent [&>a:hover]:text-accent-foreground">
           {models.data.items.map((model) =>
             model.kind === "page" ? (
               <PageModelLink key={model.key} modelKey={model.key} />
@@ -482,8 +516,8 @@ function CollectionEntries({
   const items = entries.data?.pages.flatMap((page) => page.items) ?? [];
   const canManage = session.role !== "viewer";
   return (
-    <section className="lace-page" aria-labelledby="model-title">
-      <div className="lace-page-heading">
+    <section className={pageClass} aria-labelledby="model-title">
+      <div className={pageHeadingClass}>
         <h1 id="model-title">{title}</h1>
         {canManage ? <CreateEntryDialog modelKey={modelKey} /> : undefined}
       </div>
@@ -568,7 +602,7 @@ function CreateEntryDialog({ modelKey }: { readonly modelKey: string }) {
       trigger={<Button>Create entry</Button>}
     >
       <form
-        className="lace-form"
+        className={formClass}
         onSubmit={(event) => {
           event.preventDefault();
           create.mutate();
@@ -705,7 +739,7 @@ function MediaPicker({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="lace-media-picker">
+    <div className={cardClass}>
       <Button
         aria-expanded={open}
         onClick={() => setOpen((visible) => !visible)}
@@ -737,7 +771,7 @@ const mediaTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif
 
 function MediaPage() {
   return (
-    <section className="lace-page" aria-labelledby="media-title">
+    <section className={pageClass} aria-labelledby="media-title">
       <h1 id="media-title">Media</h1>
       <MediaSurface />
     </section>
@@ -800,7 +834,7 @@ function MediaSurface({
   const current = items.find((item) => item.id === value);
   const canWrite = session.role !== "viewer";
   return (
-    <div className="lace-media-surface">
+    <div className="grid gap-2">
       {onSelect === undefined ? undefined : (
         <div aria-live="polite">
           <p>{value === undefined ? "No media selected" : `Selected: ${value}`}</p>
@@ -821,11 +855,12 @@ function MediaSurface({
         </div>
       )}
       {canWrite ? (
-        <div className="lace-media-upload">
+        <div className="grid gap-2">
           <label htmlFor={uploadId}>Upload image</label>
           <p>JPEG, PNG, WebP, or AVIF. Maximum 10 MiB.</p>
           <input
             accept="image/jpeg,image/png,image/webp,image/avif"
+            className="text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-border file:bg-background file:px-2.5 file:py-1 file:font-medium file:text-foreground"
             disabled={upload.isPending}
             id={uploadId}
             onChange={(event) => {
@@ -872,11 +907,11 @@ function MediaSurface({
           aria-label={
             selectionLabel === undefined ? "Media library" : `Media choices for ${selectionLabel}`
           }
-          className="lace-media-list"
+          className={listClass}
         >
           {visible.map((item) => (
-            <li className="lace-media-item" key={item.id}>
-              <div>
+            <li className="grid gap-2 rounded-md border border-border p-3" key={item.id}>
+              <div className="grid gap-2 [&>span]:text-muted-foreground">
                 <strong>{item.filename}</strong>
                 <span>
                   {item.mimeType} · {item.size} bytes
@@ -889,7 +924,7 @@ function MediaSurface({
                       : "Active"}
                 </span>
               </div>
-              <div className="lace-actions">
+              <div className={actionsClass}>
                 {item.status === "active" ? (
                   <Button
                     onClick={() => setPreviewId(previewId === item.id ? undefined : item.id)}
@@ -902,6 +937,10 @@ function MediaSurface({
                 {onSelect === undefined || item.status !== "active" ? undefined : (
                   <button
                     aria-pressed={value === item.id}
+                    className={cn(
+                      compactButtonClass,
+                      "aria-pressed:border-primary aria-pressed:bg-accent aria-pressed:text-accent-foreground",
+                    )}
                     onClick={() => onSelect(item.id)}
                     type="button"
                   >
@@ -980,7 +1019,7 @@ function MetadataField({
       control={control}
       name={name as never}
       render={({ field }) => (
-        <div className="lace-field">
+        <div className={fieldClass}>
           {definition.type === "richText" || definition.type === "media" ? (
             <span>{label}</span>
           ) : (
@@ -993,6 +1032,7 @@ function MetadataField({
             <input
               aria-describedby={describedBy || undefined}
               checked={field.value === true}
+              className="size-4 justify-self-start accent-primary"
               id={id}
               onChange={(event) => field.onChange(event.currentTarget.checked)}
               type="checkbox"
@@ -1000,6 +1040,7 @@ function MetadataField({
           ) : definition.type === "select" ? (
             <select
               aria-describedby={describedBy || undefined}
+              className={controlClass}
               id={id}
               onBlur={field.onBlur}
               onChange={(event) => field.onChange(event.currentTarget.value || undefined)}
@@ -1026,6 +1067,7 @@ function MetadataField({
           ) : definition.type === "textarea" ? (
             <textarea
               aria-describedby={describedBy || undefined}
+              className={controlClass}
               id={id}
               maxLength={definition.maxLength}
               minLength={definition.minLength}
@@ -1037,6 +1079,7 @@ function MetadataField({
           ) : (
             <input
               aria-describedby={describedBy || undefined}
+              className={controlClass}
               id={id}
               max={definition.type === "number" ? definition.max : undefined}
               maxLength={definition.type === "text" ? definition.maxLength : undefined}
@@ -1069,7 +1112,7 @@ function MetadataField({
             />
           )}
           {error === undefined ? undefined : (
-            <p className="lace-field-error" id={errorId} role="alert">
+            <p className={fieldErrorClass} id={errorId} role="alert">
               {error}
             </p>
           )}
@@ -1107,43 +1150,54 @@ function SortableBlockCard({
   const sortable = useSortable({ id: block.key });
   return (
     <article
-      className="lace-block-card"
+      className={cardClass}
       ref={sortable.setNodeRef}
       style={{
         transform: CSS.Transform.toString(sortable.transform),
         transition: sortable.transition,
       }}
     >
-      <header className="lace-block-card-header">
+      <header className="flex flex-wrap items-center justify-between gap-3 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-semibold">
         <h2>{definition.label ?? fieldLabel(definition.type, undefined)}</h2>
-        <div className="lace-actions">
+        <div className={actionsClass}>
           <button
             aria-label={`Drag ${definition.type} block`}
+            className={cn(compactButtonClass, "cursor-grab")}
             {...sortable.attributes}
             {...sortable.listeners}
             type="button"
           >
             Drag
           </button>
-          <button disabled={index === 0} onClick={() => onMove(index - 1)} type="button">
+          <button
+            className={compactButtonClass}
+            disabled={index === 0}
+            onClick={() => onMove(index - 1)}
+            type="button"
+          >
             Move up
           </button>
-          <button disabled={index === total - 1} onClick={() => onMove(index + 1)} type="button">
+          <button
+            className={compactButtonClass}
+            disabled={index === total - 1}
+            onClick={() => onMove(index + 1)}
+            type="button"
+          >
             Move down
           </button>
-          <button onClick={onDuplicate} type="button">
+          <button className={compactButtonClass} onClick={onDuplicate} type="button">
             Duplicate
           </button>
-          <button onClick={onCollapse} type="button">
+          <button className={compactButtonClass} onClick={onCollapse} type="button">
             {collapsed ? "Expand" : "Collapse"}
           </button>
-          <button onClick={onRemove} type="button">
+          <button className={compactButtonClass} onClick={onRemove} type="button">
             Remove
           </button>
         </div>
       </header>
       {collapsed ? undefined : (
-        <div className="lace-block-fields">
+        <div className="grid gap-3">
           {Object.entries(definition.fields).map(([fieldKey, fieldDefinition]) => (
             <MetadataField
               control={control}
@@ -1201,14 +1255,22 @@ function BlockEditor({
     append({ ...block, data: structuredClone(block.data), key: ulid() });
   };
   return (
-    <section aria-labelledby="blocks-title" className="lace-block-editor">
+    <section
+      aria-labelledby="blocks-title"
+      className="mt-6 grid gap-3 [&>h2]:m-0 [&>h2]:text-lg [&>h2]:font-semibold"
+    >
       <h2 id="blocks-title">Blocks</h2>
       {definitions.length === 0 ? (
         <p>This model does not allow blocks.</p>
       ) : (
-        <div className="lace-actions" role="group" aria-label="Add a block">
+        <div className={actionsClass} role="group" aria-label="Add a block">
           {definitions.map((definition) => (
-            <button key={definition.type} onClick={() => add(definition)} type="button">
+            <button
+              className={compactButtonClass}
+              key={definition.type}
+              onClick={() => add(definition)}
+              type="button"
+            >
               Add {definition.label ?? fieldLabel(definition.type, undefined)}
             </button>
           ))}
@@ -1435,8 +1497,8 @@ function EntryEditor() {
     }
   };
   return (
-    <section className="lace-page" aria-labelledby="entry-title">
-      <div className="lace-page-heading">
+    <section className={pageClass} aria-labelledby="entry-title">
+      <div className={pageHeadingClass}>
         <div>
           <h1 id="entry-title">Edit {model.label ?? model.key}</h1>
           <p aria-live="polite">
@@ -1447,7 +1509,7 @@ function EntryEditor() {
                 : `Saved revision ${currentEntry.draft.revision}`}
           </p>
         </div>
-        <div className="lace-actions">
+        <div className={actionsClass}>
           <Button
             disabled={save.isPending || !form.formState.isDirty}
             onClick={form.handleSubmit((values) => save.mutate(values))}
@@ -1464,7 +1526,7 @@ function EntryEditor() {
                 <Button disabled={publish.isPending || form.formState.isDirty}>Publish</Button>
               }
             >
-              <div className="lace-actions">
+              <div className={actionsClass}>
                 <Button
                   disabled={publish.isPending}
                   onClick={() => {
@@ -1484,7 +1546,7 @@ function EntryEditor() {
           ) : undefined}
         </div>
       </div>
-      <section aria-label="Publication status" className="lace-state lace-publication-status">
+      <section aria-label="Publication status" className={panelClass}>
         <h2>Publication</h2>
         <p>Draft revision {currentEntry.draft.revision}</p>
         <p>
@@ -1494,7 +1556,7 @@ function EntryEditor() {
         {publicPath === undefined ? undefined : <p>Public path: {publicPath}</p>}
         {publishMessage === undefined ? undefined : <p role="status">{publishMessage}</p>}
         {publish.error !== null && publishAttempt !== undefined ? (
-          <div className="lace-actions">
+          <div className={actionsClass}>
             <p role="alert">{errorDescription(publish.error)}</p>
             <Button disabled={publish.isPending} onClick={retryPublish} variant="secondary">
               Retry publish
@@ -1502,34 +1564,31 @@ function EntryEditor() {
           </div>
         ) : undefined}
       </section>
-      <form
-        className="lace-form lace-draft-form"
-        onSubmit={form.handleSubmit((values) => save.mutate(values))}
-      >
-        <label className="lace-field" htmlFor="system-title">
+      <form className={formClass} onSubmit={form.handleSubmit((values) => save.mutate(values))}>
+        <label className={fieldClass} htmlFor="system-title">
           <span>Title</span>
           <input
             aria-describedby={
               form.formState.errors.title === undefined ? undefined : "system-title-error"
             }
-            className="lace-input"
+            className={controlClass}
             id="system-title"
             {...form.register("title")}
           />
           {form.formState.errors.title === undefined ? undefined : (
-            <p className="lace-field-error" id="system-title-error" role="alert">
+            <p className={fieldErrorClass} id="system-title-error" role="alert">
               {form.formState.errors.title.message}
             </p>
           )}
         </label>
         {model.kind === "collection" ? (
-          <div className="lace-field">
+          <div className={fieldClass}>
             <label htmlFor="system-slug">Slug</label>
             <input
               aria-describedby={
                 form.formState.errors.slug === undefined ? undefined : "system-slug-error"
               }
-              className="lace-input"
+              className={controlClass}
               id="system-slug"
               {...form.register("slug", {
                 onChange: () => {
@@ -1537,9 +1596,10 @@ function EntryEditor() {
                 },
               })}
             />
-            <label className="lace-checkbox">
+            <label className={checkboxClass}>
               <input
                 checked={suggestingSlug}
+                className="size-4 accent-primary"
                 onChange={(event) => {
                   const enabled = event.currentTarget.checked;
                   suggestingSlugRef.current = enabled;
@@ -1555,7 +1615,7 @@ function EntryEditor() {
               Suggest from title
             </label>
             {form.formState.errors.slug === undefined ? undefined : (
-              <p className="lace-field-error" id="system-slug-error" role="alert">
+              <p className={fieldErrorClass} id="system-slug-error" role="alert">
                 {form.formState.errors.slug.message}
               </p>
             )}
@@ -1583,7 +1643,7 @@ function EntryEditor() {
       ) : (
         <section
           aria-labelledby="conflict-title"
-          className="lace-state lace-state--error"
+          className={cn(panelClass, panelErrorClass)}
           role="alert"
         >
           <h2 id="conflict-title">Draft changed elsewhere</h2>
@@ -1591,7 +1651,7 @@ function EntryEditor() {
             Your local {conflict} values are still available. Reloading is the only action that
             replaces them.
           </p>
-          <div className="lace-actions">
+          <div className={actionsClass}>
             <Button
               disabled={reloadServerDraft.isPending}
               onClick={() => reloadServerDraft.mutate()}
@@ -1611,12 +1671,12 @@ function EntryEditor() {
       {blocker.status !== "blocked" ? undefined : (
         <div
           aria-labelledby="discard-title"
-          className="lace-state lace-state--error"
+          className={cn(panelClass, panelErrorClass)}
           role="alertdialog"
         >
           <h2 id="discard-title">Discard unsaved changes?</h2>
           <p>Your draft has not been saved.</p>
-          <div className="lace-actions">
+          <div className={actionsClass}>
             <Button onClick={() => blocker.reset()}>Stay</Button>
             <Button onClick={() => blocker.proceed()} variant="secondary">
               Leave without saving
@@ -1630,14 +1690,14 @@ function EntryEditor() {
 
 function RouteLoading({ label }: { readonly label: string }) {
   return (
-    <section className="lace-page">
+    <section className={pageClass}>
       <Skeleton label={label} lines={3} />
     </section>
   );
 }
 function RouteError({ error }: { readonly error: unknown }) {
   return (
-    <section className="lace-page">
+    <section className={pageClass}>
       <ErrorState
         description={errorDescription(error)}
         technicalDetails={technicalDetails(error)}
@@ -1653,7 +1713,7 @@ function RoutePlaceholder({
   readonly title: string;
 }) {
   return (
-    <section className="lace-page" aria-labelledby="route-title">
+    <section className={pageClass} aria-labelledby="route-title">
       <h1 id="route-title">{title}</h1>
       <p>{description}</p>
     </section>
@@ -1671,7 +1731,7 @@ function AdminRoutePage({
   return permitted ? (
     <RoutePlaceholder description={description} title={title} />
   ) : (
-    <section className="lace-page" aria-labelledby="access-denied-title">
+    <section className={pageClass} aria-labelledby="access-denied-title">
       <ErrorState
         description="Your role does not have permission to view this route."
         title="Access denied"
@@ -1732,14 +1792,14 @@ function UsersManager() {
   });
   useSessionRecovery(users.error ?? creation.error ?? update.error);
   return (
-    <section className="lace-page">
+    <section className={pageClass}>
       <h1>Users</h1>
       <p>
         Manage access to this Lace site. The final active administrator cannot be disabled or
         demoted.
       </p>
       <form
-        className="lace-form"
+        className={formClass}
         onSubmit={(event) => {
           event.preventDefault();
           setNotice(undefined);
@@ -1764,9 +1824,10 @@ function UsersManager() {
           type="password"
           value={password}
         />
-        <label className="lace-field">
+        <label className={fieldClass}>
           Role
           <select
+            className={controlClass}
             onChange={(event) => setRole(event.target.value as (typeof roleOptions)[number])}
             value={role}
           >
@@ -1858,9 +1919,10 @@ function UserRow({
     <tr>
       <td>{account.email}</td>
       <td>
-        <label className="lace-field">
+        <label className={fieldClass}>
           Role for {account.email}
           <select
+            className={controlClass}
             disabled={pending || account.disabled}
             onChange={(event) =>
               setSelectedRole(event.target.value as (typeof roleOptions)[number])
@@ -1881,7 +1943,7 @@ function UserRow({
         </Badge>
       </td>
       <td>
-        <div className="lace-actions">
+        <div className={actionsClass}>
           <Button
             disabled={pending || account.disabled || selectedRole === account.role}
             onClick={() => onUpdate({ role: selectedRole })}
@@ -1934,11 +1996,11 @@ function SettingsManager() {
   });
   useSessionRecovery(status.error ?? tokens.error ?? creation.error ?? revocation.error);
   return (
-    <section className="lace-page">
+    <section className={pageClass}>
       <h1>Settings</h1>
       <p>Inspect the local API and manage read-only build credentials.</p>
-      <section className="lace-state" aria-label="Site status">
-        <div className="lace-page-heading">
+      <section className={panelClass} aria-label="Site status">
+        <div className={pageHeadingClass}>
           <h2>Site status</h2>
           <Button
             onClick={() => {
@@ -1970,7 +2032,7 @@ function SettingsManager() {
           configuration; they cannot be shown again.
         </p>
         <form
-          className="lace-form"
+          className={formClass}
           onSubmit={(event) => {
             event.preventDefault();
             setIssued(undefined);
@@ -1996,11 +2058,13 @@ function SettingsManager() {
           />
         )}
         {issued === undefined ? undefined : (
-          <div className="lace-state" role="status">
+          <div className={panelClass} role="status">
             <h3>Copy this token now</h3>
             <p>It will not be shown again.</p>
-            <code className="lace-token-value">{issued.token}</code>
-            <div className="lace-actions">
+            <code className="font-mono wrap-anywhere select-all" data-testid="issued-token-value">
+              {issued.token}
+            </code>
+            <div className={actionsClass}>
               <Button
                 onClick={() => {
                   void navigator.clipboard

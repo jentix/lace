@@ -1,0 +1,6 @@
+@import "./theme.css";
+
+body {
+  background: var(--color-background);
+  outline: 2px solid var(--color-ring);
+}

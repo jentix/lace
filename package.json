@@ -22,11 +22,11 @@
     "dev:stop": "node scripts/dev-stack.mjs stop",
     "dev:bootstrap": "node scripts/dev-stack.mjs bootstrap",
     "format:check": "oxfmt --check .",
-    "lint": "turbo run lint && node scripts/check-boundaries.mjs",
+    "lint": "turbo run lint && node scripts/check-boundaries.mjs && node scripts/check-admin-colors.mjs",
     "openapi:check": "node scripts/check-openapi.mjs",
     "openapi:generate": "node apps/api/scripts/generate-openapi.mjs",
     "spec:validate": "pnpm exec openspec validate --all --strict --no-interactive",
-    "test": "turbo run test && vitest run tests",
+    "test": "turbo run test && vitest run tests --exclude 'tests/fixtures/**'",
     "test:integration": "node scripts/not-implemented.mjs test:integration failure",
     "typecheck": "turbo run typecheck && pnpm typecheck:config",
     "typecheck:config": "tsc -p tsconfig.project.json"

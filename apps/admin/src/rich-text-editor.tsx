@@ -15,6 +15,7 @@ import Strike from "@tiptap/extension-strike";
 import Text from "@tiptap/extension-text";
 import { useEffect } from "react";
 import { isSafeUrl } from "@lacecms/content";
+import { buttonVariants } from "./components/ui.js";
 
 const extensions = [
   Document,
@@ -39,6 +40,9 @@ const extensions = [
   }),
 ];
 
+const surfaceClass = "grid gap-3 rounded-lg border border-input bg-background p-3";
+const toolbarButtonClass = buttonVariants({ size: "sm", variant: "secondary" });
+
 export function RichTextEditor({
   describedBy,
   id,
@@ -56,7 +60,14 @@ export function RichTextEditor({
 }) {
   const editor = useEditor({
     content: value ?? { content: [], type: "doc" },
-    editorProps: { attributes: { "aria-label": label, role: "textbox" } },
+    editorProps: {
+      attributes: {
+        "aria-label": label,
+        class:
+          "min-h-32 font-normal outline-none [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_h2]:text-lg [&_h2]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5",
+        role: "textbox",
+      },
+    },
     extensions,
     immediatelyRender: false,
     onBlur,
@@ -68,7 +79,7 @@ export function RichTextEditor({
     if (JSON.stringify(editor.getJSON()) !== next)
       editor.commands.setContent(value, { emitUpdate: false });
   }, [editor, value]);
-  if (editor === null) return <div aria-busy="true" className="lace-rich-text" />;
+  if (editor === null) return <div aria-busy="true" className={surfaceClass} />;
   const setLink = () => {
     const href = window.prompt("Link URL");
     if (href === null) return;
@@ -79,39 +90,76 @@ export function RichTextEditor({
     editor.chain().focus().setLink({ href }).run();
   };
   return (
-    <div aria-describedby={describedBy} className="lace-rich-text" id={id}>
-      <div aria-label="Rich text formatting" className="lace-rich-text-toolbar" role="toolbar">
-        <button onClick={() => editor.chain().focus().toggleBold().run()} type="button">
+    <div aria-describedby={describedBy} className={surfaceClass} id={id}>
+      <div
+        aria-label="Rich text formatting"
+        className="grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-2 border-b border-border pb-3"
+        role="toolbar"
+      >
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleBold().run()}
+          type="button"
+        >
           Bold
         </button>
-        <button onClick={() => editor.chain().focus().toggleItalic().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+          type="button"
+        >
           Italic
         </button>
-        <button onClick={() => editor.chain().focus().toggleStrike().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+          type="button"
+        >
           Strike
         </button>
-        <button onClick={() => editor.chain().focus().toggleCode().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleCode().run()}
+          type="button"
+        >
           Code
         </button>
         <button
+          className={toolbarButtonClass}
           onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
           type="button"
         >
           Heading
         </button>
-        <button onClick={() => editor.chain().focus().toggleBulletList().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          type="button"
+        >
           Bullets
         </button>
-        <button onClick={() => editor.chain().focus().toggleOrderedList().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          type="button"
+        >
           Numbered list
         </button>
-        <button onClick={() => editor.chain().focus().toggleBlockquote().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().toggleBlockquote().run()}
+          type="button"
+        >
           Quote
         </button>
-        <button onClick={() => editor.chain().focus().setHardBreak().run()} type="button">
+        <button
+          className={toolbarButtonClass}
+          onClick={() => editor.chain().focus().setHardBreak().run()}
+          type="button"
+        >
           Line break
         </button>
-        <button onClick={setLink} type="button">
+        <button className={toolbarButtonClass} onClick={setLink} type="button">
           Link
         </button>
       </div>

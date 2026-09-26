@@ -98,7 +98,7 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("textbox", { name: "Token name" }).fill("acceptance-site");
   await page.getByRole("button", { name: "Create build token" }).click();
-  const token = await page.locator(".lace-token-value").textContent();
+  const token = await page.getByTestId("issued-token-value").textContent();
   expect(token).toBeTruthy();
   const environmentPath = resolve(acceptanceDirectory, ".env");
   const environment = readFileSync(environmentPath, "utf8");
