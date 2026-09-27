@@ -14,6 +14,7 @@ export interface NodeSiteBuildDispatcherOptions {
   readonly logger: { error(entry: { readonly buildId: string; readonly reason: string }): void };
   readonly policy?: DispatcherRetryPolicy;
   readonly random?: () => number;
+  readonly leaseRenewIntervalMs?: number;
   readonly trigger: SiteBuildTrigger;
   readonly work: SiteBuildDispatchPort;
 }
@@ -38,15 +39,40 @@ export class NodeSiteBuildDispatcher {
 
   private async dispatchLease(lease: SiteBuildWorkLease): Promise<void> {
     let result: Awaited<ReturnType<SiteBuildTrigger["trigger"]>>;
+    let lostLease = false;
+    let pendingRenewal: Promise<void> = Promise.resolve();
+    const interval = setInterval(() => {
+      pendingRenewal = pendingRenewal.then(async () => {
+        if (lostLease) return;
+        try {
+          if (
+            !(await this.options.work.renewSiteBuildLease({
+              leaseId: lease.id,
+              now: this.options.clock.now(),
+            }))
+          )
+            lostLease = true;
+        } catch {
+          lostLease = true;
+        }
+      });
+    }, this.options.leaseRenewIntervalMs ?? 20_000);
+    interval.unref();
     try {
       result = await this.options.trigger.trigger({
         buildId: lease.buildId,
         targetVersion: lease.targetVersion,
       });
     } catch {
+      clearInterval(interval);
+      await pendingRenewal;
+      if (lostLease) return;
       await this.fail(lease, "trigger_unavailable");
       return;
     }
+    clearInterval(interval);
+    await pendingRenewal;
+    if (lostLease) return;
     if (result.status === "accepted") {
       await this.options.work.recordSiteBuildAccepted({
         leaseId: lease.id,

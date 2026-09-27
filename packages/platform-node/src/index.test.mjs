@@ -113,16 +113,34 @@ test("coalesces manual build requests until claim and queues later work separate
           .prepare("select count(*) as count from outbox_events where processed_at is null")
           .get(),
       ).toEqual({ count: 2 });
-      const recovered = await repository.claimSiteBuilds({
+      expect(
+        await repository.renewSiteBuildLease({
+          leaseId: claim[0].id,
+          now: unixMilliseconds(45_200),
+        }),
+      ).toBe(true);
+      const duringRenewal = await repository.claimSiteBuilds({
         limit: 1,
         now: unixMilliseconds(65_200),
+      });
+      expect(duringRenewal).toHaveLength(1);
+      expect(duringRenewal[0].buildId).toBe(next.eventId);
+      const recovered = await repository.claimSiteBuilds({
+        limit: 1,
+        now: unixMilliseconds(105_200),
       });
       expect(recovered).toHaveLength(1);
       expect(recovered[0].buildId).toBe(first.eventId);
       expect(recovered[0].id).not.toBe(claim[0].id);
       expect(
+        await repository.renewSiteBuildLease({
+          leaseId: claim[0].id,
+          now: unixMilliseconds(105_201),
+        }),
+      ).toBe(false);
+      expect(
         database.connection.prepare("select count(*) as count from site_builds").get(),
-      ).toEqual({ count: 1 });
+      ).toEqual({ count: 2 });
     } finally {
       database.connection.close();
     }

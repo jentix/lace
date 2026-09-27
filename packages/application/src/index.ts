@@ -371,6 +371,10 @@ export interface SiteBuildDispatchPort {
     readonly limit: number;
     readonly now: UnixMilliseconds;
   }): Promise<readonly SiteBuildWorkLease[]>;
+  renewSiteBuildLease(input: {
+    readonly leaseId: DispatcherLeaseId;
+    readonly now: UnixMilliseconds;
+  }): Promise<boolean>;
   recordSiteBuildAccepted(input: {
     readonly leaseId: DispatcherLeaseId;
     readonly now: UnixMilliseconds;

@@ -1970,6 +1970,22 @@ export class NodeContentRepository
     }
   }
 
+  public async renewSiteBuildLease(input: {
+    readonly leaseId: import("@lacecms/application").DispatcherLeaseId;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+  }): Promise<boolean> {
+    try {
+      const renewed = this.connection
+        .prepare(
+          "update outbox_events set locked_at = ? where locked_by = ? and type = 'site.build.requested' and processed_at is null and locked_at > ?",
+        )
+        .run(input.now, input.leaseId, input.now - DISPATCHER_LEASE_DURATION_MS);
+      return renewed.changes === 1;
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
   private requireLeasedSiteBuild(leaseId: string, now: number): string {
     const row = this.connection
       .prepare(

@@ -28,6 +28,7 @@ import { NodeSharpImageInspector } from "./image-inspector.js";
 import { NodeMinioObjectStorage, type NodeMinioSettings } from "./minio-storage.js";
 import { NodeMediaDeletionDispatcher } from "./media-deletion-dispatcher.js";
 import { NodeSiteBuildDispatcher } from "./site-build-dispatcher.js";
+import { NodeBuilderSiteBuildTrigger, type NodeBuilderTriggerSettings } from "./builder-trigger.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -53,6 +54,7 @@ export interface NodeRuntimeSettings {
   readonly port: number;
   readonly publicBaseUrl: URL;
   readonly siteDevOrigin?: URL;
+  readonly builder?: Pick<NodeBuilderTriggerSettings, "baseUrl" | "secret">;
 }
 
 function requiredString(
@@ -146,6 +148,14 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     issues,
     { originOnly: true },
   );
+  const builderUrl = absoluteHttpUrl(environment.LACE_BUILDER_URL, "LACE_BUILDER_URL", issues, {
+    originOnly: true,
+  });
+  const builderSecret = environment.LACE_BUILDER_SECRET;
+  if (builderUrl !== undefined && (builderSecret === undefined || builderSecret.length < 32))
+    issues.push({ reason: "invalid", variable: "LACE_BUILDER_SECRET" });
+  if (builderUrl === undefined && builderSecret !== undefined)
+    issues.push({ reason: "invalid", variable: "LACE_BUILDER_URL" });
   const minioAccessKeyId = requiredString(environment, "LACE_MINIO_ACCESS_KEY", issues);
   const minioBucket = requiredString(environment, "LACE_MINIO_BUCKET", issues);
   if (minioBucket !== undefined && !validBucket(minioBucket)) {
@@ -198,6 +208,9 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     port,
     publicBaseUrl,
     ...(siteDevOrigin === undefined ? {} : { siteDevOrigin }),
+    ...(builderUrl === undefined || builderSecret === undefined
+      ? {}
+      : { builder: { baseUrl: builderUrl, secret: builderSecret } }),
   });
 }
 
@@ -382,7 +395,11 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     storage,
     work: repository,
   });
-  const buildTrigger = input.buildTrigger ?? new NoopNodeBuildTrigger();
+  const buildTrigger =
+    input.buildTrigger ??
+    (input.settings.builder === undefined
+      ? new NoopNodeBuildTrigger()
+      : new NodeBuilderSiteBuildTrigger(input.settings.builder));
   const builds = new SiteBuildUseCases({ builds: repository, clock });
   const buildDispatcher = new NodeSiteBuildDispatcher({
     clock,
