@@ -78,9 +78,9 @@ an administrator or build credential exists. After first-admin setup, run
 `pnpm content:sync`, open `/admin/content`, and publish the `home` page. The
 local site needs a published home entry to enter live mode.
 
-Sign in as an administrator at `/admin/`, open **Settings**, enter a name such
-as `local-astro-site` under **Build tokens**, and choose **Create build token**.
-Copy the once-shown value and dismiss it after placing it in the server-side
+Sign in as an administrator at `/admin/`, open **Settings**, choose
+**Create build token**, and enter a name such as `local-astro-site`. Copy the
+once-shown value and choose **Done** after placing it in the server-side
 environment file. The token list cannot reveal it later.
 
 In the ignored `.env` created by `pnpm dev:env`, set

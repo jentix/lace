@@ -1,5 +1,5 @@
 import { ChevronsUpDown, LogOut } from "lucide-react";
-import type { AdminRole } from "../../../entities/session/index.js";
+import { roleLabel as labelOfRole, type AdminRole } from "../../../entities/session/index.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,12 +8,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../shared/ui/DropdownMenu/index.js";
-
-const roleLabels: Readonly<Record<AdminRole, string>> = {
-  admin: "Admin",
-  editor: "Editor",
-  viewer: "Viewer",
-};
 
 const neutralName = "Signed-in user";
 
@@ -40,7 +34,7 @@ export function UserMenu({
   readonly signingOut: boolean;
 }) {
   const name = displayName ?? neutralName;
-  const roleLabel = roleLabels[role];
+  const roleLabel = labelOfRole(role);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

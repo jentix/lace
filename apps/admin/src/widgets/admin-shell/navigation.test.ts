@@ -32,6 +32,9 @@ test("breadcrumbs locate each screen without entry identifiers", () => {
   expect(breadcrumbsFor({ params: {}, routeId: "/_protected/settings" })).toEqual([
     { label: "Settings" },
   ]);
+  expect(breadcrumbsFor({ params: { _splat: "nope" }, routeId: "/_protected/$" })).toEqual([
+    { label: "Page not found" },
+  ]);
   expect(
     breadcrumbsFor({
       models,

@@ -35,3 +35,12 @@ test("sign-in returns to a safe route and sign-out clears the session", async ()
   await logOut(user);
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
+
+test("sign-in renders a focused card without protected navigation", async () => {
+  renderRoute("/login", { get: async () => null, invalidate: () => undefined });
+  const card = await screen.findByRole("region", { name: "Sign in" });
+  expect(card).toHaveTextContent("Lace");
+  expect(screen.getByLabelText("Email")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Show password" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Admin navigation" })).not.toBeInTheDocument();
+});

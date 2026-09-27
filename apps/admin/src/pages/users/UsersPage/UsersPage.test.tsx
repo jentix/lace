@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { renderRoute, stubClient as client } from "../../../app/testing/index.js";
@@ -12,7 +12,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("admin user screen creates accounts and keeps confirmed state on last-admin rejection", async () => {
+test("admin user screen lists accounts, creates users, and keeps confirmed state on rejection", async () => {
   const user = userEvent.setup();
   const soleAdmin = {
     disabled: false,
@@ -20,17 +20,28 @@ test("admin user screen creates accounts and keeps confirmed state on last-admin
     id: "admin-1",
     role: "admin" as const,
   };
-  const listUsers = vi.fn(async () => ({ items: [soleAdmin] }));
-  const createUser = vi.fn(async () => ({
+  const disabledViewer = {
+    disabled: true,
+    email: "viewer@lace.test",
+    id: "viewer-1",
+    role: "viewer" as const,
+  };
+  const created = {
     disabled: false,
     email: "new@lace.test",
     id: "new-1",
     role: "viewer" as const,
-  }));
+  };
+  let items = [soleAdmin, disabledViewer];
+  const listUsers = vi.fn(async () => ({ items }));
+  const createUser = vi.fn(async () => {
+    items = [...items, created];
+    return created;
+  });
   const updateUser = vi.fn(async () => {
     throw new AdminClientError({
       code: "LAST_ADMIN_PROTECTED",
-      message: "The final active administrator cannot be disabled or demoted.",
+      message: "Last administrator cannot be changed.",
       status: 409,
     });
   });
@@ -39,10 +50,24 @@ test("admin user screen creates accounts and keeps confirmed state on last-admin
     createStaticSessionSource({ id: "admin-1", role: "admin" }),
     client({ createUser, listUsers, updateUser }),
   );
-  await screen.findByText("admin@lace.test");
-  await user.type(screen.getByLabelText("Email"), "new@lace.test");
-  await user.type(screen.getByLabelText("Password"), "long-password-123");
+  const table = await screen.findByRole("table", { name: "Users" });
+  expect(screen.getByText("2 accounts · 1 disabled")).toBeInTheDocument();
+  const adminRow = within(table).getByRole("row", { name: /admin@lace\.test/u });
+  expect(adminRow).toHaveTextContent("You");
+  expect(adminRow).toHaveTextContent("Admin");
+  expect(adminRow).toHaveTextContent("Active");
+  expect(within(adminRow).queryByRole("button", { name: /^Disable/u })).not.toBeInTheDocument();
+  const viewerRow = within(table).getByRole("row", { name: /viewer@lace\.test/u });
+  expect(viewerRow).toHaveTextContent("Disabled");
+  expect(within(viewerRow).getByRole("button", { name: "Enable viewer@lace.test" })).toBeVisible();
+  expect(within(viewerRow).queryByRole("button", { name: /Change role/u })).not.toBeInTheDocument();
+  expect(table).not.toHaveTextContent("admin-1");
+
   await user.click(screen.getByRole("button", { name: "Create user" }));
+  const dialog = await screen.findByRole("dialog", { name: "Create user" });
+  await user.type(within(dialog).getByLabelText("Email"), "new@lace.test");
+  await user.type(within(dialog).getByLabelText("Password"), "long-password-123");
+  await user.click(within(dialog).getByRole("button", { name: "Create user" }));
   await waitFor(() =>
     expect(createUser).toHaveBeenCalledWith({
       email: "new@lace.test",
@@ -51,14 +76,37 @@ test("admin user screen creates accounts and keeps confirmed state on last-admin
     }),
   );
   expect(await screen.findByText("Created new@lace.test.")).toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText("Role for admin@lace.test"), "editor");
-  await user.click(screen.getByRole("button", { name: "Save role" }));
-  expect(
-    await screen.findByText("The final active administrator cannot be disabled or demoted."),
-  ).toBeInTheDocument();
-  expect(screen.getByLabelText("Role for admin@lace.test")).toHaveValue("admin");
-  expect(screen.getByText("Active")).toBeInTheDocument();
-  expect(listUsers).toHaveBeenCalled();
+  expect(await within(table).findByText("new@lace.test")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Change role for admin@lace.test" }));
+  const roleDialog = await screen.findByRole("dialog", { name: "Change role" });
+  await user.click(within(roleDialog).getByRole("combobox", { name: "Role" }));
+  await user.click(await screen.findByRole("option", { name: "Editor" }));
+  await user.click(within(roleDialog).getByRole("button", { name: "Save role" }));
+  expect(await within(roleDialog).findByRole("alert")).toHaveTextContent(
+    "The final active administrator cannot be disabled or demoted.",
+  );
+  await user.keyboard("{Escape}");
+  expect(within(table).getByRole("row", { name: /admin@lace\.test/u })).toHaveTextContent("Admin");
+  expect(listUsers).toHaveBeenCalledTimes(2);
+});
+
+test("a failed user list offers Try again", async () => {
+  const user = userEvent.setup();
+  let fail = true;
+  const listUsers = vi.fn(async () => {
+    if (fail) throw new AdminClientError({ message: "Users unavailable.", status: 503 });
+    return { items: [] };
+  });
+  renderRoute(
+    "/users",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    client({ listUsers }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Users unavailable.");
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("region", { name: "No users found" })).toBeInTheDocument();
 });
 
 test("expired user request returns to login without stale management content", async () => {

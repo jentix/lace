@@ -1,1 +1,1 @@
-export { NotFoundPage } from "./NotFoundPage.js";
+export { NotFoundPage, StandaloneNotFoundPage } from "./NotFoundPage.js";

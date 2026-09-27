@@ -1,9 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
+import { toast } from "sonner";
 import { afterEach } from "vitest";
 
 // Vitest runs without globals, so Testing Library cannot register its own cleanup.
-afterEach(cleanup);
+// Sonner keeps notifications in a module store, so tests start without leftovers.
+afterEach(() => {
+  cleanup();
+  toast.dismiss();
+});
 
 Object.defineProperty(window, "scrollTo", { value: () => undefined, writable: true });
 

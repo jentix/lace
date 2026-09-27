@@ -156,15 +156,12 @@ function PickerBody({
       />
       {media.isPending ? <LoadingState label="Loading media" lines={3} /> : undefined}
       {media.data === undefined && media.error !== null ? (
-        <div className="grid justify-items-start gap-3">
-          <ErrorState
-            description={errorDescription(media.error)}
-            technicalDetails={technicalDetails(media.error)}
-          />
-          <Button onClick={() => media.refetch()} variant="outline">
-            Try again
-          </Button>
-        </div>
+        <ErrorState
+          description={errorDescription(media.error)}
+          onRetry={() => void media.refetch()}
+          retrying={media.isFetching}
+          technicalDetails={technicalDetails(media.error)}
+        />
       ) : undefined}
       {empty && !filtered ? (
         <EmptyState
