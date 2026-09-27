@@ -21,6 +21,8 @@ import {
   buildTokenSchema,
   buildRequestSchema,
   buildQueueReceiptSchema,
+  siteBuildRecordSchema,
+  siteBuildListSchema,
   adminSettingsStatusSchema,
   adminContentEntrySchema,
   classifyError,
@@ -51,6 +53,7 @@ import {
   setupAdminRequestSchema,
   toAdminContentEntryDto,
   toBuildExportDto,
+  toSiteBuildRecordDto,
   toContentEntryDto,
   toContentModelDto,
   toIsoTimestamp,
@@ -649,6 +652,47 @@ export function createLaceApp(input: LaceAppInput): Hono {
     return token === null ? notFound() : response(buildTokenSchema, buildTokenDto(token));
   });
 
+  app.get(
+    "/api/v1/admin/site-builds",
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(siteBuildListSchema) } },
+          description: "Recent site builds",
+        },
+      },
+      summary: "List site builds",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const resolvedActor = await actor(context);
+      if (input.builds === undefined) throw new Error("Build reads are unavailable.");
+      const items = await input.builds.list(resolvedActor);
+      return response(siteBuildListSchema, { items: items.map(toSiteBuildRecordDto) });
+    },
+  );
+  app.get(
+    "/api/v1/admin/site-builds/:buildId",
+    describeRoute({
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(siteBuildRecordSchema) } },
+          description: "Site build detail",
+        },
+      },
+      summary: "Get a site build",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const resolvedActor = await actor(context);
+      const buildId = parse(identifierSchemaPublic, context.req.param("buildId"));
+      if (input.builds === undefined) throw new Error("Build reads are unavailable.");
+      const build = await input.builds.get(resolvedActor, buildId);
+      return build === null
+        ? notFound()
+        : response(siteBuildRecordSchema, toSiteBuildRecordDto(build));
+    },
+  );
   app.post(
     "/api/v1/admin/builds",
     describeRoute({

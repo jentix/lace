@@ -222,6 +222,28 @@ test("build outcome transitions are lease guarded and reuse one history row", as
           .prepare("select status, completed_at, error from site_builds where id = ?")
           .get(second.eventId),
       ).toEqual({ status: "failed", completed_at: 25_001, error: "trigger_unavailable" });
+      expect(await repository.listSiteBuilds(50)).toMatchObject([
+        {
+          id: second.eventId,
+          status: "failed",
+          targetVersion: 0,
+          requestedAt: 20_000,
+          startedAt: 25_001,
+          completedAt: 25_001,
+          error: "trigger_unavailable",
+        },
+        {
+          id: first.eventId,
+          status: "succeeded",
+          providerBuildId: "provider-1",
+          startedAt: 10_003,
+          completedAt: 10_004,
+        },
+      ]);
+      expect(await repository.getSiteBuild(first.eventId)).toMatchObject({
+        id: first.eventId,
+        providerBuildId: "provider-1",
+      });
       expect(
         database.connection
           .prepare("select attempts, processed_at from outbox_events where id = ?")

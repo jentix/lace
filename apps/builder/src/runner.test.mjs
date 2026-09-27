@@ -7,6 +7,7 @@ import {
   readlink,
   readdir,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,6 +81,7 @@ test("builds from a filtered copy and atomically retains two successful releases
       status: "succeeded",
     });
     const current = await readlink(join(output, "current"));
+    expect((await stat(join(output, current))).mode & 0o777).toBe(0o755);
     expect(await readFile(join(output, current, ".lace-release.json"), "utf8")).toContain(
       `"version":${version}`,
     );

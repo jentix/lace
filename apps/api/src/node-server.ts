@@ -146,6 +146,7 @@ export interface NodeServer {
 
 export async function startNodeServer(input: {
   readonly developmentGateway?: boolean;
+  readonly dispatchMediaDeletions?: boolean;
   readonly runtime: NodeRuntime;
   readonly settings: NodeRuntimeSettings;
 }): Promise<NodeServer> {
@@ -185,7 +186,7 @@ export async function startNodeServer(input: {
       if (!stopped) scheduled = setTimeout(dispatch, 1_000);
     });
   };
-  dispatch();
+  if (input.dispatchMediaDeletions !== false) dispatch();
   return Object.freeze({
     close: async () => {
       stopped = true;

@@ -14,6 +14,7 @@ import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
   type ActorResolver,
+  type BuiltAdminResponder,
   type LaceAppInput,
   type ReadinessProbe,
   type RequestIdGenerator,
@@ -326,6 +327,7 @@ export const defaultNodeLogger: ServerLogger = Object.freeze({
 });
 
 export interface CreateNodeRuntimeInput {
+  readonly adminAssets?: BuiltAdminResponder;
   readonly actors?: ActorResolver;
   readonly auth?: { readonly actors: ActorResolver; fetch(request: Request): Promise<Response> };
   readonly config: NormalizedConfig<readonly ContentModelDefinition[]>;
@@ -438,6 +440,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
       secret: input.settings.authSecret,
     });
   const app = createLaceApp({
+    ...(input.adminAssets === undefined ? {} : { adminAssets: input.adminAssets }),
     actors: input.actors ?? auth.actors,
     auth,
     builds,

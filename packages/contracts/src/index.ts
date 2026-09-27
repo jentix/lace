@@ -566,6 +566,25 @@ export const siteBuildSchema = v.strictObject({
   targetVersion: nonNegativeIntegerSchema,
 });
 
+/** Persisted build history exposed to authenticated admin sessions. */
+export const siteBuildRecordSchema = v.strictObject({
+  id: identifierSchema,
+  reason: identifierSchema,
+  status: v.picklist(["failed", "pending", "running", "succeeded"]),
+  targetVersion: nonNegativeIntegerSchema,
+  requestedBy: identifierSchema,
+  requestedAt: isoTimestampSchema,
+  startedAt: v.optional(isoTimestampSchema),
+  completedAt: v.optional(isoTimestampSchema),
+  providerBuildId: v.optional(identifierSchema),
+  error: v.optional(identifierSchema),
+});
+export const siteBuildListSchema = v.strictObject({
+  items: v.pipe(v.array(siteBuildRecordSchema), v.maxLength(100)),
+});
+export type SiteBuildRecordDto = v.InferOutput<typeof siteBuildRecordSchema>;
+export type SiteBuildListDto = v.InferOutput<typeof siteBuildListSchema>;
+
 export const contractValidationIssueSchema = v.strictObject({
   code: identifierSchema,
   message: v.string(),
@@ -804,6 +823,32 @@ export function toSiteBuildDto(build: SiteBuildState): SiteBuildDto {
     requestedBy: build.requestedBy,
     status: build.status,
     targetVersion: build.targetVersion,
+  };
+}
+
+export function toSiteBuildRecordDto(build: {
+  readonly id: string;
+  readonly reason: string;
+  readonly status: "failed" | "pending" | "running" | "succeeded";
+  readonly targetVersion: number;
+  readonly requestedBy: string;
+  readonly requestedAt: number;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+  readonly providerBuildId?: string;
+  readonly error?: string;
+}): SiteBuildRecordDto {
+  return {
+    id: build.id,
+    reason: build.reason,
+    status: build.status,
+    targetVersion: build.targetVersion,
+    requestedBy: build.requestedBy,
+    requestedAt: toIsoTimestamp(build.requestedAt),
+    ...(build.startedAt === undefined ? {} : { startedAt: toIsoTimestamp(build.startedAt) }),
+    ...(build.completedAt === undefined ? {} : { completedAt: toIsoTimestamp(build.completedAt) }),
+    ...(build.providerBuildId === undefined ? {} : { providerBuildId: build.providerBuildId }),
+    ...(build.error === undefined ? {} : { error: build.error }),
   };
 }
 

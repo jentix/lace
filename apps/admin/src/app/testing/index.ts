@@ -91,6 +91,10 @@ export const mediaItem = {
 /** An admin client whose every call succeeds with neutral data unless overridden. */
 export function stubClient(overrides: Partial<AdminClient> = {}): AdminClient {
   return {
+    listBuilds: async () => ({ items: [] }),
+    getBuild: async () => ({}) as never,
+    requestBuild: async () => ({ coalesced: false, eventId: "event-1", targetVersion: 0 }),
+    retryBuild: async () => ({ coalesced: false, eventId: "event-1", targetVersion: 0 }),
     createUser: async () => ({}) as never,
     updateUser: async () => ({}) as never,
     listUsers: async () => ({ items: [] }),

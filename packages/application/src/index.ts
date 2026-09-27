@@ -361,6 +361,25 @@ export interface SiteBuildCommandPort {
   requestBuild(input: EnqueueSiteBuildInput): Promise<BuildQueueReceipt>;
 }
 
+/** Persisted build history visible to authenticated admin sessions. */
+export interface SiteBuildRecord {
+  readonly id: SiteBuildId;
+  readonly reason: string;
+  readonly status: "pending" | "running" | "succeeded" | "failed";
+  readonly targetVersion: number;
+  readonly requestedBy: string;
+  readonly requestedAt: UnixMilliseconds;
+  readonly startedAt?: UnixMilliseconds;
+  readonly completedAt?: UnixMilliseconds;
+  readonly providerBuildId?: string;
+  readonly error?: string;
+}
+
+export interface SiteBuildReadPort {
+  listSiteBuilds(limit: number): Promise<readonly SiteBuildRecord[]>;
+  getSiteBuild(buildId: SiteBuildId): Promise<SiteBuildRecord | null>;
+}
+
 export interface SiteBuildWorkLease extends DispatcherLease {
   readonly buildId: SiteBuildId;
   readonly targetVersion: number;

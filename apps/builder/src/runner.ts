@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
+  chmod,
   cp,
   lstat,
   mkdir,
@@ -181,7 +182,7 @@ export class FixedCommandBuilder {
       if (
         !(await execute(
           project,
-          ["install", "--frozen-lockfile"],
+          ["install", "--frozen-lockfile", "--filter", "@lacecms/app-site..."],
           environment,
           this.settings.toolPath ?? "pnpm",
         ))
@@ -212,6 +213,8 @@ export class FixedCommandBuilder {
           return true;
         },
       });
+      // mkdtemp creates 0700 directories; the read-only web server runs as another user.
+      await chmod(releaseDirectory, 0o755);
       await writeFile(
         join(releaseDirectory, ".lace-release.json"),
         JSON.stringify({ version: request.targetVersion }),

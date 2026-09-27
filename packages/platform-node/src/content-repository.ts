@@ -61,6 +61,8 @@ import type {
   BuildQueueReceipt,
   EnqueueSiteBuildInput,
   SiteBuildCommandPort,
+  SiteBuildReadPort,
+  SiteBuildRecord,
   SiteBuildDispatchPort,
   SiteBuildWorkLease,
   StoredContentModelState,
@@ -95,6 +97,34 @@ import type { NodeDatabase } from "./index.js";
 const CURSOR_VERSION = 1;
 const MAX_PAGE_SIZE = 100;
 const SQLITE_BIND_CHUNK = 200;
+
+interface SiteBuildRow {
+  readonly id: string;
+  readonly reason: string;
+  readonly status: SiteBuildRecord["status"];
+  readonly target_version: number;
+  readonly requested_by: string;
+  readonly requested_at: number;
+  readonly started_at: number | null;
+  readonly completed_at: number | null;
+  readonly provider_build_id: string | null;
+  readonly error: string | null;
+}
+
+function siteBuildRecord(row: SiteBuildRow): SiteBuildRecord {
+  return {
+    id: siteBuildId(row.id),
+    reason: row.reason,
+    status: row.status,
+    targetVersion: row.target_version,
+    requestedBy: row.requested_by,
+    requestedAt: unixMilliseconds(row.requested_at),
+    ...(row.started_at === null ? {} : { startedAt: unixMilliseconds(row.started_at) }),
+    ...(row.completed_at === null ? {} : { completedAt: unixMilliseconds(row.completed_at) }),
+    ...(row.provider_build_id === null ? {} : { providerBuildId: row.provider_build_id }),
+    ...(row.error === null ? {} : { error: sanitizeBuildReason(row.error) }),
+  };
+}
 
 type CursorKind = string;
 
@@ -531,6 +561,7 @@ export class NodeContentRepository
     MediaReadPort,
     PublicContentReadPort,
     SiteBuildCommandPort,
+    SiteBuildReadPort,
     SiteBuildDispatchPort
 {
   public constructor(
@@ -1852,6 +1883,23 @@ export class NodeContentRepository
       targetVersion: state.version,
     });
     return state.version;
+  }
+
+  public async listSiteBuilds(limit: number): Promise<readonly SiteBuildRecord[]> {
+    const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const rows = this.connection
+      .prepare("select * from site_builds order by requested_at desc, id desc limit ?")
+      .all(bounded) as SiteBuildRow[];
+    return rows.map(siteBuildRecord);
+  }
+
+  public async getSiteBuild(
+    buildId: import("@lacecms/domain").SiteBuildId,
+  ): Promise<SiteBuildRecord | null> {
+    const row = this.connection.prepare("select * from site_builds where id = ?").get(buildId) as
+      | SiteBuildRow
+      | undefined;
+    return row === undefined ? null : siteBuildRecord(row);
   }
 
   public async requestBuild(input: EnqueueSiteBuildInput): Promise<BuildQueueReceipt> {

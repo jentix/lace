@@ -2621,6 +2621,157 @@
         "tags": ["admin"]
       }
     },
+    "/api/v1/admin/site-builds": {
+      "get": {
+        "operationId": "getApiV1AdminSiteBuilds",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "completedAt": {},
+                          "error": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "id": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "providerBuildId": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "reason": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "requestedAt": {},
+                          "requestedBy": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "startedAt": {},
+                          "status": {
+                            "enum": ["failed", "pending", "running", "succeeded"]
+                          },
+                          "targetVersion": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "reason",
+                          "status",
+                          "targetVersion",
+                          "requestedBy",
+                          "requestedAt"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": ["items"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Recent site builds"
+          }
+        },
+        "summary": "List site builds",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/site-builds/{buildId}": {
+      "get": {
+        "operationId": "getApiV1AdminSiteBuildsByBuildId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "buildId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "completedAt": {},
+                    "error": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "providerBuildId": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "reason": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "requestedAt": {},
+                    "requestedBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "startedAt": {},
+                    "status": {
+                      "enum": ["failed", "pending", "running", "succeeded"]
+                    },
+                    "targetVersion": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "reason",
+                    "status",
+                    "targetVersion",
+                    "requestedBy",
+                    "requestedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Site build detail"
+          }
+        },
+        "summary": "Get a site build",
+        "tags": ["admin"]
+      }
+    },
     "/api/v1/admin/users": {
       "post": {
         "operationId": "postApiV1AdminUsers",

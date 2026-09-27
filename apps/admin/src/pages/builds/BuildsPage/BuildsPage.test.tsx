@@ -1,9 +1,101 @@
-import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
-import { BuildsPage } from "./index.js";
+import { screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { expect, test, vi } from "vitest";
+import { renderRoute, stubClient } from "../../../app/testing/index.js";
+import { createStaticSessionSource } from "../../../entities/session/index.js";
+import { AdminClientError } from "../../../shared/api/index.js";
 
-test("states that build history is not connected yet", () => {
-  render(<BuildsPage />);
-  expect(screen.getByRole("heading", { name: "Builds" })).toBeInTheDocument();
-  expect(screen.getByText(/connected to remote state in a later session/u)).toBeInTheDocument();
+const failed = {
+  id: "build-1",
+  reason: "publication",
+  status: "failed" as const,
+  targetVersion: 4,
+  requestedBy: "admin-1",
+  requestedAt: "2026-09-27T00:00:00.000Z",
+  startedAt: "2026-09-27T00:00:05.000Z",
+  completedAt: "2026-09-27T00:00:06.000Z",
+  providerBuildId: "provider-1",
+  error: "provider_failed",
+};
+
+test("admin inspects and retries a failed build", async () => {
+  const user = userEvent.setup();
+  const retryBuild = vi.fn(async () => ({
+    coalesced: false,
+    eventId: "event-2",
+    targetVersion: 4,
+  }));
+  renderRoute(
+    "/builds",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    stubClient({
+      listBuilds: async () => ({ items: [failed] }),
+      getBuild: async () => failed,
+      retryBuild,
+    }),
+  );
+  const table = await screen.findByRole("table", { name: "Build history" });
+  expect(table).toHaveTextContent("v4");
+  await user.click(within(table).getByRole("button", { name: "View build for version 4" }));
+  const detail = await screen.findByRole("region", { name: "Build details" });
+  expect(detail).toHaveTextContent("provider-1");
+  expect(detail).toHaveTextContent("provider failed");
+  expect(detail).toHaveTextContent("admin-1");
+  await user.click(within(detail).getByRole("button", { name: "Retry build" }));
+  await waitFor(() => expect(retryBuild).toHaveBeenCalledWith("build-1"));
+  expect(await screen.findByRole("status")).toHaveTextContent("version 4 queued");
+});
+
+test("viewer can inspect history without build controls", async () => {
+  const user = userEvent.setup();
+  renderRoute(
+    "/builds",
+    createStaticSessionSource({ id: "viewer-1", role: "viewer" }),
+    stubClient({
+      listBuilds: async () => ({ items: [failed] }),
+      getBuild: async () => failed,
+    }),
+  );
+  await user.click(await screen.findByRole("button", { name: "View build for version 4" }));
+  expect(await screen.findByText("provider-1")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry build" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Request build" })).not.toBeInTheDocument();
+});
+
+test("a successful build shows completion without a retry action", async () => {
+  const user = userEvent.setup();
+  const succeeded = { ...failed, status: "succeeded" as const, error: undefined };
+  renderRoute(
+    "/builds",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    stubClient({
+      listBuilds: async () => ({ items: [succeeded] }),
+      getBuild: async () => succeeded,
+    }),
+  );
+  await user.click(await screen.findByRole("button", { name: "View build for version 4" }));
+  const detail = await screen.findByRole("region", { name: "Build details" });
+  expect(within(detail).getByText("Succeeded")).toBeInTheDocument();
+  expect(within(detail).getByText("provider-1")).toBeInTheDocument();
+  expect(within(detail).queryByRole("button", { name: "Retry build" })).not.toBeInTheDocument();
+});
+
+test("empty history can queue a build and a failed read can recover", async () => {
+  const user = userEvent.setup();
+  let fails = true;
+  const listBuilds = vi.fn(async () => {
+    if (fails) throw new AdminClientError({ message: "Builds unavailable", status: 503 });
+    return { items: [] };
+  });
+  renderRoute(
+    "/builds",
+    createStaticSessionSource({ id: "admin-1", role: "admin" }),
+    stubClient({ listBuilds }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Builds unavailable");
+  fails = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("region", { name: "No builds yet" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Request build" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("version 0 queued");
 });
