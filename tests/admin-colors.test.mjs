@@ -8,7 +8,7 @@ const testDirectory = dirname(fileURLToPath(import.meta.url));
 const checker = join(testDirectory, "..", "scripts", "check-admin-colors.mjs");
 const fixtureDirectory = join(testDirectory, "fixtures", "admin-colors");
 
-test("allows token utilities, non-color hashes, the theme file, and test files", () => {
+test("allows token utilities, layout and custom-property arbitrary values, non-color hashes, the theme file, and test files", () => {
   expect(checkAdminColors(join(fixtureDirectory, "allowed"))).toEqual([]);
 });
 
@@ -16,7 +16,13 @@ test("reports every raw color literal with its file and line", () => {
   const source = join("apps", "admin", "src");
   expect(checkAdminColors(join(fixtureDirectory, "forbidden")).toSorted()).toEqual(
     [
+      `${join(source, "Arbitrary.tsx")}:2: arbitrary theme value "text-[0.8rem]"`,
+      `${join(source, "Arbitrary.tsx")}:2: arbitrary theme value "rounded-[2px]"`,
+      `${join(source, "Arbitrary.tsx")}:2: arbitrary theme value "shadow-[0_1px_2px]"`,
+      `${join(source, "Arbitrary.tsx")}:6: arbitrary theme value "ring-[3px]"`,
+      `${join(source, "Arbitrary.tsx")}:6: arbitrary theme value "duration-[250ms]"`,
       `${join(source, "Hex.tsx")}:2: raw color literal "#ff0000"`,
+      `${join(source, "Inline.tsx")}:3: arbitrary theme value "shadow-[0_0_0_1px_rgb(0_0_0)]"`,
       `${join(source, "Inline.tsx")}:3: raw color literal "rgb("`,
       `${join(source, "Inline.tsx")}:3: raw color literal "white"`,
       `${join(source, "Palette.tsx")}:2: raw color literal "text-red-600"`,
@@ -26,12 +32,13 @@ test("reports every raw color literal with its file and line", () => {
   );
 });
 
-test("fails the command when a raw color literal is present", () => {
+test("fails the command when a raw color literal or arbitrary theme value is present", () => {
   const result = spawnSync(process.execPath, [checker, join(fixtureDirectory, "forbidden")], {
     encoding: "utf8",
   });
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain('Hex.tsx:2: raw color literal "#ff0000"');
+  expect(result.stderr).toContain('Arbitrary.tsx:2: arbitrary theme value "text-[0.8rem]"');
 });
 
 test("passes the command for the repository admin source", () => {

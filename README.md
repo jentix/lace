@@ -78,9 +78,9 @@ an administrator or build credential exists. After first-admin setup, run
 `pnpm content:sync`, open `/admin/content`, and publish the `home` page. The
 local site needs a published home entry to enter live mode.
 
-Sign in as an administrator at `/admin/`, open **Settings**, enter a name such
-as `local-astro-site` under **Build tokens**, and choose **Create build token**.
-Copy the once-shown value and dismiss it after placing it in the server-side
+Sign in as an administrator at `/admin/`, open **Settings**, choose
+**Create build token**, and enter a name such as `local-astro-site`. Copy the
+once-shown value and choose **Done** after placing it in the server-side
 environment file. The token list cannot reveal it later.
 
 In the ignored `.env` created by `pnpm dev:env`, set
@@ -99,7 +99,7 @@ not change the public site, even after a restart. Automated build dispatch is
 not part of this local workflow yet. Keep `.env` private and revoke a lost
 token in **Settings**.
 
-### Local product acceptance (Session 15C)
+### Local product acceptance
 
 The isolated acceptance run uses its own Compose project, random host port,
 credentials, SQLite and MinIO volumes. It does not reset `lace-dev`. Docker,
@@ -121,9 +121,12 @@ flow, signs in, uploads and reuses a private image, publishes `home` and a
 mode, and restarts only Astro. It verifies `/` and `/notes/acceptance-note`,
 then saves a new note title and slug without publishing and confirms that the
 build export and public route still show the previous publication. It also
-creates editor and viewer accounts and checks their browser permissions.
-Focused browser and API checks cover conflicts, error and empty states,
-keyboard and narrow-screen navigation, and server-side authorization.
+creates editor and viewer accounts and checks their browser permissions. Along
+the way it runs WCAG 2.x A/AA accessibility audits (axe) on the content home,
+a collection list, the entry editor, Media, Users, and Settings with the stack's
+real data; any violation fails the run. Focused browser and API checks cover
+conflicts, error and empty states, keyboard and narrow-screen navigation, and
+server-side authorization.
 
 For a manual walkthrough, run `pnpm acceptance:start`, then
 `pnpm acceptance:bootstrap` and complete first-admin setup as described above
@@ -195,6 +198,20 @@ pnpm --filter @lacecms/app-api test
 pnpm --filter @lacecms/app-admin test
 pnpm --filter @lacecms/app-site test
 ```
+
+Admin browser suites run against the Vite dev server with a mocked API and need
+a Playwright Chromium browser:
+
+```sh
+pnpm --filter @lacecms/app-admin test:e2e
+```
+
+They include the redesign acceptance checks: an axe audit (WCAG 2.x A/AA) of
+every admin route and the main dialogs, a keyboard-only editorial walkthrough
+with visible-focus checks, and 375px layouts without horizontal scrolling,
+including the entry column stacking below the blocks. `pnpm lint` also rejects
+raw color literals and arbitrary font-size, radius, shadow, focus-width, and
+motion values in admin source, so styles go through the theme tokens.
 
 Before completing a change, run the root quality gates:
 

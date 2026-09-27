@@ -40,5 +40,28 @@ test("keeps the form and shows a sanitized failure when sign-in is rejected", as
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("Invalid email or password."),
   );
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not sign in");
   expect(screen.getByLabelText("Email")).toHaveValue("editor@lace.test");
+  expect(screen.queryByText("Route /content")).not.toBeInTheDocument();
+});
+
+test("focuses the email field and announces a pending sign-in", async () => {
+  const user = userEvent.setup();
+  let finish: () => void = () => undefined;
+  renderInRouter(<SignInForm redirectTo="/content" />, {
+    client: stubClient({
+      signIn: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    }),
+  });
+
+  expect(await screen.findByLabelText("Email")).toHaveFocus();
+  await user.type(screen.getByLabelText("Email"), "editor@lace.test");
+  await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByRole("button", { name: "Signing in…" })).toBeDisabled();
+  finish();
+  expect(await screen.findByText("Route /content")).toBeInTheDocument();
 });

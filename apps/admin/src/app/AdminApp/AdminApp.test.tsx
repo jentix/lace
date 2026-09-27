@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { logOut, renderRoute, stubClient as client } from "../testing/index.js";
@@ -60,6 +60,39 @@ test("typed route foundations render valid paths and reject malformed model keys
   document.body.replaceChildren();
   renderRoute("/content/INVALID", createStaticSessionSource({ id: "admin-1", role: "admin" }));
   expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Go to Content" })).toHaveAttribute(
+    "href",
+    "/admin/content",
+  );
+});
+
+test("unknown paths render not-found inside the shell for signed-in users", async () => {
+  const listModels = vi.fn(client().listModels);
+  const listUsers = vi.fn(client().listUsers);
+  renderRoute(
+    "/does-not-exist",
+    createStaticSessionSource({ id: "editor-1", role: "editor" }),
+    client({ listModels, listUsers }),
+  );
+  const heading = await screen.findByRole("heading", { name: "Page not found" });
+  const main = screen.getByRole("main");
+  expect(main).toContainElement(heading);
+  expect(screen.getByRole("complementary", { name: "Admin navigation" })).toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(
+    "Page not found",
+  );
+  expect(within(main).getByRole("link", { name: "Go to Content" })).toHaveAttribute(
+    "href",
+    "/admin/content",
+  );
+  expect(listUsers).not.toHaveBeenCalled();
+});
+
+test("anonymous visitors to unknown paths sign in and return there", async () => {
+  const router = renderRoute("/does-not-exist", createStaticSessionSource(null));
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  expect(router.state.location.search).toEqual({ redirect: "/does-not-exist" });
+  expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
 });
 
 test("safe navigation helpers retain only local return paths", () => {

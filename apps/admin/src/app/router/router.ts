@@ -15,7 +15,7 @@ import { EntryPage } from "../../pages/entry/index.js";
 import { LoginPage } from "../../pages/login/index.js";
 import { MediaPage } from "../../pages/media/index.js";
 import { ModelPage } from "../../pages/model/index.js";
-import { NotFoundPage } from "../../pages/not-found/index.js";
+import { NotFoundPage, StandaloneNotFoundPage } from "../../pages/not-found/index.js";
 import { PendingPage } from "../../pages/pending/index.js";
 import { SettingsPage } from "../../pages/settings/index.js";
 import { UsersPage } from "../../pages/users/index.js";
@@ -36,7 +36,7 @@ const modelKeyPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 // read params and context through `getRouteApi` with these ids.
 const rootRoute = createRootRouteWithContext<AdminRouterContext>()({
   component: Outlet,
-  notFoundComponent: NotFoundPage,
+  notFoundComponent: StandaloneNotFoundPage,
 });
 const loginRoute = createRoute({
   beforeLoad: async ({ context }) => {
@@ -125,6 +125,13 @@ const settingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/settings",
 });
+// Every path no other route claims is a protected screen, so anonymous
+// visitors sign in first and signed-in visitors keep the shell's navigation.
+const notFoundRoute = createRoute({
+  component: NotFoundPage,
+  getParentRoute: () => protectedRoute,
+  path: "$",
+});
 const routeTree = rootRoute.addChildren([
   loginRoute,
   protectedRoute.addChildren([
@@ -136,6 +143,7 @@ const routeTree = rootRoute.addChildren([
     buildsRoute,
     usersRoute,
     settingsRoute,
+    notFoundRoute,
   ]),
 ]);
 

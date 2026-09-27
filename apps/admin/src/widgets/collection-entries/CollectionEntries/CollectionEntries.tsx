@@ -117,15 +117,12 @@ export function CollectionEntries({
       />
       {entries.isPending ? <LoadingState label="Loading entries" lines={5} /> : undefined}
       {entries.data === undefined && entries.error !== null ? (
-        <div className="grid justify-items-start gap-3">
-          <ErrorState
-            description={errorDescription(entries.error)}
-            technicalDetails={technicalDetails(entries.error)}
-          />
-          <Button onClick={() => entries.refetch()} variant="outline">
-            Try again
-          </Button>
-        </div>
+        <ErrorState
+          description={errorDescription(entries.error)}
+          onRetry={() => void entries.refetch()}
+          retrying={entries.isFetching}
+          technicalDetails={technicalDetails(entries.error)}
+        />
       ) : undefined}
       {empty ? (
         <EmptyState

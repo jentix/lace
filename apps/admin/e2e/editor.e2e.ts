@@ -395,6 +395,9 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
     await empty.goto(`/admin/${route}`);
     await expect(empty.getByText(message)).toBeVisible();
   }
+  await empty.goto("/admin/does-not-exist");
+  await expect(empty.getByRole("main").getByText("Page not found")).toBeVisible();
+  await expect(empty.getByRole("link", { name: "Go to Content" })).toBeVisible();
   await empty.goto("/admin/builds");
   await expect(
     empty.getByText("Build status will be connected to remote state in a later session."),

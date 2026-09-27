@@ -20,6 +20,7 @@ import {
   type AdminSessionSource,
 } from "../../entities/session/index.js";
 import type { AdminClient } from "../../shared/api/index.js";
+import { Toaster } from "../../shared/ui/Toaster/index.js";
 import { TooltipProvider } from "../../shared/ui/Tooltip/index.js";
 import { createAdminRouter, type AdminRouterContext } from "../router/index.js";
 
@@ -124,7 +125,12 @@ function renderWithProviders(router: Parameters<typeof RouterProvider>[0]["route
     createElement(
       QueryClientProvider,
       { client: queryClient },
-      createElement(TooltipProvider, null, createElement(RouterProvider, { router })),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(RouterProvider, { router }),
+        createElement(Toaster),
+      ),
     ),
   );
   return queryClient;

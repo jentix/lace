@@ -44,6 +44,18 @@ const paletteUtility = new RegExp(
 );
 const arbitraryNamedColor = new RegExp(`-\\[(?:${namedColorPattern})\\]`, "gi");
 const namedColorWord = new RegExp(`(?<![\\w-])(?:${namedColorPattern})(?![\\w-])`, "gi");
+// Arbitrary values that replace a typography, radius, shadow, focus-width, or
+// motion token. Custom-property references and layout values stay allowed.
+const arbitraryThemeValue = new RegExp(
+  "(?<![\\w-])(?:" +
+    "text-\\[(?:length:)?[\\d.]" +
+    "|rounded(?:-(?:[trblse]|tl|tr|bl|br|ss|se|es|ee))?-\\[(?!inherit\\]|var\\()" +
+    "|(?:inset-|drop-)?shadow-\\[(?!var\\()" +
+    "|(?:ring|ring-offset|outline|outline-offset)-\\[[\\d.]" +
+    "|(?:duration|delay|ease)-\\[(?!var\\()" +
+    ")[^\\]\\s]*\\]",
+  "g",
+);
 
 function collectFiles(directory) {
   const files = [];
@@ -143,7 +155,9 @@ function scriptViolations(text) {
     if (namedColors.has(literal.value.trim().toLowerCase()))
       found.push({ index: 0, text: literal.value.trim() });
     for (const match of found)
-      violations.push({ line: lineAt(text, literal.start), text: match.text });
+      violations.push({ kind: "color", line: lineAt(text, literal.start), text: match.text });
+    for (const match of matchesIn(literal.value, [arbitraryThemeValue]))
+      violations.push({ kind: "theme", line: lineAt(text, literal.start), text: match.text });
   }
   return violations;
 }
@@ -154,11 +168,18 @@ function styleViolations(text) {
   for (const declaration of source.matchAll(/(?:^|[;{\s])([\w-]+)\s*:\s*([^;{}]+)/g)) {
     const valueOffset = declaration.index + declaration[0].length - declaration[2].length;
     for (const match of matchesIn(declaration[2], [hexColor, colorFunction, namedColorWord]))
-      violations.push({ line: lineAt(source, valueOffset + match.index), text: match.text });
+      violations.push({
+        kind: "color",
+        line: lineAt(source, valueOffset + match.index),
+        text: match.text,
+      });
   }
-  for (const apply of source.matchAll(/@apply\s+([^;]+)/g))
+  for (const apply of source.matchAll(/@apply\s+([^;]+)/g)) {
     for (const match of matchesIn(apply[1], [hexColor, colorFunction, paletteUtility]))
-      violations.push({ line: lineAt(source, apply.index), text: match.text });
+      violations.push({ kind: "color", line: lineAt(source, apply.index), text: match.text });
+    for (const match of matchesIn(apply[1], [arbitraryThemeValue]))
+      violations.push({ kind: "theme", line: lineAt(source, apply.index), text: match.text });
+  }
   return violations;
 }
 
@@ -172,7 +193,9 @@ export function checkAdminColors(rootDirectory = defaultRoot) {
     const found = extname(filePath) === ".css" ? styleViolations(text) : scriptViolations(text);
     for (const violation of found)
       violations.push(
-        `${relative(rootDirectory, filePath)}:${violation.line}: raw color literal "${violation.text}"`,
+        `${relative(rootDirectory, filePath)}:${violation.line}: ${
+          violation.kind === "color" ? "raw color literal" : "arbitrary theme value"
+        } "${violation.text}"`,
       );
   }
   return violations;
@@ -182,7 +205,7 @@ if (resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const violations = checkAdminColors(process.argv[2] ? resolve(process.argv[2]) : defaultRoot);
   if (violations.length > 0) {
     process.stderr.write(
-      `${violations.join("\n")}\nUse admin theme tokens instead of raw color literals.\n`,
+      `${violations.join("\n")}\nUse admin theme tokens instead of raw color literals or arbitrary theme values.\n`,
     );
     process.exit(1);
   }
