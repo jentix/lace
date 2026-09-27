@@ -189,6 +189,9 @@ async function loadExport(
   }
   if (!result.changed)
     throw new TypeError("A live build without an ETag must receive a build export.");
+  const expectedVersion = environment.LACE_EXPECTED_PUBLISHED_VERSION;
+  if (expectedVersion !== undefined && result.etag !== `"${expectedVersion}"`)
+    throw new TypeError("The published-state version changed during the site build.");
   return { mediaBaseUrl, exported: result.export };
 }
 

@@ -284,10 +284,8 @@ export const adminContentEntrySchema = v.strictObject({
 
 export const publicationOutcomeSchema = v.picklist(["published", "replayed"]);
 export const buildDispatchOutcomeSchema = v.variant("status", [
-  v.strictObject({ buildId: v.optional(identifierSchema), status: v.literal("accepted") }),
+  v.strictObject({ status: v.literal("queued"), targetVersion: nonNegativeIntegerSchema }),
   v.strictObject({ status: v.literal("not-dispatched") }),
-  v.strictObject({ status: v.literal("rejected") }),
-  v.strictObject({ status: v.literal("unavailable") }),
 ]);
 export const publishContentEntryResultSchema = v.strictObject({
   build: buildDispatchOutcomeSchema,
@@ -470,6 +468,13 @@ export const buildTokenCreatedSchema = v.strictObject({
   token: v.string(),
 });
 export const buildTokenListSchema = v.strictObject({ items: v.array(buildTokenSchema) });
+export const buildRequestSchema = v.strictObject({});
+export const buildQueueReceiptSchema = v.strictObject({
+  coalesced: v.boolean(),
+  eventId: identifierSchema,
+  targetVersion: nonNegativeIntegerSchema,
+});
+export type BuildQueueReceiptDto = v.InferOutput<typeof buildQueueReceiptSchema>;
 export type BuildTokenDto = v.InferOutput<typeof buildTokenSchema>;
 export type BuildTokenCreatedDto = v.InferOutput<typeof buildTokenCreatedSchema>;
 export type BuildTokenListDto = v.InferOutput<typeof buildTokenListSchema>;
@@ -560,6 +565,25 @@ export const siteBuildSchema = v.strictObject({
   status: v.picklist(["failed", "pending", "running", "succeeded"]),
   targetVersion: nonNegativeIntegerSchema,
 });
+
+/** Persisted build history exposed to authenticated admin sessions. */
+export const siteBuildRecordSchema = v.strictObject({
+  id: identifierSchema,
+  reason: identifierSchema,
+  status: v.picklist(["failed", "pending", "running", "succeeded"]),
+  targetVersion: nonNegativeIntegerSchema,
+  requestedBy: identifierSchema,
+  requestedAt: isoTimestampSchema,
+  startedAt: v.optional(isoTimestampSchema),
+  completedAt: v.optional(isoTimestampSchema),
+  providerBuildId: v.optional(identifierSchema),
+  error: v.optional(identifierSchema),
+});
+export const siteBuildListSchema = v.strictObject({
+  items: v.pipe(v.array(siteBuildRecordSchema), v.maxLength(100)),
+});
+export type SiteBuildRecordDto = v.InferOutput<typeof siteBuildRecordSchema>;
+export type SiteBuildListDto = v.InferOutput<typeof siteBuildListSchema>;
 
 export const contractValidationIssueSchema = v.strictObject({
   code: identifierSchema,
@@ -683,19 +707,16 @@ export function toAdminContentEntryDto(
 /** Maps the portable publication command outcome without exposing application internals. */
 export function toPublishContentEntryResultDto(input: {
   readonly build:
-    | Readonly<{ readonly buildId?: string; readonly status: "accepted" }>
-    | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
+    | Readonly<{ readonly status: "queued"; readonly targetVersion: number }>
+    | Readonly<{ readonly status: "not-dispatched" }>;
   readonly entry: ContentEntry;
   readonly publication: "published" | "replayed";
   readonly updatedBy: { readonly displayName: string; readonly id: string };
 }): PublishContentEntryResultDto {
   return {
     build:
-      input.build.status === "accepted"
-        ? {
-            ...(input.build.buildId === undefined ? {} : { buildId: input.build.buildId }),
-            status: "accepted",
-          }
+      input.build.status === "queued"
+        ? { status: "queued", targetVersion: input.build.targetVersion }
         : { status: input.build.status },
     entry: toAdminContentEntryDto(input.entry, input.updatedBy),
     publication: input.publication,
@@ -802,6 +823,32 @@ export function toSiteBuildDto(build: SiteBuildState): SiteBuildDto {
     requestedBy: build.requestedBy,
     status: build.status,
     targetVersion: build.targetVersion,
+  };
+}
+
+export function toSiteBuildRecordDto(build: {
+  readonly id: string;
+  readonly reason: string;
+  readonly status: "failed" | "pending" | "running" | "succeeded";
+  readonly targetVersion: number;
+  readonly requestedBy: string;
+  readonly requestedAt: number;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+  readonly providerBuildId?: string;
+  readonly error?: string;
+}): SiteBuildRecordDto {
+  return {
+    id: build.id,
+    reason: build.reason,
+    status: build.status,
+    targetVersion: build.targetVersion,
+    requestedBy: build.requestedBy,
+    requestedAt: toIsoTimestamp(build.requestedAt),
+    ...(build.startedAt === undefined ? {} : { startedAt: toIsoTimestamp(build.startedAt) }),
+    ...(build.completedAt === undefined ? {} : { completedAt: toIsoTimestamp(build.completedAt) }),
+    ...(build.providerBuildId === undefined ? {} : { providerBuildId: build.providerBuildId }),
+    ...(build.error === undefined ? {} : { error: build.error }),
   };
 }
 

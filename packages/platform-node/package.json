@@ -19,7 +19,7 @@
     "db:migrate": "pnpm run build && node dist/migrate.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
-    "test": "vitest run src/index.test.mjs"
+    "test": "vitest run src/*.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "catalog:",

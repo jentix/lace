@@ -184,7 +184,7 @@ test("entry editor shows separate draft and publication facts without offering p
 test("admin confirms publication and sees an independent pending-build outcome", async () => {
   const user = userEvent.setup();
   const publishEntry = vi.fn(async () => ({
-    build: { status: "accepted" as const },
+    build: { status: "queued" as const, targetVersion: 1 },
     entry: {
       ...draftEntry,
       published: { ...draftEntry.draft, id: "published-1", state: "published" as const },
@@ -215,7 +215,7 @@ test("publish retries an uncertain network outcome with the same attempt key", a
     .fn()
     .mockRejectedValueOnce(new AdminClientError({ message: "The Lace API could not be reached." }))
     .mockResolvedValueOnce({
-      build: { status: "unavailable" as const },
+      build: { status: "queued" as const, targetVersion: 1 },
       entry: draftEntry,
       publication: "published" as const,
     });
@@ -235,9 +235,7 @@ test("publish retries an uncertain network outcome with the same attempt key", a
   await user.click(screen.getByRole("button", { name: "Retry publish" }));
   await waitFor(() => expect(publishEntry).toHaveBeenCalledTimes(2));
   expect(publishEntry.mock.calls[1]![1]).toEqual(publishEntry.mock.calls[0]![1]);
-  expect(
-    await screen.findByText("Published, but build dispatch is currently unavailable."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Published. Build pending.")).toBeInTheDocument();
 });
 
 test("a publish revision conflict leaves the loaded form available for explicit recovery", async () => {

@@ -454,11 +454,21 @@ test("provides deterministic infrastructure fakes with detached values", async (
   await expect(tokens.verify(opaqueTokenSecret("build-secret"), verifier)).resolves.toBe(true);
   await expect(tokens.verify(opaqueTokenSecret("wrong"), verifier)).resolves.toBe(false);
 
-  const trigger = new InMemorySiteBuildTrigger({ accepted: false });
-  expect(
-    await trigger.trigger({ requestedAt: clock.now(), requestedBy: admin, targetVersion: 2 }),
-  ).toEqual({ accepted: false });
+  const trigger = new InMemorySiteBuildTrigger({ status: "failed", reason: "trigger_unavailable" });
+  expect(await trigger.trigger({ buildId: "build-1", targetVersion: 2 })).toEqual({
+    status: "failed",
+    reason: "trigger_unavailable",
+  });
   expect(trigger.requests).toHaveLength(1);
+  await expect(
+    new InMemorySiteBuildTrigger().trigger({ buildId: "build-2", targetVersion: 2 }),
+  ).resolves.toEqual({ status: "succeeded" });
+  await expect(
+    new InMemorySiteBuildTrigger({ status: "accepted", providerBuildId: "provider-1" }).trigger({
+      buildId: "build-3",
+      targetVersion: 2,
+    }),
+  ).resolves.toEqual({ status: "accepted", providerBuildId: "provider-1" });
 });
 
 test("leases one dispatcher event exclusively until it is completed", async () => {
@@ -905,7 +915,7 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
     receivedCreateInputs.push(input);
     return create(input);
   };
-  const trigger = new InMemorySiteBuildTrigger({ accepted: true });
+  const trigger = new InMemorySiteBuildTrigger({ status: "succeeded" });
   const useCases = new ContentUseCases({
     clock: new DeterministicClock(unixMilliseconds(10)),
     config: config.runtime,
@@ -940,7 +950,6 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
             : null;
       },
     },
-    siteBuildTrigger: trigger,
   });
   const draft = {
     blocks: [
@@ -1048,9 +1057,12 @@ test("runs the authorized in-memory content lifecycle with validation and isolat
     expectedRevision: 1,
     idempotencyKey: "publish-home",
   });
-  expect(publication).toMatchObject({ build: { status: "accepted" }, publication: "published" });
+  expect(publication).toMatchObject({
+    build: { status: "queued", targetVersion: 1 },
+    publication: "published",
+  });
   expect(replay).toMatchObject({ build: { status: "not-dispatched" }, publication: "replayed" });
-  expect(trigger.requests).toHaveLength(1);
+  expect(trigger.requests).toHaveLength(0);
 
   await useCases.save({
     actor: editor,
@@ -1168,14 +1180,14 @@ test("reports rejected and unavailable builds without undoing a publication", as
     slug: "first",
     title: "First",
   };
-  const rejected = new ContentUseCases({
-    ...dependencies,
-    siteBuildTrigger: new InMemorySiteBuildTrigger({ accepted: false }),
-  });
+  const rejected = new ContentUseCases(dependencies);
   const entry = await rejected.create({ actor: editor, modelKey: "posts", ...draft });
   await expect(
     rejected.publish({ actor: admin, entryId: entry.id, expectedRevision: 1 }),
-  ).resolves.toMatchObject({ build: { status: "rejected" }, publication: "published" });
+  ).resolves.toMatchObject({
+    build: { status: "queued", targetVersion: 1 },
+    publication: "published",
+  });
   expect((await rejected.loadPublished({ actor: admin, entryId: entry.id })).title).toBe("First");
 
   await rejected.save({
@@ -1185,17 +1197,13 @@ test("reports rejected and unavailable builds without undoing a publication", as
     ...draft,
     title: "Second",
   });
-  const unavailable = new ContentUseCases({
-    ...dependencies,
-    siteBuildTrigger: {
-      async trigger() {
-        throw new Error("offline");
-      },
-    },
-  });
+  const unavailable = new ContentUseCases(dependencies);
   await expect(
     unavailable.publish({ actor: admin, entryId: entry.id, expectedRevision: 2 }),
-  ).resolves.toMatchObject({ build: { status: "unavailable" }, publication: "published" });
+  ).resolves.toMatchObject({
+    build: { status: "queued", targetVersion: 2 },
+    publication: "published",
+  });
   expect((await unavailable.loadPublished({ actor: admin, entryId: entry.id })).title).toBe(
     "Second",
   );

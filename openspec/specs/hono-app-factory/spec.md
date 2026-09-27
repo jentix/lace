@@ -226,3 +226,25 @@ The server SHALL expose `GET /api/v1/admin/settings/status` to an authorized adm
 #### Scenario: Editor requests status
 - **WHEN** an authenticated editor requests settings status
 - **THEN** the response denies access without returning operational status
+
+### Requirement: Administrator build routes preserve the actor boundary
+The HTTP application SHALL expose versioned authenticated administrator routes for manual build request and failed-build retry. Routes SHALL validate the shared request and response contracts and call actor-checked application commands. They SHALL not synchronously run a build.
+
+#### Scenario: Administrator queues a build
+- **WHEN** an authenticated administrator posts a valid manual build request
+- **THEN** the route returns the durable queue receipt without waiting for a build trigger
+
+#### Scenario: Editor attempts retry
+- **WHEN** an authenticated editor posts a retry for a failed build
+- **THEN** the route denies the action without enqueueing work
+
+### Requirement: Versioned build read routes expose persisted history
+The HTTP application SHALL expose authenticated `GET /api/v1/admin/site-builds` and `GET /api/v1/admin/site-builds/:buildId` routes with shared validated response contracts. A missing build SHALL return the standard not-found envelope. Existing administrator build request and retry routes SHALL remain compatible.
+
+#### Scenario: History request
+- **WHEN** an authenticated actor requests the list
+- **THEN** the route returns a bounded newest-first list of validated build records
+
+#### Scenario: Missing detail
+- **WHEN** an authenticated actor requests an unknown build ID
+- **THEN** the route returns the standard 404 response

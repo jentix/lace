@@ -48,6 +48,22 @@ test("live mode shares one authenticated export request across all route consume
   expect(first.mediaUrl("post-media")).toBe("http://127.0.0.1:3000/api/v1/public/media/post-media");
 });
 
+test("live build rejects a published export with a different expected version", async () => {
+  const fetch = async () =>
+    new Response(JSON.stringify(fixture), { headers: { etag: '"8"' }, status: 200 });
+  await expect(
+    loadSiteData({
+      environment: {
+        LACE_API_BASE_URL: "http://api:3000/",
+        LACE_BUILD_TOKEN: "build-token",
+        LACE_SITE_DATA_MODE: "live",
+        LACE_EXPECTED_PUBLISHED_VERSION: "7",
+      },
+      fetch,
+    }),
+  ).rejects.toThrow("published-state version changed");
+});
+
 test("live mode reports absent and rejected tokens without revealing them", async () => {
   await expect(
     loadSiteData({

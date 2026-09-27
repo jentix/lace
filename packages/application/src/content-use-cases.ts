@@ -52,8 +52,6 @@ import type {
   OpaqueCursor,
   PublicationIdempotencyKey,
   PublicContentReadPort,
-  PublishContentEntryResult,
-  SiteBuildTrigger,
 } from "./index.js";
 
 export interface ContentUseCaseDependencies {
@@ -62,7 +60,6 @@ export interface ContentUseCaseDependencies {
   readonly content: ContentEntryReadPort & ContentEntryCommandPort & PublicContentReadPort;
   readonly idGenerator: IdGenerator;
   readonly media: MediaReadPort;
-  readonly siteBuildTrigger?: SiteBuildTrigger;
 }
 
 export interface CompleteDraftInput {
@@ -117,8 +114,8 @@ export interface DeleteContentEntryUseCaseInput {
 }
 
 export type BuildDispatchOutcome =
-  | Readonly<{ readonly status: "accepted"; readonly buildId?: string }>
-  | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
+  | Readonly<{ readonly status: "queued"; readonly targetVersion: number }>
+  | Readonly<{ readonly status: "not-dispatched" }>;
 
 export interface PublishContentEntryUseCaseResult {
   readonly build: BuildDispatchOutcome;
@@ -279,7 +276,10 @@ export class ContentUseCases {
       publishedSnapshotId: contentSnapshotId(this.dependencies.idGenerator.next()),
     });
     return {
-      build: await this.dispatchBuild(result, input.actor),
+      build:
+        result.outcome === "replayed"
+          ? { status: "not-dispatched" }
+          : { status: "queued", targetVersion: result.targetVersion },
       entry: detached(result.entry),
       publication: result.outcome,
     };
@@ -296,27 +296,6 @@ export class ContentUseCases {
       ...(entry.published === undefined ? {} : { expectedPublishedSnapshotId: entry.published.id }),
       expectedRevision: input.expectedRevision,
     });
-  }
-
-  private async dispatchBuild(
-    result: PublishContentEntryResult,
-    actor: Actor,
-  ): Promise<BuildDispatchOutcome> {
-    if (result.outcome === "replayed") return { status: "not-dispatched" };
-    if (this.dependencies.siteBuildTrigger === undefined) return { status: "unavailable" };
-    const exportContent = await this.dependencies.content.exportBuildContent();
-    try {
-      const build = await this.dependencies.siteBuildTrigger.trigger({
-        requestedAt: this.dependencies.clock.now(),
-        requestedBy: actor,
-        targetVersion: exportContent.version,
-      });
-      return build.accepted
-        ? { ...(build.buildId === undefined ? {} : { buildId: build.buildId }), status: "accepted" }
-        : { status: "rejected" };
-    } catch {
-      return { status: "unavailable" };
-    }
   }
 
   private async entry(entryId: ContentEntryId): Promise<ContentEntry> {

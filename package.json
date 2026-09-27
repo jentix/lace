@@ -28,6 +28,7 @@
     "spec:validate": "pnpm exec openspec validate --all --strict --no-interactive",
     "test": "turbo run test && vitest run tests --exclude 'tests/fixtures/**'",
     "test:integration": "node scripts/not-implemented.mjs test:integration failure",
+    "test:vps": "node tests/vps-build.integration.mjs",
     "typecheck": "turbo run typecheck && pnpm typecheck:config",
     "typecheck:config": "tsc -p tsconfig.project.json"
   },

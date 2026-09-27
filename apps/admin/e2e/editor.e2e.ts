@@ -96,7 +96,7 @@ async function mockEditor(page: Page, role: Role, onRequest?: (route: Route) => 
         published: { ...current.draft, id: "published-1", state: "published" },
       };
       return json(route, {
-        build: { status: "accepted" },
+        build: { status: "queued", targetVersion: 1 },
         entry: current,
         publication: "published",
       });

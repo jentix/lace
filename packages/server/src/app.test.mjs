@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { createLaceApp } from "../dist/index.js";
-import { ContentUseCases, MediaUseCases } from "@lacecms/application";
+import { ContentUseCases, MediaUseCases, SiteBuildUseCases } from "@lacecms/application";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { defineBlock, field } from "@lacecms/content";
 import {
@@ -28,6 +28,7 @@ async function fixture({
   allowed = true,
   maxBodyBytes = 256,
   models,
+  builds,
 } = {}) {
   const config = await defineConfig({
     blocks: [
@@ -80,6 +81,7 @@ async function fixture({
     adminAssets: { fetch: async () => new Response("admin-shell") },
     config,
     content,
+    ...(builds === undefined ? {} : { builds }),
     environment: { engineVersion: "0.0.0-test", openApiTitle: "Lace test" },
     logger: { log: (entry) => logs.push(entry) },
     maxBodyBytes,
@@ -101,6 +103,78 @@ async function fixture({
   });
   return { app, content, exportLoads: () => exportLoads, logs, media, storage, store };
 }
+
+test("admin build routes queue strict requests without running a trigger", async () => {
+  const calls = [];
+  const builds = new SiteBuildUseCases({
+    clock: { now: () => unixMilliseconds(1) },
+    builds: {
+      listSiteBuilds: async () => [],
+      getSiteBuild: async () => null,
+      requestBuild: async (input) => {
+        calls.push(input);
+        return { coalesced: false, eventId: "event-1", targetVersion: 4 };
+      },
+    },
+  });
+  const { app } = await fixture({ builds });
+  const post = (path, body) =>
+    app.fetch(
+      new Request(`https://lace.test${path}`, {
+        method: "POST",
+        ...(body === undefined
+          ? {}
+          : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
+      }),
+    );
+  expect((await post("/api/v1/admin/builds")).status).toBe(202);
+  expect((await post("/api/v1/admin/builds/failed-1/retry", {})).status).toBe(202);
+  expect(calls).toMatchObject([{}, { retryOfBuildId: "failed-1" }]);
+  expect((await post("/api/v1/admin/builds", { command: "echo secret" })).status).toBe(422);
+  expect(calls).toHaveLength(2);
+  const editorApp = (await fixture({ actor: editor, builds })).app;
+  expect(
+    (
+      await editorApp.fetch(
+        new Request("https://lace.test/api/v1/admin/builds", { method: "POST" }),
+      )
+    ).status,
+  ).toBe(403);
+  expect(calls).toHaveLength(2);
+});
+
+test("authenticated build reads expose persisted history and missing detail", async () => {
+  const build = {
+    id: "build-1",
+    reason: "publication",
+    status: "failed",
+    targetVersion: 3,
+    requestedBy: "admin",
+    requestedAt: unixMilliseconds(1_000),
+    startedAt: unixMilliseconds(2_000),
+    completedAt: unixMilliseconds(3_000),
+    error: "provider_failed",
+  };
+  const builds = new SiteBuildUseCases({
+    clock: { now: () => unixMilliseconds(1) },
+    builds: {
+      listSiteBuilds: async () => [build],
+      getSiteBuild: async (id) => (id === build.id ? build : null),
+      requestBuild: async () => ({ coalesced: false, eventId: "event-1", targetVersion: 3 }),
+    },
+  });
+  const { app } = await fixture({ actor: editor, builds });
+  const get = (path) => app.fetch(new Request(`https://lace.test${path}`));
+  expect(await (await get("/api/v1/admin/site-builds")).json()).toMatchObject({
+    items: [{ id: "build-1", targetVersion: 3, error: "provider_failed" }],
+  });
+  expect((await get("/api/v1/admin/site-builds/build-1")).status).toBe(200);
+  expect((await get("/api/v1/admin/site-builds/missing")).status).toBe(404);
+  const anonymous = (await fixture({ actor: null, builds })).app;
+  expect(
+    (await anonymous.fetch(new Request("https://lace.test/api/v1/admin/site-builds"))).status,
+  ).toBe(403);
+});
 
 test("mounts authentication before API and admin fallbacks", async () => {
   const { app } = await fixture({
@@ -289,7 +363,7 @@ test("validates admin requests, rejects anonymous actors, and protects fallbacks
     }),
   ).toMatchObject({
     body: {
-      build: { status: "unavailable" },
+      build: { status: "queued" },
       entry: { published: { state: "published" } },
       publication: "published",
     },

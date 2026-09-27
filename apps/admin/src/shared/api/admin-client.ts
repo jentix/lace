@@ -3,6 +3,9 @@ import {
   buildTokenCreatedSchema,
   buildTokenListSchema,
   buildTokenSchema,
+  buildQueueReceiptSchema,
+  siteBuildRecordSchema,
+  siteBuildListSchema,
   adminContentEntrySchema,
   contentEntryListSchema,
   contentModelListSchema,
@@ -19,6 +22,9 @@ import {
   type BuildTokenCreatedDto,
   type BuildTokenDto,
   type BuildTokenListDto,
+  type BuildQueueReceiptDto,
+  type SiteBuildRecordDto,
+  type SiteBuildListDto,
   type ContractValidationIssue,
   type AdminContentEntryDto,
   type ContentEntrySortDto,
@@ -37,6 +43,8 @@ import {
 import * as v from "valibot";
 
 export const adminQueryKeys = Object.freeze({
+  builds: ["admin", "builds"] as const,
+  buildDetail: (buildId: string) => ["admin", "builds", buildId] as const,
   settingsStatus: ["admin", "settings", "status"] as const,
   tokens: ["admin", "tokens"] as const,
   users: ["admin", "users"] as const,
@@ -93,6 +101,10 @@ export class AdminClientError extends Error {
 }
 
 export interface AdminClient {
+  listBuilds(): Promise<SiteBuildListDto>;
+  getBuild(buildId: string): Promise<SiteBuildRecordDto>;
+  requestBuild(): Promise<BuildQueueReceiptDto>;
+  retryBuild(buildId: string): Promise<BuildQueueReceiptDto>;
   createUser(input: {
     email: string;
     password: string;
@@ -307,6 +319,25 @@ export function createAdminClient(injected?: Fetcher, uploader?: MediaUploader):
       ? xhrUploader
       : fetchUploader(fetcher));
   return Object.freeze({
+    listBuilds: async () =>
+      parse(siteBuildListSchema, await request(fetcher, "/api/v1/admin/site-builds")),
+    getBuild: async (buildId: string) =>
+      parse(
+        siteBuildRecordSchema,
+        await request(fetcher, `/api/v1/admin/site-builds/${encodeURIComponent(buildId)}`),
+      ),
+    requestBuild: async () =>
+      parse(
+        buildQueueReceiptSchema,
+        await request(fetcher, "/api/v1/admin/builds", { method: "POST" }),
+      ),
+    retryBuild: async (buildId: string) =>
+      parse(
+        buildQueueReceiptSchema,
+        await request(fetcher, `/api/v1/admin/builds/${encodeURIComponent(buildId)}/retry`, {
+          method: "POST",
+        }),
+      ),
     createUser: async (input: Parameters<AdminClient["createUser"]>[0]) =>
       parse(
         managedUserSchema,

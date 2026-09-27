@@ -1,4 +1,4 @@
-import { ContentUseCases, MediaUseCases } from "@lacecms/application";
+import { ContentUseCases, MediaUseCases, SiteBuildUseCases } from "@lacecms/application";
 import type {
   Cache,
   Clock,
@@ -14,6 +14,7 @@ import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
   type ActorResolver,
+  type BuiltAdminResponder,
   type LaceAppInput,
   type ReadinessProbe,
   type RequestIdGenerator,
@@ -27,6 +28,8 @@ import { openNodeDatabase, type NodeDatabase } from "./index.js";
 import { NodeSharpImageInspector } from "./image-inspector.js";
 import { NodeMinioObjectStorage, type NodeMinioSettings } from "./minio-storage.js";
 import { NodeMediaDeletionDispatcher } from "./media-deletion-dispatcher.js";
+import { NodeSiteBuildDispatcher } from "./site-build-dispatcher.js";
+import { NodeBuilderSiteBuildTrigger, type NodeBuilderTriggerSettings } from "./builder-trigger.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -52,6 +55,7 @@ export interface NodeRuntimeSettings {
   readonly port: number;
   readonly publicBaseUrl: URL;
   readonly siteDevOrigin?: URL;
+  readonly builder?: Pick<NodeBuilderTriggerSettings, "baseUrl" | "secret">;
 }
 
 function requiredString(
@@ -145,6 +149,14 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     issues,
     { originOnly: true },
   );
+  const builderUrl = absoluteHttpUrl(environment.LACE_BUILDER_URL, "LACE_BUILDER_URL", issues, {
+    originOnly: true,
+  });
+  const builderSecret = environment.LACE_BUILDER_SECRET;
+  if (builderUrl !== undefined && (builderSecret === undefined || builderSecret.length < 32))
+    issues.push({ reason: "invalid", variable: "LACE_BUILDER_SECRET" });
+  if (builderUrl === undefined && builderSecret !== undefined)
+    issues.push({ reason: "invalid", variable: "LACE_BUILDER_URL" });
   const minioAccessKeyId = requiredString(environment, "LACE_MINIO_ACCESS_KEY", issues);
   const minioBucket = requiredString(environment, "LACE_MINIO_BUCKET", issues);
   if (minioBucket !== undefined && !validBucket(minioBucket)) {
@@ -197,6 +209,9 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     port,
     publicBaseUrl,
     ...(siteDevOrigin === undefined ? {} : { siteDevOrigin }),
+    ...(builderUrl === undefined || builderSecret === undefined
+      ? {}
+      : { builder: { baseUrl: builderUrl, secret: builderSecret } }),
   });
 }
 
@@ -239,8 +254,11 @@ export class NodePlaceholderObjectStorage implements ObjectStorage {
 }
 
 export class NoopNodeBuildTrigger implements SiteBuildTrigger {
-  public async trigger(): Promise<{ readonly accepted: false }> {
-    return { accepted: false };
+  public async trigger(): Promise<{
+    readonly status: "failed";
+    readonly reason: "trigger_unavailable";
+  }> {
+    return { status: "failed", reason: "trigger_unavailable" };
   }
 }
 
@@ -309,6 +327,7 @@ export const defaultNodeLogger: ServerLogger = Object.freeze({
 });
 
 export interface CreateNodeRuntimeInput {
+  readonly adminAssets?: BuiltAdminResponder;
   readonly actors?: ActorResolver;
   readonly auth?: { readonly actors: ActorResolver; fetch(request: Request): Promise<Response> };
   readonly config: NormalizedConfig<readonly ContentModelDefinition[]>;
@@ -320,6 +339,7 @@ export interface CreateNodeRuntimeInput {
   readonly requestIds?: RequestIdGenerator;
   readonly settings: NodeRuntimeSettings;
   readonly storage?: ObjectStorage;
+  readonly buildTrigger?: SiteBuildTrigger;
 }
 
 export interface NodeRuntime {
@@ -330,6 +350,7 @@ export interface NodeRuntime {
   readonly media: MediaUseCases;
   readonly database: NodeDatabase;
   readonly deletionDispatcher: NodeMediaDeletionDispatcher;
+  readonly buildDispatcher: NodeSiteBuildDispatcher;
   readonly readiness: ReadinessProbe;
   readonly repository: NodeContentRepository;
   readonly security: NodeSecurityService;
@@ -376,7 +397,20 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     storage,
     work: repository,
   });
-  const buildTrigger = new NoopNodeBuildTrigger();
+  const buildTrigger =
+    input.buildTrigger ??
+    (input.settings.builder === undefined
+      ? new NoopNodeBuildTrigger()
+      : new NodeBuilderSiteBuildTrigger(input.settings.builder));
+  const builds = new SiteBuildUseCases({ builds: repository, clock });
+  const buildDispatcher = new NodeSiteBuildDispatcher({
+    clock,
+    logger: {
+      error: (entry) => console.error(JSON.stringify({ component: "site-build", ...entry })),
+    },
+    trigger: buildTrigger,
+    work: repository,
+  });
   const readiness = new NodeSqliteReadiness(database.connection);
   const content = new ContentUseCases({
     clock,
@@ -384,7 +418,6 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     content: repository,
     idGenerator: ids,
     media: repository,
-    siteBuildTrigger: buildTrigger,
   });
   const media = new MediaUseCases({
     clock,
@@ -407,8 +440,10 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
       secret: input.settings.authSecret,
     });
   const app = createLaceApp({
+    ...(input.adminAssets === undefined ? {} : { adminAssets: input.adminAssets }),
     actors: input.actors ?? auth.actors,
     auth,
+    builds,
     config: input.config,
     content,
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },
@@ -429,6 +464,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     content,
     database,
     deletionDispatcher,
+    buildDispatcher,
     media,
     readiness,
     repository,

@@ -56,6 +56,110 @@
         }
       }
     },
+    "/api/v1/admin/builds": {
+      "post": {
+        "operationId": "postApiV1AdminBuilds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "coalesced": {
+                      "type": "boolean"
+                    },
+                    "eventId": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "targetVersion": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["coalesced", "eventId", "targetVersion"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Build request queued"
+          }
+        },
+        "summary": "Request a site build",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/builds/{buildId}/retry": {
+      "post": {
+        "operationId": "postApiV1AdminBuildsByBuildIdRetry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "buildId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "coalesced": {
+                      "type": "boolean"
+                    },
+                    "eventId": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "targetVersion": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["coalesced", "eventId", "targetVersion"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Failed build retry queued"
+          }
+        },
+        "summary": "Retry a failed site build",
+        "tags": ["admin"]
+      }
+    },
     "/api/v1/admin/content-models": {
       "get": {
         "operationId": "getApiV1AdminContentModels",
@@ -884,16 +988,15 @@
                         {
                           "additionalProperties": false,
                           "properties": {
-                            "buildId": {
-                              "maxLength": 255,
-                              "minLength": 1,
-                              "type": "string"
-                            },
                             "status": {
-                              "const": "accepted"
+                              "const": "queued"
+                            },
+                            "targetVersion": {
+                              "minimum": 0,
+                              "type": "integer"
                             }
                           },
-                          "required": ["status"],
+                          "required": ["status", "targetVersion"],
                           "type": "object"
                         },
                         {
@@ -901,26 +1004,6 @@
                           "properties": {
                             "status": {
                               "const": "not-dispatched"
-                            }
-                          },
-                          "required": ["status"],
-                          "type": "object"
-                        },
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "status": {
-                              "const": "rejected"
-                            }
-                          },
-                          "required": ["status"],
-                          "type": "object"
-                        },
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "status": {
-                              "const": "unavailable"
                             }
                           },
                           "required": ["status"],
@@ -2535,6 +2618,157 @@
           }
         },
         "summary": "Create content entry",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/site-builds": {
+      "get": {
+        "operationId": "getApiV1AdminSiteBuilds",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "completedAt": {},
+                          "error": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "id": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "providerBuildId": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "reason": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "requestedAt": {},
+                          "requestedBy": {
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "startedAt": {},
+                          "status": {
+                            "enum": ["failed", "pending", "running", "succeeded"]
+                          },
+                          "targetVersion": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "reason",
+                          "status",
+                          "targetVersion",
+                          "requestedBy",
+                          "requestedAt"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": ["items"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Recent site builds"
+          }
+        },
+        "summary": "List site builds",
+        "tags": ["admin"]
+      }
+    },
+    "/api/v1/admin/site-builds/{buildId}": {
+      "get": {
+        "operationId": "getApiV1AdminSiteBuildsByBuildId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "buildId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "completedAt": {},
+                    "error": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "id": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "providerBuildId": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "reason": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "requestedAt": {},
+                    "requestedBy": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "startedAt": {},
+                    "status": {
+                      "enum": ["failed", "pending", "running", "succeeded"]
+                    },
+                    "targetVersion": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "reason",
+                    "status",
+                    "targetVersion",
+                    "requestedBy",
+                    "requestedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Site build detail"
+          }
+        },
+        "summary": "Get a site build",
         "tags": ["admin"]
       }
     },

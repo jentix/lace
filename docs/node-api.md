@@ -60,7 +60,8 @@ ignored `.env` and restart the stack. The site process uses
 available to browser code. See the [README](../README.md#show-published-content-on-the-local-site)
 for the Settings token flow and refresh commands. A draft save alone does not
 change the site; restart Astro after publication to refresh cached routes and
-content. There is no automatic build dispatch in the local workflow yet.
+content. The local stack does not yet schedule site-build dispatch; Step 21C
+adds its separate recovery process.
 
 For an isolated local product acceptance run, use `pnpm acceptance:start`,
 `pnpm --filter @lacecms/app-admin test:acceptance`, and
@@ -192,7 +193,27 @@ followed by an atomic removal of its still-unreferenced `deleting` metadata.
 
 ## Current boundaries
 
-The cache always misses and the build trigger reports unavailable. The Node
-runtime streams verified MinIO media through authenticated previews and stable
-published-media URLs; external build dispatch remains later work. The test actor is a Vitest-only adapter and is never enabled
-by a request header, query string, or production environment variable.
+The cache always misses. Publication writes a coalesced site-build event in the
+same transaction as the new public version and returns `build: { "status":
+"queued", "targetVersion": N }`; an idempotent replay returns
+`not-dispatched`. It does not call a builder in the request. The Node runtime
+exposes one callable `buildDispatcher.runOnce()` pass with a 5-second debounce,
+60-second lease, and full-jitter retries starting at 5 seconds (15-minute cap,
+8 total attempts). A claimed event creates a `site_builds` row. The current
+placeholder trigger records a sanitized `trigger_unavailable` retry; Step 21B
+supplies the fixed-command builder and Step 21C supplies the independent
+recovery loop and Builds UI.
+
+Administrators can enqueue a build with `POST /api/v1/admin/builds` or retry a
+failed build with `POST /api/v1/admin/builds/:buildId/retry`. Both accept an empty
+JSON object (or no body), reject unknown keys, and return `202 Accepted` with
+`{ "eventId": "...", "targetVersion": N, "coalesced": false }`. Retry targets
+the current published version even when the failed build targeted an older one.
+Editors, viewers, and anonymous callers cannot enqueue either action. These
+routes never accept a command, path, environment variable, or arbitrary builder
+argument.
+
+The Node runtime streams verified MinIO media through authenticated previews
+and stable published-media URLs. The test actor is a Vitest-only adapter and is
+never enabled by a request header, query string, or production environment
+variable.
