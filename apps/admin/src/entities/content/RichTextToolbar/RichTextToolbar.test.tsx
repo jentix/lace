@@ -58,6 +58,9 @@ test("toggles marks and changes the text style", async () => {
   editor().commands.selectAll();
   await user.click(screen.getByRole("button", { name: "Italic" }));
   expect(editor().getJSON().content?.[0]?.content?.[0]?.marks).toEqual([{ type: "italic" }]);
+  // Tiptap focuses the text on the next animation frame; let that land before
+  // moving focus to the style menu, or it would take focus back mid-test.
+  await waitFor(() => expect(editor().view.dom).toHaveFocus());
 
   screen.getByRole("combobox", { name: "Text style" }).focus();
   await user.keyboard("{Enter}");

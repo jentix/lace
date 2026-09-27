@@ -1,8 +1,15 @@
 name: CI
 
+# Pull requests are checked through `pull_request`; `push` covers only main, so a
+# branch with an open pull request is not checked twice per commit.
 on:
   pull_request:
   push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   quality:
