@@ -51,7 +51,7 @@ export function EntryEditorActions({
           {state.kind === "saving" ? "Saving…" : "Save"}
           <kbd
             aria-hidden="true"
-            className="hidden rounded-sm border border-border bg-muted px-1 font-sans text-[0.625rem] text-muted-foreground sm:inline"
+            className="hidden rounded-sm border border-border bg-muted px-1 font-sans text-xs text-muted-foreground sm:inline"
           >
             {saveShortcutLabel()}
           </kbd>

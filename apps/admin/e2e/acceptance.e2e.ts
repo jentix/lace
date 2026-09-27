@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+import { expectNoAccessibilityViolations } from "./support/accessibility.js";
 
 const root = resolve(import.meta.dirname, "../../..");
 const acceptanceDirectory = resolve(root, ".lace-acceptance");
@@ -54,6 +55,7 @@ test("administrator completes the local editorial flow and preserves published o
   const sidebar = page.getByRole("complementary", { name: "Admin navigation" });
   await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible();
   await expect(main.getByRole("link", { name: "home" })).toBeVisible();
+  await expectNoAccessibilityViolations(page, "content home");
   await main.getByRole("link", { name: "notes" }).click();
   await expect(page.getByText("No entries yet")).toBeVisible();
 
@@ -75,6 +77,7 @@ test("administrator completes the local editorial flow and preserves published o
       .getByRole("list", { name: "Media library" })
       .getByRole("button", { name: "acceptance.png" }),
   ).toBeVisible();
+  await expectNoAccessibilityViolations(page, "media library");
 
   await sidebar.getByRole("link", { name: "Content", exact: true }).click();
   await main.getByRole("link", { name: "home" }).click();
@@ -95,6 +98,7 @@ test("administrator completes the local editorial flow and preserves published o
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Confirm publication" }).click();
   await expect(page.getByRole("region", { name: "Publication status" })).toContainText("Published");
+  await expectNoAccessibilityViolations(page, "entry editor");
 
   await sidebar.getByRole("link", { name: "Content", exact: true }).click();
   await main.getByRole("link", { name: "notes" }).click();
@@ -107,6 +111,8 @@ test("administrator completes the local editorial flow and preserves published o
     .getByRole("dialog", { name: "Create entry" })
     .getByRole("button", { name: "Create entry" })
     .click();
+  await expect(main.getByRole("link", { name: "Acceptance note" })).toBeVisible();
+  await expectNoAccessibilityViolations(page, "collection list");
   await main.getByRole("link", { name: "Acceptance note" }).click();
   await page.getByRole("textbox", { name: "Slug" }).fill("acceptance-note");
   await page.getByRole("button", { name: "Save draft" }).click();
@@ -136,6 +142,7 @@ test("administrator completes the local editorial flow and preserves published o
   );
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByTestId("issued-token-value")).toHaveCount(0);
+  await expectNoAccessibilityViolations(page, "settings");
   const restart = spawnSync("pnpm", ["acceptance:restart-site"], { cwd: root, encoding: "utf8" });
   expect(restart.status, restart.stderr).toBe(0);
   await expect.poll(async () => (await request.get(`${origin}/`)).status()).toBe(200);
@@ -188,6 +195,7 @@ test("administrator completes the local editorial flow and preserves published o
         .getByRole("row", { name: new RegExp(`acceptance-${role}@example\\.test`, "u") }),
     ).toBeVisible();
   }
+  await expectNoAccessibilityViolations(page, "users");
   for (const role of ["editor", "viewer"] as const) {
     const member = await browser.newPage();
     await member.goto(`${origin}/admin/login`);

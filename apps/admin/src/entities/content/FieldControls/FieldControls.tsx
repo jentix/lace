@@ -95,7 +95,13 @@ function SelectField({
       onOpenChange={(open) => {
         if (!open) onBlur();
       }}
-      onValueChange={(next) => onChange(next === noSelection ? undefined : next)}
+      onValueChange={(next) => {
+        // Inside a form, Radix mirrors the value into a hidden native select
+        // that reports "" before its options mount. No item can have an
+        // empty value, so "" is never a user choice and must not dirty the form.
+        if (next === "") return;
+        onChange(next === noSelection ? undefined : next);
+      }}
       value={typeof value === "string" ? value : ""}
     >
       <SelectTrigger

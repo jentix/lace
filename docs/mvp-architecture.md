@@ -1416,7 +1416,18 @@ spacing, radius, shadow, focus, and motion tokens. One theme file in the admin
 source is the only place that may contain color values; Tailwind's default
 color palette is removed and components are styled only through utilities that
 resolve to tokens. `pnpm lint` rejects raw color literals elsewhere in admin
-source.
+source, and arbitrary utility values that stand in for a typography, radius,
+shadow, focus-width, or motion token. Layout values such as widths and grid
+tracks may stay arbitrary.
+
+### Accessibility acceptance
+
+Every admin route and main dialog is audited in the browser with axe against
+the WCAG 2.x A and AA rules, and any violation fails the suite. No rule is
+disabled globally. The same browser suite completes the main editorial flow
+with the keyboard alone, checks visible focus along it, and checks 375px
+layouts, including the entry column stacking below the blocks. The local
+product acceptance walkthrough repeats the audits on real data.
 
 The MVP ships the light theme only. Token values are scoped by a `data-theme`
 selector on the document root so a dark theme can be added later by supplying
@@ -1552,6 +1563,7 @@ The static Astro site does not require the Cloudflare Astro SSR adapter.
 - `react-dropzone` for file selection and drag-and-drop upload;
 - `react-day-picker` for date selection;
 - `@fontsource-variable/inter` for the self-hosted Inter font;
+- `@axe-core/playwright` for browser accessibility audits (test only);
 - shared contract and content packages.
 
 The admin does not adopt a themed component library as a runtime dependency.

@@ -479,6 +479,10 @@ The entry editor SHALL place its save-state indicator, its single Save action, a
 - **WHEN** a collection entry with model fields is opened at a wide viewport
 - **THEN** the title and blocks appear in the main column and the publication details, slug, and model fields appear in the right-hand column
 
+#### Scenario: The entry column stacks on a narrow screen
+- **WHEN** a collection entry with model fields is opened at a 375px-wide viewport
+- **THEN** the publication details and entry fields appear below the last block, keyboard focus reaches them after the block controls, and the page does not scroll horizontally
+
 ### Requirement: Viewers see the editor read-only
 When the signed-in role is `viewer`, the entry editor SHALL present the draft without Save, the save shortcut, or Publish. It SHALL present its field, slug, title, rich-text, and block controls as non-editable, and the save-state indicator SHALL read that the entry is view only. Media fields SHALL show their selected item without Choose media, Replace, or Remove. The API SHALL remain the authorization boundary for any request made independently of the editor.
 
