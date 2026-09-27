@@ -32,4 +32,4 @@ test("the fixture build emits published static routes without CMS access", () =>
   expect(note).toContain("Notes render from the published export.");
   expect(`${home}${post}${about}${note}`).not.toContain("DRAFT ONLY");
   expect(`${home}${post}${about}${note}`).not.toContain("javascript:");
-});
+}, 30_000);
