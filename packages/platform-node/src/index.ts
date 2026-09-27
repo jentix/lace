@@ -11,6 +11,7 @@ export * from "./content-sync.js";
 export * from "./image-inspector.js";
 export * from "./minio-storage.js";
 export * from "./media-deletion-dispatcher.js";
+export * from "./site-build-dispatcher.js";
 export * from "./runtime.js";
 export * from "./security.js";
 

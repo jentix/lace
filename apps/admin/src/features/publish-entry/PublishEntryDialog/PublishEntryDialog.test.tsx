@@ -58,8 +58,6 @@ test("disables the trigger and describes build dispatch outcomes separately", ()
     />,
   );
   expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
-  expect(buildDispatchDescription("accepted")).toBe("Published. Build pending.");
-  expect(buildDispatchDescription("unavailable")).toContain(
-    "build dispatch is currently unavailable",
-  );
+  expect(buildDispatchDescription("queued")).toBe("Published. Build pending.");
+  expect(buildDispatchDescription("not-dispatched")).toContain("no new build was requested");
 });

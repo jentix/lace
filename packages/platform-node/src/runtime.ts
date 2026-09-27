@@ -1,4 +1,4 @@
-import { ContentUseCases, MediaUseCases } from "@lacecms/application";
+import { ContentUseCases, MediaUseCases, SiteBuildUseCases } from "@lacecms/application";
 import type {
   Cache,
   Clock,
@@ -27,6 +27,7 @@ import { openNodeDatabase, type NodeDatabase } from "./index.js";
 import { NodeSharpImageInspector } from "./image-inspector.js";
 import { NodeMinioObjectStorage, type NodeMinioSettings } from "./minio-storage.js";
 import { NodeMediaDeletionDispatcher } from "./media-deletion-dispatcher.js";
+import { NodeSiteBuildDispatcher } from "./site-build-dispatcher.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -239,8 +240,11 @@ export class NodePlaceholderObjectStorage implements ObjectStorage {
 }
 
 export class NoopNodeBuildTrigger implements SiteBuildTrigger {
-  public async trigger(): Promise<{ readonly accepted: false }> {
-    return { accepted: false };
+  public async trigger(): Promise<{
+    readonly status: "failed";
+    readonly reason: "trigger_unavailable";
+  }> {
+    return { status: "failed", reason: "trigger_unavailable" };
   }
 }
 
@@ -320,6 +324,7 @@ export interface CreateNodeRuntimeInput {
   readonly requestIds?: RequestIdGenerator;
   readonly settings: NodeRuntimeSettings;
   readonly storage?: ObjectStorage;
+  readonly buildTrigger?: SiteBuildTrigger;
 }
 
 export interface NodeRuntime {
@@ -330,6 +335,7 @@ export interface NodeRuntime {
   readonly media: MediaUseCases;
   readonly database: NodeDatabase;
   readonly deletionDispatcher: NodeMediaDeletionDispatcher;
+  readonly buildDispatcher: NodeSiteBuildDispatcher;
   readonly readiness: ReadinessProbe;
   readonly repository: NodeContentRepository;
   readonly security: NodeSecurityService;
@@ -376,7 +382,16 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     storage,
     work: repository,
   });
-  const buildTrigger = new NoopNodeBuildTrigger();
+  const buildTrigger = input.buildTrigger ?? new NoopNodeBuildTrigger();
+  const builds = new SiteBuildUseCases({ builds: repository, clock });
+  const buildDispatcher = new NodeSiteBuildDispatcher({
+    clock,
+    logger: {
+      error: (entry) => console.error(JSON.stringify({ component: "site-build", ...entry })),
+    },
+    trigger: buildTrigger,
+    work: repository,
+  });
   const readiness = new NodeSqliteReadiness(database.connection);
   const content = new ContentUseCases({
     clock,
@@ -384,7 +399,6 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     content: repository,
     idGenerator: ids,
     media: repository,
-    siteBuildTrigger: buildTrigger,
   });
   const media = new MediaUseCases({
     clock,
@@ -409,6 +423,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
   const app = createLaceApp({
     actors: input.actors ?? auth.actors,
     auth,
+    builds,
     config: input.config,
     content,
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },
@@ -429,6 +444,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     content,
     database,
     deletionDispatcher,
+    buildDispatcher,
     media,
     readiness,
     repository,

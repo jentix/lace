@@ -47,7 +47,7 @@ test("an unpublished entry and a requested build are described without claiming 
   renderInRouter(
     <EntryPublicationDetails
       entry={{ ...draftEntry, model: { key: "home", kind: "page", path: "/" } }}
-      latestBuild="accepted"
+      latestBuild="queued"
       model={models.items[0]!}
     />,
   );

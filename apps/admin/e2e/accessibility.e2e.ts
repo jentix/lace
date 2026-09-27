@@ -249,7 +249,7 @@ async function mockAdmin(page: Page, options: { role?: Role; signedIn?: boolean 
           published: { ...current.draft, id: `${single[1]}-published`, state: "published" },
         };
         return json(route, {
-          build: { status: "accepted" },
+          build: { status: "queued", targetVersion: 1 },
           entry: entries[single[1]!],
           publication: "published",
         });

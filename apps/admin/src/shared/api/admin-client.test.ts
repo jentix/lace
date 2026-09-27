@@ -374,14 +374,18 @@ test("publishes with one validated idempotency key and rejects malformed publish
     updatedBy: { displayName: "editor@lace.test", id: "editor-1" },
   };
   const fetcher = vi.fn(async () =>
-    Response.json({ build: { status: "unavailable" }, entry, publication: "published" }),
+    Response.json({
+      build: { status: "queued", targetVersion: 1 },
+      entry,
+      publication: "published",
+    }),
   );
   await expect(
     createAdminClient(fetcher).publishEntry("entry-1", {
       expectedRevision: 3,
       idempotencyKey: "publish-attempt-1",
     }),
-  ).resolves.toMatchObject({ build: { status: "unavailable" }, publication: "published" });
+  ).resolves.toMatchObject({ build: { status: "queued" }, publication: "published" });
   expect(fetcher).toHaveBeenCalledWith(
     "/api/v1/admin/entries/entry-1/publish",
     expect.objectContaining({

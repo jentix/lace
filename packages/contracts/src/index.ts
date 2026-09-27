@@ -284,10 +284,8 @@ export const adminContentEntrySchema = v.strictObject({
 
 export const publicationOutcomeSchema = v.picklist(["published", "replayed"]);
 export const buildDispatchOutcomeSchema = v.variant("status", [
-  v.strictObject({ buildId: v.optional(identifierSchema), status: v.literal("accepted") }),
+  v.strictObject({ status: v.literal("queued"), targetVersion: nonNegativeIntegerSchema }),
   v.strictObject({ status: v.literal("not-dispatched") }),
-  v.strictObject({ status: v.literal("rejected") }),
-  v.strictObject({ status: v.literal("unavailable") }),
 ]);
 export const publishContentEntryResultSchema = v.strictObject({
   build: buildDispatchOutcomeSchema,
@@ -470,6 +468,13 @@ export const buildTokenCreatedSchema = v.strictObject({
   token: v.string(),
 });
 export const buildTokenListSchema = v.strictObject({ items: v.array(buildTokenSchema) });
+export const buildRequestSchema = v.strictObject({});
+export const buildQueueReceiptSchema = v.strictObject({
+  coalesced: v.boolean(),
+  eventId: identifierSchema,
+  targetVersion: nonNegativeIntegerSchema,
+});
+export type BuildQueueReceiptDto = v.InferOutput<typeof buildQueueReceiptSchema>;
 export type BuildTokenDto = v.InferOutput<typeof buildTokenSchema>;
 export type BuildTokenCreatedDto = v.InferOutput<typeof buildTokenCreatedSchema>;
 export type BuildTokenListDto = v.InferOutput<typeof buildTokenListSchema>;
@@ -683,19 +688,16 @@ export function toAdminContentEntryDto(
 /** Maps the portable publication command outcome without exposing application internals. */
 export function toPublishContentEntryResultDto(input: {
   readonly build:
-    | Readonly<{ readonly buildId?: string; readonly status: "accepted" }>
-    | Readonly<{ readonly status: "not-dispatched" | "rejected" | "unavailable" }>;
+    | Readonly<{ readonly status: "queued"; readonly targetVersion: number }>
+    | Readonly<{ readonly status: "not-dispatched" }>;
   readonly entry: ContentEntry;
   readonly publication: "published" | "replayed";
   readonly updatedBy: { readonly displayName: string; readonly id: string };
 }): PublishContentEntryResultDto {
   return {
     build:
-      input.build.status === "accepted"
-        ? {
-            ...(input.build.buildId === undefined ? {} : { buildId: input.build.buildId }),
-            status: "accepted",
-          }
+      input.build.status === "queued"
+        ? { status: "queued", targetVersion: input.build.targetVersion }
         : { status: input.build.status },
     entry: toAdminContentEntryDto(input.entry, input.updatedBy),
     publication: input.publication,

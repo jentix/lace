@@ -21,6 +21,7 @@ import { requirePermission } from "@lacecms/domain";
 export const packageName = "@lacecms/application";
 
 export * from "./configuration-sync.js";
+export * from "./site-build-use-cases.js";
 
 export type OpaqueCursor = Brand<string, "OpaqueCursor">;
 export type OpaqueTokenSecret = Brand<string, "OpaqueTokenSecret">;
@@ -223,11 +224,18 @@ export interface ContentCommandResult {
 }
 
 /** A publication result distinguishes a fresh commit from an idempotent replay. */
-export interface PublishContentEntryResult {
-  readonly entry: ContentEntry;
-  readonly outcome: "published" | "replayed";
-  readonly status: "published";
-}
+export type PublishContentEntryResult =
+  | Readonly<{
+      readonly entry: ContentEntry;
+      readonly outcome: "published";
+      readonly status: "published";
+      readonly targetVersion: number;
+    }>
+  | Readonly<{
+      readonly entry: ContentEntry;
+      readonly outcome: "replayed";
+      readonly status: "published";
+    }>;
 
 /**
  * Specialized state-changing operations. These deliberately replace a generic
@@ -324,18 +332,68 @@ export interface Cache {
 }
 
 export interface SiteBuildRequest {
-  readonly requestedAt: UnixMilliseconds;
-  readonly requestedBy: Actor;
+  readonly buildId: SiteBuildId;
   readonly targetVersion: number;
 }
 
-export interface BuildTriggerResult {
-  readonly accepted: boolean;
-  readonly buildId?: SiteBuildId;
-}
+export type BuildTriggerResult =
+  | Readonly<{ readonly status: "accepted"; readonly providerBuildId: string }>
+  | Readonly<{ readonly status: "succeeded" }>
+  | Readonly<{ readonly status: "failed"; readonly reason: string }>;
 
 export interface SiteBuildTrigger {
   trigger(input: SiteBuildRequest): Promise<BuildTriggerResult>;
+}
+
+export interface BuildQueueReceipt {
+  readonly coalesced: boolean;
+  readonly eventId: DispatcherEventId;
+  readonly targetVersion: number;
+}
+
+export interface EnqueueSiteBuildInput {
+  readonly requestedAt: UnixMilliseconds;
+  readonly requestedBy: Actor;
+  readonly retryOfBuildId?: SiteBuildId;
+}
+
+export interface SiteBuildCommandPort {
+  requestBuild(input: EnqueueSiteBuildInput): Promise<BuildQueueReceipt>;
+}
+
+export interface SiteBuildWorkLease extends DispatcherLease {
+  readonly buildId: SiteBuildId;
+  readonly targetVersion: number;
+}
+
+export interface SiteBuildDispatchPort {
+  claimSiteBuilds(input: {
+    readonly limit: number;
+    readonly now: UnixMilliseconds;
+  }): Promise<readonly SiteBuildWorkLease[]>;
+  recordSiteBuildAccepted(input: {
+    readonly leaseId: DispatcherLeaseId;
+    readonly now: UnixMilliseconds;
+    readonly providerBuildId: string;
+  }): Promise<void>;
+  recordSiteBuildSuccess(input: {
+    readonly leaseId: DispatcherLeaseId;
+    readonly now: UnixMilliseconds;
+  }): Promise<void>;
+  recordSiteBuildFailure(input: {
+    readonly leaseId: DispatcherLeaseId;
+    readonly now: UnixMilliseconds;
+    readonly reason: string;
+    readonly retryAt?: UnixMilliseconds;
+    readonly terminal: boolean;
+  }): Promise<void>;
+  completeAcceptedSiteBuild(input: {
+    readonly buildId: SiteBuildId;
+    readonly providerBuildId: string;
+    readonly now: UnixMilliseconds;
+    readonly outcome: "succeeded" | "failed";
+    readonly reason?: string;
+  }): Promise<void>;
 }
 
 export interface Clock {
@@ -442,6 +500,7 @@ export interface DispatcherEvent {
 
 /** Fixed dispatcher timing keeps recovery semantics identical across runtimes. */
 export const DISPATCHER_LEASE_DURATION_MS = 60_000;
+export const SITE_BUILD_DEBOUNCE_MS = 5_000;
 
 export interface DispatcherRetryPolicy {
   readonly baseDelayMs: number;
@@ -451,6 +510,12 @@ export interface DispatcherRetryPolicy {
 
 export const defaultDispatcherRetryPolicy: DispatcherRetryPolicy = Object.freeze({
   baseDelayMs: 1_000,
+  maxAttempts: 8,
+  maxDelayMs: 15 * 60_000,
+});
+
+export const siteBuildRetryPolicy: DispatcherRetryPolicy = Object.freeze({
+  baseDelayMs: 5_000,
   maxAttempts: 8,
   maxDelayMs: 15 * 60_000,
 });

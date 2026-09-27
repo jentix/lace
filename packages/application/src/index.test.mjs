@@ -4,6 +4,11 @@ import {
   foldAscii,
   dispatcherEventId,
   dispatcherLeaseId,
+  dispatcherRetryDelay,
+  DISPATCHER_LEASE_DURATION_MS,
+  SITE_BUILD_DEBOUNCE_MS,
+  siteBuildRetryPolicy,
+  SiteBuildUseCases,
   checkConfigurationSynchronization,
   contentSyncActor,
   createConfigurationSyncPageEntry,
@@ -22,9 +27,42 @@ import {
   MediaUseCases,
 } from "../dist/index.js";
 import { DomainError } from "@lacecms/domain";
+import { unixMilliseconds } from "@lacecms/domain";
 import { defineCollection, defineConfig, definePage } from "@lacecms/config";
 import { field } from "@lacecms/content";
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/application"));
+
+test("site-build timing follows the fixed architecture defaults", () => {
+  expect(SITE_BUILD_DEBOUNCE_MS).toBe(5_000);
+  expect(DISPATCHER_LEASE_DURATION_MS).toBe(60_000);
+  expect(siteBuildRetryPolicy).toEqual({ baseDelayMs: 5_000, maxAttempts: 8, maxDelayMs: 900_000 });
+  expect(dispatcherRetryDelay(siteBuildRetryPolicy, 1, 0)).toBe(0);
+  expect(dispatcherRetryDelay(siteBuildRetryPolicy, 1, 0.999)).toBeLessThanOrEqual(5_000);
+  expect(dispatcherRetryDelay(siteBuildRetryPolicy, 8, 0.999)).toBeLessThanOrEqual(640_000);
+  expect(dispatcherRetryDelay(siteBuildRetryPolicy, 99, 0.999)).toBeLessThanOrEqual(900_000);
+});
+
+test("only administrators can enqueue manual or retry build commands", async () => {
+  const calls = [];
+  const useCases = new SiteBuildUseCases({
+    clock: { now: () => unixMilliseconds(42) },
+    builds: {
+      requestBuild: async (input) => {
+        calls.push(input);
+        return { coalesced: false, eventId: dispatcherEventId("event-1"), targetVersion: 3 };
+      },
+    },
+  });
+  const admin = { id: "admin-1", role: "admin" };
+  await expect(useCases.request(admin)).resolves.toMatchObject({ targetVersion: 3 });
+  await expect(useCases.retry(admin, "failed-1")).resolves.toMatchObject({ targetVersion: 3 });
+  expect(calls).toMatchObject([{ requestedAt: 42 }, { retryOfBuildId: "failed-1" }]);
+  for (const role of ["editor", "viewer"]) {
+    expect(() => useCases.request({ id: role, role })).toThrow(DomainError);
+    expect(() => useCases.retry({ id: role, role }, "failed-1")).toThrow(DomainError);
+  }
+  expect(calls).toHaveLength(2);
+});
 
 test("brands portable opaque values without exposing runtime dependencies", () => {
   expect(opaqueCursor("next-page")).toBe("next-page");

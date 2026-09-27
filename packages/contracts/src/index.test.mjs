@@ -161,7 +161,7 @@ describe("shared REST contract DTOs", () => {
     expect(v.parse(siteBuildSchema, buildDto)).toEqual(buildDto);
 
     const publishedResult = toPublishContentEntryResultDto({
-      build: { buildId: "build-1", status: "accepted" },
+      build: { status: "queued", targetVersion: 7 },
       entry,
       publication: "published",
       updatedBy: { displayName: "Editor", id: actor.id },
@@ -170,11 +170,11 @@ describe("shared REST contract DTOs", () => {
     expect(v.parse(publishContentEntryResultSchema, publishedResult)).toEqual(publishedResult);
     expect(
       v.parse(publishContentEntryResultSchema, {
-        build: { status: "unavailable" },
+        build: { status: "queued", targetVersion: 7 },
         entry: adminEntryDto,
         publication: "published",
       }),
-    ).toMatchObject({ build: { status: "unavailable" } });
+    ).toMatchObject({ build: { status: "queued" } });
     expect(
       v.parse(publishContentEntryResultSchema, {
         build: { status: "not-dispatched" },

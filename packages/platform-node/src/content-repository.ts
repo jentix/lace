@@ -2,6 +2,7 @@ import {
   actorDisplayName,
   ALLOWED_MEDIA_MIME_TYPES,
   DISPATCHER_LEASE_DURATION_MS,
+  SITE_BUILD_DEBOUNCE_MS,
   dispatcherEventId,
   foldAscii,
   MAX_CONTENT_ENTRY_SEARCH_LENGTH,
@@ -57,6 +58,11 @@ import type {
   PublicContentReadPort,
   SaveCompleteDraftInput,
   RetryDispatcherLeaseInput,
+  BuildQueueReceipt,
+  EnqueueSiteBuildInput,
+  SiteBuildCommandPort,
+  SiteBuildDispatchPort,
+  SiteBuildWorkLease,
   StoredContentModelState,
 } from "@lacecms/application";
 import {
@@ -67,6 +73,7 @@ import {
   contentModelKey,
   contentSnapshotId,
   resolveContentPublicPath,
+  siteBuildId,
   unixMilliseconds,
 } from "@lacecms/domain";
 import type {
@@ -293,6 +300,17 @@ function sanitizeDispatchError(value: string): string {
   );
 }
 
+function sanitizeBuildReason(value: string): string {
+  return [
+    "trigger_unavailable",
+    "provider_failed",
+    "build_timeout",
+    "invalid_build_event",
+  ].includes(value)
+    ? value
+    : "provider_failed";
+}
+
 function parseObject(value: string, label: string): JsonObject {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -511,7 +529,9 @@ export class NodeContentRepository
     MediaDeletionDispatchPort,
     MediaListPort,
     MediaReadPort,
-    PublicContentReadPort
+    PublicContentReadPort,
+    SiteBuildCommandPort,
+    SiteBuildDispatchPort
 {
   public constructor(
     private readonly connection: Database.Database,
@@ -818,7 +838,11 @@ export class NodeContentRepository
             "update content_entries set published_snapshot_id = ?, updated_at = ? where id = ?",
           )
           .run(input.publishedSnapshotId, input.publishedAt, input.entryId);
-        this.bumpPublicState(input.publishedAt, input.publishedBy.id, input.publishedSnapshotId);
+        const targetVersion = this.bumpPublicState(
+          input.publishedAt,
+          input.publishedBy.id,
+          input.publishedSnapshotId,
+        );
         const committed = this.loadEntry(input.entryId);
         if (committed === null) failure("Published content entry could not be reloaded.");
         if (input.idempotency !== undefined)
@@ -838,7 +862,12 @@ export class NodeContentRepository
           this.connection
             .prepare("delete from content_snapshots where id = ?")
             .run(entry.published.id);
-        return { entry: committed, outcome: "published" as const, status: "published" as const };
+        return {
+          entry: committed,
+          outcome: "published" as const,
+          status: "published" as const,
+          targetVersion,
+        };
       })();
       return result;
     } catch (error) {
@@ -1815,22 +1844,321 @@ export class NodeContentRepository
       .prepare("select version from published_state where singleton_key = 1")
       .get() as { readonly version: number };
     this.checkpoint("build-outbox");
-    const payload = JSON.stringify({
-      publishedSnapshotId: snapshotId,
+    this.enqueueSiteBuild({
+      reason: requestedBy === "system:content-sync" ? "configuration_sync" : "publication",
+      requestedAt: timestamp,
+      requestedBy,
+      snapshotId,
       targetVersion: state.version,
     });
-    this.connection
+    return state.version;
+  }
+
+  public async requestBuild(input: EnqueueSiteBuildInput): Promise<BuildQueueReceipt> {
+    try {
+      return this.connection.transaction(() => {
+        if (input.retryOfBuildId !== undefined) {
+          const prior = this.connection
+            .prepare("select status from site_builds where id = ?")
+            .get(input.retryOfBuildId) as { status: string } | undefined;
+          if (prior?.status !== "failed") failure("Only a failed build can be retried.");
+        }
+        const state = this.connection
+          .prepare("select version from published_state where singleton_key = 1")
+          .get() as { version: number } | undefined;
+        return this.enqueueSiteBuild({
+          reason: input.retryOfBuildId === undefined ? "manual" : "retry",
+          requestedAt: input.requestedAt,
+          requestedBy: input.requestedBy.id,
+          ...(input.retryOfBuildId === undefined ? {} : { retryOfBuildId: input.retryOfBuildId }),
+          snapshotId: null,
+          targetVersion: state?.version ?? 0,
+        });
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async claimSiteBuilds(input: {
+    readonly limit: number;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+  }): Promise<readonly SiteBuildWorkLease[]> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100)
+      throw new TypeError("Build claim limit is invalid.");
+    try {
+      return this.connection.transaction(() => {
+        const rows = this.connection
+          .prepare(
+            "select id, type, payload_json, attempts, available_at from outbox_events where type = 'site.build.requested' and processed_at is null and available_at <= ? and (locked_at is null or locked_at <= ?) order by available_at asc, id asc limit ?",
+          )
+          .all(
+            input.now,
+            input.now - DISPATCHER_LEASE_DURATION_MS,
+            input.limit,
+          ) as readonly OutboxRow[];
+        const leases: SiteBuildWorkLease[] = [];
+        for (const row of rows) {
+          const leaseId = dispatcherLeaseId(this.nextId());
+          const claimed = this.connection
+            .prepare(
+              "update outbox_events set locked_at = ?, locked_by = ? where id = ? and processed_at is null and (locked_at is null or locked_at <= ?)",
+            )
+            .run(input.now, leaseId, row.id, input.now - DISPATCHER_LEASE_DURATION_MS);
+          if (claimed.changes !== 1) continue;
+          let payload: JsonObject;
+          try {
+            payload = parseObject(row.payload_json, "Build payload");
+          } catch {
+            this.connection
+              .prepare(
+                "update outbox_events set attempts = attempts + 1, processed_at = ?, locked_at = null, locked_by = null, last_error = 'invalid_build_event' where id = ? and locked_by = ?",
+              )
+              .run(input.now, row.id, leaseId);
+            continue;
+          }
+          if (
+            !Number.isSafeInteger(payload.targetVersion) ||
+            Number(payload.targetVersion) < 0 ||
+            typeof payload.requestedBy !== "string" ||
+            !payload.requestedBy ||
+            typeof payload.reason !== "string" ||
+            !payload.reason ||
+            !Number.isSafeInteger(payload.requestedAt)
+          ) {
+            this.connection
+              .prepare(
+                "update outbox_events set attempts = attempts + 1, processed_at = ?, locked_at = null, locked_by = null, last_error = 'invalid_build_event' where id = ? and locked_by = ?",
+              )
+              .run(input.now, row.id, leaseId);
+            continue;
+          }
+          const snapshotId =
+            typeof payload.publishedSnapshotId === "string" ? payload.publishedSnapshotId : null;
+          this.connection
+            .prepare(
+              "insert or ignore into site_builds (id, reason, status, target_version, published_snapshot_id, requested_by, requested_at) values (?, ?, 'pending', ?, (select id from content_snapshots where id = ?), ?, ?)",
+            )
+            .run(
+              row.id,
+              payload.reason,
+              payload.targetVersion,
+              snapshotId,
+              payload.requestedBy,
+              payload.requestedAt,
+            );
+          leases.push(
+            Object.freeze({
+              buildId: siteBuildId(row.id),
+              event: Object.freeze({
+                attempts: row.attempts,
+                availableAt: unixMilliseconds(row.available_at),
+                id: dispatcherEventId(row.id),
+                payload,
+                type: row.type,
+              }),
+              expiresAt: unixMilliseconds(input.now + DISPATCHER_LEASE_DURATION_MS),
+              id: leaseId,
+              targetVersion: Number(payload.targetVersion),
+            }),
+          );
+        }
+        return Object.freeze(leases);
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  private requireLeasedSiteBuild(leaseId: string, now: number): string {
+    const row = this.connection
+      .prepare(
+        "select id from outbox_events where locked_by = ? and type = 'site.build.requested' and processed_at is null and locked_at > ?",
+      )
+      .get(leaseId, now - DISPATCHER_LEASE_DURATION_MS) as { id: string } | undefined;
+    if (row === undefined) failure("Dispatcher lease is missing or expired.");
+    return row.id;
+  }
+
+  public async recordSiteBuildAccepted(input: {
+    readonly leaseId: import("@lacecms/application").DispatcherLeaseId;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+    readonly providerBuildId: string;
+  }): Promise<void> {
+    if (!input.providerBuildId || input.providerBuildId.length > 200)
+      throw new TypeError("Provider build ID is invalid.");
+    try {
+      this.connection.transaction(() => {
+        const id = this.requireLeasedSiteBuild(input.leaseId, input.now);
+        const updated = this.connection
+          .prepare(
+            "update site_builds set status = 'running', provider_build_id = ?, started_at = ?, error = null where id = ? and status = 'pending'",
+          )
+          .run(input.providerBuildId, input.now, id);
+        if (updated.changes !== 1) failure("Build cannot be accepted.");
+        this.connection
+          .prepare(
+            "update outbox_events set processed_at = ?, locked_at = null, locked_by = null where id = ? and locked_by = ?",
+          )
+          .run(input.now, id, input.leaseId);
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async recordSiteBuildSuccess(input: {
+    readonly leaseId: import("@lacecms/application").DispatcherLeaseId;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+  }): Promise<void> {
+    try {
+      this.connection.transaction(() => {
+        const id = this.requireLeasedSiteBuild(input.leaseId, input.now);
+        const updated = this.connection
+          .prepare(
+            "update site_builds set status = 'succeeded', started_at = coalesce(started_at, ?), completed_at = ?, error = null where id = ? and status = 'pending'",
+          )
+          .run(input.now, input.now, id);
+        if (updated.changes !== 1) failure("Build cannot be completed.");
+        this.connection
+          .prepare(
+            "update outbox_events set processed_at = ?, locked_at = null, locked_by = null where id = ? and locked_by = ?",
+          )
+          .run(input.now, id, input.leaseId);
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async recordSiteBuildFailure(input: {
+    readonly leaseId: import("@lacecms/application").DispatcherLeaseId;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+    readonly reason: string;
+    readonly retryAt?: import("@lacecms/domain").UnixMilliseconds;
+    readonly terminal: boolean;
+  }): Promise<void> {
+    const reason = sanitizeBuildReason(input.reason);
+    try {
+      this.connection.transaction(() => {
+        const id = this.requireLeasedSiteBuild(input.leaseId, input.now);
+        if (input.terminal) {
+          const updated = this.connection
+            .prepare(
+              "update site_builds set status = 'failed', started_at = coalesce(started_at, ?), completed_at = ?, error = ? where id = ? and status = 'pending'",
+            )
+            .run(input.now, input.now, reason, id);
+          if (updated.changes !== 1) failure("Build cannot be failed.");
+        } else {
+          const updated = this.connection
+            .prepare("update site_builds set error = ? where id = ? and status = 'pending'")
+            .run(reason, id);
+          if (updated.changes !== 1) failure("Build cannot be retried.");
+        }
+        this.connection
+          .prepare(
+            "update outbox_events set attempts = attempts + 1, available_at = ?, processed_at = ?, locked_at = null, locked_by = null, last_error = ? where id = ? and locked_by = ?",
+          )
+          .run(
+            input.retryAt ?? input.now,
+            input.terminal ? input.now : null,
+            reason,
+            id,
+            input.leaseId,
+          );
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  public async completeAcceptedSiteBuild(input: {
+    readonly buildId: import("@lacecms/domain").SiteBuildId;
+    readonly providerBuildId: string;
+    readonly now: import("@lacecms/domain").UnixMilliseconds;
+    readonly outcome: "succeeded" | "failed";
+    readonly reason?: string;
+  }): Promise<void> {
+    try {
+      this.connection.transaction(() => {
+        const row = this.connection
+          .prepare("select status, provider_build_id, error from site_builds where id = ?")
+          .get(input.buildId) as
+          | { status: string; provider_build_id: string | null; error: string | null }
+          | undefined;
+        if (row === undefined || row.provider_build_id !== input.providerBuildId)
+          failure("Provider build does not match.");
+        const reason =
+          input.outcome === "failed"
+            ? sanitizeBuildReason(input.reason ?? "provider_failed")
+            : null;
+        if (row.status === input.outcome && row.error === reason) return;
+        if (row.status !== "running") failure("Build already has a different terminal outcome.");
+        this.connection
+          .prepare(
+            "update site_builds set status = ?, completed_at = ?, error = ? where id = ? and status = 'running'",
+          )
+          .run(input.outcome, input.now, reason, input.buildId);
+      })();
+    } catch (error) {
+      this.throwWriteError(error, false);
+    }
+  }
+
+  private enqueueSiteBuild(input: {
+    readonly reason: string;
+    readonly requestedAt: number;
+    readonly requestedBy: string;
+    readonly retryOfBuildId?: string;
+    readonly snapshotId: string | null;
+    readonly targetVersion: number;
+  }): BuildQueueReceipt {
+    const pending = this.connection
+      .prepare(
+        "select id, payload_json from outbox_events where type = 'site.build.requested' and processed_at is null and locked_at is null",
+      )
+      .get() as { id: string; payload_json: string } | undefined;
+    const oldPayload =
+      pending === undefined ? {} : parseObject(pending.payload_json, "Outbox payload");
+    const retryOfBuildId =
+      input.retryOfBuildId ??
+      (typeof oldPayload.retryOfBuildId === "string" ? oldPayload.retryOfBuildId : undefined);
+    const payload = JSON.stringify({
+      publishedSnapshotId: input.snapshotId,
+      reason: input.reason,
+      requestedAt: input.requestedAt,
+      requestedBy: input.requestedBy,
+      ...(retryOfBuildId === undefined ? {} : { retryOfBuildId }),
+      targetVersion: input.targetVersion,
+    });
+    const eventId = this.nextId();
+    const inserted = this.connection
       .prepare(
         "insert or ignore into outbox_events (id, type, payload_json, attempts, available_at, created_at) values (?, 'site.build.requested', ?, 0, ?, ?)",
       )
-      .run(this.nextId(), payload, timestamp + 5_000, timestamp);
+      .run(eventId, payload, input.requestedAt + SITE_BUILD_DEBOUNCE_MS, input.requestedAt);
+    if (inserted.changes === 1)
+      return {
+        coalesced: false,
+        eventId: dispatcherEventId(eventId),
+        targetVersion: input.targetVersion,
+      };
     this.connection
       .prepare(
         "update outbox_events set payload_json = ?, available_at = ? where type = 'site.build.requested' and processed_at is null and locked_at is null",
       )
-      .run(payload, timestamp + 5_000);
-    void requestedBy;
-    return state.version;
+      .run(payload, input.requestedAt + SITE_BUILD_DEBOUNCE_MS);
+    const existing = this.connection
+      .prepare(
+        "select id from outbox_events where type = 'site.build.requested' and processed_at is null and locked_at is null",
+      )
+      .get() as { id: string } | undefined;
+    if (existing === undefined) failure("Build request could not be queued.");
+    return {
+      coalesced: true,
+      eventId: dispatcherEventId(existing.id),
+      targetVersion: input.targetVersion,
+    };
   }
 
   private catalogItem(row: Record<string, unknown>): MediaCatalogItem {

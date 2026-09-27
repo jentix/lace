@@ -11,6 +11,7 @@ import {
   NodeInfrastructureUnavailableError,
   NodeMinioObjectStorage,
   NodeMediaDeletionDispatcher,
+  NodeSiteBuildDispatcher,
   NodeSharpImageInspector,
   NodeObjectStorageError,
   NodeContentRepository,
@@ -55,6 +56,315 @@ const minioEnvironment = Object.freeze({
 });
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/platform-node"));
+
+test("coalesces manual build requests until claim and queues later work separately", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-build-queue-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      const repository = new NodeContentRepository(database.connection, () => undefined, {
+        nextId: (() => {
+          let id = 0;
+          return () => `build-event-${++id}`;
+        })(),
+      });
+      const requestedBy = { id: actorId("admin"), role: "admin" };
+      const first = await repository.requestBuild({
+        requestedAt: unixMilliseconds(100),
+        requestedBy,
+      });
+      const second = await repository.requestBuild({
+        requestedAt: unixMilliseconds(200),
+        requestedBy,
+      });
+      expect(first).toMatchObject({ coalesced: false, targetVersion: 0 });
+      expect(second).toMatchObject({ coalesced: true, eventId: first.eventId });
+      expect(
+        database.connection
+          .prepare("select available_at from outbox_events where id = ?")
+          .get(first.eventId),
+      ).toEqual({ available_at: 5_200 });
+      expect(
+        await repository.claim({
+          eventTypes: ["site.build.requested"],
+          limit: 1,
+          now: unixMilliseconds(5_199),
+        }),
+      ).toEqual([]);
+      const claim = await repository.claimSiteBuilds({ limit: 1, now: unixMilliseconds(5_200) });
+      expect(claim).toHaveLength(1);
+      expect(claim[0]).toMatchObject({ buildId: first.eventId, targetVersion: 0 });
+      expect(
+        database.connection.prepare("select id, status, target_version from site_builds").all(),
+      ).toEqual([{ id: first.eventId, status: "pending", target_version: 0 }]);
+      expect(await repository.claimSiteBuilds({ limit: 1, now: unixMilliseconds(5_201) })).toEqual(
+        [],
+      );
+      const next = await repository.requestBuild({
+        requestedAt: unixMilliseconds(5_201),
+        requestedBy,
+      });
+      expect(next).toMatchObject({ coalesced: false, targetVersion: 0 });
+      expect(next.eventId).not.toBe(first.eventId);
+      expect(
+        database.connection
+          .prepare("select count(*) as count from outbox_events where processed_at is null")
+          .get(),
+      ).toEqual({ count: 2 });
+      const recovered = await repository.claimSiteBuilds({
+        limit: 1,
+        now: unixMilliseconds(65_200),
+      });
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0].buildId).toBe(first.eventId);
+      expect(recovered[0].id).not.toBe(claim[0].id);
+      expect(
+        database.connection.prepare("select count(*) as count from site_builds").get(),
+      ).toEqual({ count: 1 });
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("build outcome transitions are lease guarded and reuse one history row", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-build-outcome-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      const repository = new NodeContentRepository(database.connection, () => undefined);
+      const requestedBy = { id: actorId("admin"), role: "admin" };
+      const queue = async (at) =>
+        repository.requestBuild({ requestedAt: unixMilliseconds(at), requestedBy });
+      const claim = async (at) =>
+        (await repository.claimSiteBuilds({ limit: 1, now: unixMilliseconds(at) }))[0];
+      const first = await queue(1);
+      const lease = await claim(5_001);
+      await repository.recordSiteBuildFailure({
+        leaseId: lease.id,
+        now: unixMilliseconds(5_002),
+        reason: "secret=https://example.test",
+        retryAt: unixMilliseconds(10_002),
+        terminal: false,
+      });
+      expect(
+        database.connection
+          .prepare("select status, error from site_builds where id = ?")
+          .get(first.eventId),
+      ).toEqual({ status: "pending", error: "provider_failed" });
+      const recovered = await claim(10_002);
+      expect(recovered.buildId).toBe(first.eventId);
+      await expect(
+        repository.recordSiteBuildSuccess({ leaseId: lease.id, now: unixMilliseconds(10_003) }),
+      ).rejects.toThrow("expired");
+      await repository.recordSiteBuildAccepted({
+        leaseId: recovered.id,
+        now: unixMilliseconds(10_003),
+        providerBuildId: "provider-1",
+      });
+      expect(
+        database.connection
+          .prepare("select status, provider_build_id, started_at from site_builds where id = ?")
+          .get(first.eventId),
+      ).toEqual({ status: "running", provider_build_id: "provider-1", started_at: 10_003 });
+      await repository.completeAcceptedSiteBuild({
+        buildId: first.eventId,
+        providerBuildId: "provider-1",
+        now: unixMilliseconds(10_004),
+        outcome: "succeeded",
+      });
+      await repository.completeAcceptedSiteBuild({
+        buildId: first.eventId,
+        providerBuildId: "provider-1",
+        now: unixMilliseconds(10_005),
+        outcome: "succeeded",
+      });
+      expect(
+        database.connection
+          .prepare("select status, completed_at from site_builds where id = ?")
+          .get(first.eventId),
+      ).toEqual({ status: "succeeded", completed_at: 10_004 });
+
+      const second = await queue(20_000);
+      const terminal = await claim(25_000);
+      await repository.recordSiteBuildFailure({
+        leaseId: terminal.id,
+        now: unixMilliseconds(25_001),
+        reason: "trigger_unavailable",
+        terminal: true,
+      });
+      expect(
+        database.connection
+          .prepare("select status, completed_at, error from site_builds where id = ?")
+          .get(second.eventId),
+      ).toEqual({ status: "failed", completed_at: 25_001, error: "trigger_unavailable" });
+      expect(
+        database.connection
+          .prepare("select attempts, processed_at from outbox_events where id = ?")
+          .get(second.eventId),
+      ).toEqual({ attempts: 1, processed_at: 25_001 });
+      database.connection
+        .prepare(
+          "insert into published_state (singleton_key, version, updated_at) values (1, 9, 25_002)",
+        )
+        .run();
+      const retry = await repository.requestBuild({
+        requestedAt: unixMilliseconds(25_003),
+        requestedBy,
+        retryOfBuildId: second.eventId,
+      });
+      expect(retry).toMatchObject({ targetVersion: 9, coalesced: false });
+      expect(
+        JSON.parse(
+          database.connection
+            .prepare("select payload_json from outbox_events where id = ?")
+            .get(retry.eventId).payload_json,
+        ),
+      ).toMatchObject({ retryOfBuildId: second.eventId, targetVersion: 9 });
+      await expect(
+        repository.requestBuild({
+          requestedAt: unixMilliseconds(25_004),
+          requestedBy,
+          retryOfBuildId: first.eventId,
+        }),
+      ).rejects.toThrow("failed build");
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("site-build dispatcher bounds failures at eight attempts and handles trigger outcomes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-build-dispatch-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    migrateNodeDatabase(databasePath);
+    const database = openNodeDatabase(databasePath);
+    try {
+      const repository = new NodeContentRepository(database.connection, () => undefined);
+      const requestedBy = { id: actorId("admin"), role: "admin" };
+      let now = 1;
+      let outcome = "failed";
+      const calls = [];
+      const dispatcher = new NodeSiteBuildDispatcher({
+        clock: { now: () => unixMilliseconds(now) },
+        logger: { error: () => undefined },
+        random: () => 0,
+        trigger: {
+          trigger: async (input) => {
+            calls.push(input);
+            return outcome === "accepted"
+              ? { status: "accepted", providerBuildId: "provider-1" }
+              : outcome === "succeeded"
+                ? { status: "succeeded" }
+                : { status: "failed", reason: "secret=hidden" };
+          },
+        },
+        work: repository,
+      });
+      const failed = await repository.requestBuild({
+        requestedAt: unixMilliseconds(now),
+        requestedBy,
+      });
+      now = 5_001;
+      for (let attempt = 1; attempt <= 8; attempt += 1) {
+        await dispatcher.runOnce();
+        expect(
+          database.connection
+            .prepare("select attempts from outbox_events where id = ?")
+            .get(failed.eventId),
+        ).toEqual({ attempts: attempt });
+      }
+      expect(calls).toHaveLength(8);
+      expect(
+        database.connection
+          .prepare("select status, error from site_builds where id = ?")
+          .get(failed.eventId),
+      ).toEqual({ status: "failed", error: "provider_failed" });
+      await dispatcher.runOnce();
+      expect(calls).toHaveLength(8);
+
+      now = 10_000;
+      outcome = "succeeded";
+      const success = await repository.requestBuild({
+        requestedAt: unixMilliseconds(now),
+        requestedBy,
+      });
+      now += 5_000;
+      await dispatcher.runOnce();
+      expect(
+        database.connection
+          .prepare("select status, completed_at from site_builds where id = ?")
+          .get(success.eventId),
+      ).toEqual({ status: "succeeded", completed_at: now });
+
+      now = 20_000;
+      outcome = "accepted";
+      const accepted = await repository.requestBuild({
+        requestedAt: unixMilliseconds(now),
+        requestedBy,
+      });
+      now += 5_000;
+      await dispatcher.runOnce();
+      expect(
+        database.connection
+          .prepare("select status, provider_build_id from site_builds where id = ?")
+          .get(accepted.eventId),
+      ).toEqual({ status: "running", provider_build_id: "provider-1" });
+
+      now = 30_000;
+      const thrown = await repository.requestBuild({
+        requestedAt: unixMilliseconds(now),
+        requestedBy,
+      });
+      const throwingDispatcher = new NodeSiteBuildDispatcher({
+        clock: { now: () => unixMilliseconds(now) },
+        logger: { error: () => undefined },
+        random: () => 0,
+        trigger: {
+          trigger: async () => {
+            throw new Error("secret build URL");
+          },
+        },
+        work: repository,
+      });
+      now += 5_000;
+      await throwingDispatcher.runOnce();
+      expect(
+        database.connection
+          .prepare("select last_error from outbox_events where id = ?")
+          .get(thrown.eventId),
+      ).toEqual({ last_error: "trigger_unavailable" });
+
+      database.connection
+        .prepare("update outbox_events set processed_at = ? where id = ?")
+        .run(now, thrown.eventId);
+      database.connection
+        .prepare(
+          "insert into outbox_events (id, type, payload_json, available_at, created_at) values ('bad-build', 'site.build.requested', '{}', ?, ?)",
+        )
+        .run(now, now);
+      await throwingDispatcher.runOnce();
+      expect(
+        database.connection
+          .prepare("select last_error, processed_at from outbox_events where id = 'bad-build'")
+          .get(),
+      ).toEqual({ last_error: "invalid_build_event", processed_at: now });
+    } finally {
+      database.connection.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("claims media deletion work exclusively and finalizes or exposes terminal failure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-outbox-"));
@@ -338,7 +648,10 @@ test("uses configured public URLs and fails closed for placeholder infrastructur
   const cache = new NoopNodeCache();
   await cache.set("derived", { value: 1 });
   await expect(cache.get("derived")).resolves.toBeNull();
-  await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({ accepted: false });
+  await expect(new NoopNodeBuildTrigger().trigger({})).resolves.toEqual({
+    status: "failed",
+    reason: "trigger_unavailable",
+  });
 });
 
 test("MinIO storage streams objects, distinguishes missing keys, and sanitizes failures", async () => {

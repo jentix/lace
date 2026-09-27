@@ -5,6 +5,7 @@ import {
   MediaUseCases,
   opaqueCursor,
   requireUsersManager,
+  SiteBuildUseCases,
 } from "@lacecms/application";
 import type {
   MediaView,
@@ -18,6 +19,8 @@ import {
   buildTokenCreatedSchema,
   buildTokenListSchema,
   buildTokenSchema,
+  buildRequestSchema,
+  buildQueueReceiptSchema,
   adminSettingsStatusSchema,
   adminContentEntrySchema,
   classifyError,
@@ -168,6 +171,7 @@ export interface LaceAppInput {
   readonly readiness: ReadinessProbe;
   readonly requestIds: RequestIdGenerator;
   readonly security?: SecurityService;
+  readonly builds?: SiteBuildUseCases;
 }
 
 class RequestValidationError extends Error {
@@ -644,6 +648,52 @@ export function createLaceApp(input: LaceAppInput): Hono {
     });
     return token === null ? notFound() : response(buildTokenSchema, buildTokenDto(token));
   });
+
+  app.post(
+    "/api/v1/admin/builds",
+    describeRoute({
+      requestBody: { content: { "application/json": { schema: resolver(buildRequestSchema) } } },
+      responses: {
+        202: {
+          content: { "application/json": { schema: resolver(buildQueueReceiptSchema) } },
+          description: "Build request queued",
+        },
+      },
+      summary: "Request a site build",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const resolvedActor = await usersActor(context);
+      parse(buildRequestSchema, await optionalJsonBody(context.req.raw));
+      if (input.builds === undefined) throw new Error("Build commands are unavailable.");
+      return response(buildQueueReceiptSchema, await input.builds.request(resolvedActor), 202);
+    },
+  );
+  app.post(
+    "/api/v1/admin/builds/:buildId/retry",
+    describeRoute({
+      requestBody: { content: { "application/json": { schema: resolver(buildRequestSchema) } } },
+      responses: {
+        202: {
+          content: { "application/json": { schema: resolver(buildQueueReceiptSchema) } },
+          description: "Failed build retry queued",
+        },
+      },
+      summary: "Retry a failed site build",
+      tags: ["admin"],
+    }),
+    async (context) => {
+      const resolvedActor = await usersActor(context);
+      parse(buildRequestSchema, await optionalJsonBody(context.req.raw));
+      const buildId = parse(identifierSchemaPublic, context.req.param("buildId"));
+      if (input.builds === undefined) throw new Error("Build commands are unavailable.");
+      return response(
+        buildQueueReceiptSchema,
+        await input.builds.retry(resolvedActor, buildId),
+        202,
+      );
+    },
+  );
 
   app.get(
     "/api/v1/admin/media",

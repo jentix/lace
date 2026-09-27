@@ -313,7 +313,7 @@ export class InMemoryCache implements Cache {
 export class InMemorySiteBuildTrigger implements SiteBuildTrigger {
   public readonly requests: SiteBuildRequest[] = [];
 
-  public constructor(private readonly result: BuildTriggerResult = { accepted: true }) {}
+  public constructor(private readonly result: BuildTriggerResult = { status: "succeeded" }) {}
 
   public async trigger(input: SiteBuildRequest): Promise<BuildTriggerResult> {
     this.requests.push(clone(input));
@@ -770,6 +770,7 @@ export class InMemoryContentStore
       entry: copyEntry(published),
       outcome: "published",
       status: "published",
+      targetVersion: this.publicVersion,
     });
   }
 
