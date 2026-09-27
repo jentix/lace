@@ -1,6 +1,7 @@
 {
   "blocks": [
     {
+      "description": "Large heading with optional text, image, and action.",
       "fields": {
         "body": { "required": false, "type": "richText" },
         "eyebrow": { "required": false, "type": "text" },
@@ -9,38 +10,47 @@
         "primaryActionLabel": { "required": false, "type": "text" },
         "primaryActionUrl": { "required": false, "type": "url" }
       },
+      "label": "Hero",
       "type": "hero",
       "version": 1
     },
     {
+      "description": "Formatted text with headings, lists, and links.",
       "fields": { "content": { "required": true, "type": "richText" } },
+      "label": "Rich text",
       "type": "richText",
       "version": 1
     },
     {
+      "description": "A single image with alt text and an optional caption.",
       "fields": {
         "alt": { "required": true, "type": "text" },
         "caption": { "required": false, "type": "text" },
         "media": { "required": true, "type": "media" }
       },
+      "label": "Image",
       "type": "image",
       "version": 1
     },
     {
+      "description": "A quotation with optional attribution.",
       "fields": {
         "attribution": { "required": false, "type": "text" },
         "quote": { "required": true, "type": "text" }
       },
+      "label": "Quote",
       "type": "quote",
       "version": 1
     },
     {
+      "description": "A heading and a link that prompts the reader to act.",
       "fields": {
         "actionLabel": { "required": true, "type": "text" },
         "actionUrl": { "required": true, "type": "url" },
         "body": { "required": false, "type": "richText" },
         "heading": { "required": true, "type": "text" }
       },
+      "label": "Call to action",
       "type": "cta",
       "version": 1
     }
@@ -53,7 +63,7 @@
       "kind": "page",
       "label": "Home",
       "path": "/",
-      "projectionHash": "e0a816ad8363ab374ee0572a5b6a1cc9b65c507709a942ee53fe496a977c821c",
+      "projectionHash": "b1e8b01da2843a44b48d32298cbd262eb015fec2de6364079a919e4c7cef228d",
       "structureHash": "a5a86419f5b3d4b5baf58e18ca125a4d51826275181be616df39f5fd5c1e799d",
       "version": 2
     },
@@ -71,12 +81,12 @@
       "key": "posts",
       "kind": "collection",
       "label": "Posts",
-      "projectionHash": "8eb7a812315b4acebb9e3c3ffe0cf84de5cef93f2b97645dcc5b7eb9a2ba1e9a",
+      "projectionHash": "05e116935edea03d3da7c38d1f36a0b55f84611e28d1bfdd7e3de1239d2bd67b",
       "route": "/blog/:slug",
       "structureHash": "88f224c30340ec7ce88b11d86cbb00a6316b0240b0db4b00a14f9291a9eeeb19",
       "version": 2
     }
   ],
-  "projectionHash": "0abd9c60f75b071f78615bbcc8f07739fcee7422139f8b156b35dc9d15a1466a",
+  "projectionHash": "886b47a1864c7fc0f68bfc56b317b1b5b29c83cfef1e0f0b905eca2438ed6e95",
   "structureHash": "8a5ac063d93b150f834a3701133da4c6e999d8c67d06c342b96876b2677817b5"
 }

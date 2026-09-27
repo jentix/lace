@@ -1,0 +1,157 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { useForm } from "react-hook-form";
+import { expect, test } from "vitest";
+import type { DraftEditorValues } from "../editor-form.js";
+import type { FieldDefinition } from "../field-types.js";
+import { FieldRenderer, FieldRendererProvider } from "../FieldRenderer/index.js";
+import {
+  calendarDateToDate,
+  composeUtcDatetime,
+  dateToCalendarDate,
+  openableUrl,
+  splitUtcDatetime,
+} from "./index.js";
+
+function Harness({
+  definition,
+  error,
+  initial,
+  readOnly = false,
+}: {
+  readonly definition: FieldDefinition;
+  readonly error?: string;
+  readonly initial?: unknown;
+  readonly readOnly?: boolean;
+}) {
+  const form = useForm<DraftEditorValues, unknown, DraftEditorValues>({
+    defaultValues: { blocks: [], fields: { value: initial as never }, title: "" },
+  });
+  return (
+    <FieldRendererProvider readOnly={readOnly} renderers={{}}>
+      <fieldset disabled={readOnly}>
+        <FieldRenderer
+          control={form.control}
+          definition={definition}
+          error={error}
+          fieldKey="value"
+          name="fields.value"
+        />
+      </fieldset>
+      <output data-testid="value">{JSON.stringify(form.watch("fields.value") ?? null)}</output>
+    </FieldRendererProvider>
+  );
+}
+
+const value = () => screen.getByTestId("value").textContent;
+
+test("a select chooses an option and an optional select can be cleared", async () => {
+  const user = userEvent.setup();
+  render(
+    <Harness definition={{ options: ["news", "release"], required: false, type: "select" }} />,
+  );
+  const trigger = screen.getByRole("combobox", { name: "Value" });
+  expect(trigger).toHaveTextContent("Select an option");
+  await user.click(trigger);
+  await user.click(await screen.findByRole("option", { name: "release" }));
+  expect(value()).toBe('"release"');
+  expect(trigger).toHaveTextContent("release");
+  await user.click(trigger);
+  await user.click(await screen.findByRole("option", { name: "No selection" }));
+  expect(value()).toBe("null");
+});
+
+test("a required select offers no clearing choice", async () => {
+  const user = userEvent.setup();
+  render(<Harness definition={{ options: ["news"], required: true, type: "select" }} />);
+  screen.getByRole("combobox", { name: "Value" }).focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("option", { name: "news" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "No selection" })).not.toBeInTheDocument();
+});
+
+test("a date is picked from the calendar, shown in words, and cleared", async () => {
+  const user = userEvent.setup();
+  render(<Harness definition={{ required: false, type: "date" }} initial="2026-09-01" />);
+  const trigger = screen.getByRole("button", { name: "Value" });
+  expect(trigger).toHaveTextContent("Sep 1, 2026");
+  await user.click(trigger);
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: /September 25th, 2026/u }));
+  expect(value()).toBe('"2026-09-25"');
+  expect(screen.getByRole("button", { name: "Value" })).toHaveTextContent("Sep 25, 2026");
+  await user.click(screen.getByRole("button", { name: "Clear Value" }));
+  expect(value()).toBe("null");
+  expect(screen.getByRole("button", { name: "Value" })).toHaveTextContent("Pick a date");
+});
+
+test("a datetime composes a UTC value from its date and time", async () => {
+  const user = userEvent.setup();
+  render(
+    <Harness definition={{ required: true, type: "datetime" }} initial="2026-09-01T08:15:00Z" />,
+  );
+  const time = screen.getByLabelText("Value time (UTC)");
+  expect(time).toHaveValue("08:15");
+  expect(time).toHaveAccessibleDescription("Time is in UTC.");
+  await user.click(screen.getByRole("button", { name: "Value" }));
+  await user.click(
+    within(await screen.findByRole("dialog")).getByRole("button", {
+      name: /September 25th, 2026/u,
+    }),
+  );
+  expect(value()).toBe('"2026-09-25T08:15:00.000Z"');
+  fireEvent.change(time, { target: { value: "14:30" } });
+  expect(value()).toBe('"2026-09-25T14:30:00.000Z"');
+  expect(screen.queryByRole("button", { name: "Clear Value" })).not.toBeInTheDocument();
+});
+
+test("a boolean is a switch and an erroring control is marked invalid", async () => {
+  const user = userEvent.setup();
+  render(<Harness definition={{ required: false, type: "boolean" }} error="Must be on." />);
+  const toggle = screen.getByRole("switch", { name: "Value" });
+  expect(toggle).toHaveAttribute("aria-invalid", "true");
+  expect(toggle).toHaveAccessibleDescription("Must be on.");
+  toggle.focus();
+  await user.keyboard(" ");
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+  expect(value()).toBe("true");
+});
+
+test("a URL field offers to open only http(s) values in a new tab", async () => {
+  const user = userEvent.setup();
+  render(<Harness definition={{ required: false, type: "url" }} />);
+  const input = screen.getByRole("textbox", { name: "Value" });
+  await user.type(input, "mailto:team@lace.test");
+  expect(screen.queryByRole("link", { name: "Open Value in a new tab" })).not.toBeInTheDocument();
+  await user.clear(input);
+  await user.type(input, "https://lace.test/docs");
+  const link = screen.getByRole("link", { name: "Open Value in a new tab" });
+  expect(link).toHaveAttribute("href", "https://lace.test/docs");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noopener noreferrer");
+});
+
+test("number and text controls convert values and view-only fields are disabled", async () => {
+  const user = userEvent.setup();
+  render(<Harness definition={{ required: false, type: "number" }} />);
+  await user.type(screen.getByRole("spinbutton", { name: "Value" }), "42");
+  expect(value()).toBe("42");
+
+  document.body.replaceChildren();
+  render(<Harness definition={{ required: false, type: "date" }} initial="2026-09-01" readOnly />);
+  expect(screen.getByRole("button", { name: "Value" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Clear Value" })).not.toBeInTheDocument();
+});
+
+test("date and datetime helpers never shift days across time zones", () => {
+  expect(dateToCalendarDate(calendarDateToDate("2026-01-31")!)).toBe("2026-01-31");
+  expect(calendarDateToDate("31/01/2026")).toBeUndefined();
+  expect(splitUtcDatetime("2026-09-25T23:59:59.999Z")).toEqual({
+    date: "2026-09-25",
+    time: "23:59",
+  });
+  expect(splitUtcDatetime(undefined)).toEqual({});
+  expect(composeUtcDatetime("2026-09-25", undefined)).toBe("2026-09-25T00:00:00.000Z");
+  expect(openableUrl("javascript:alert(1)")).toBeUndefined();
+  expect(openableUrl("not a url")).toBeUndefined();
+});

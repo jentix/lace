@@ -6,6 +6,14 @@ const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
 
 type Role = "admin" | "editor";
 
+async function addBlock(page: Page, label: string) {
+  await page.getByRole("button", { name: "Add block" }).click();
+  await page
+    .getByRole("dialog", { name: "Add block" })
+    .getByRole("button", { name: label })
+    .click();
+}
+
 const model = {
   blockDefinitions: [
     {
@@ -20,8 +28,14 @@ const model = {
       type: "quote",
       version: 1,
     },
+    {
+      fields: { body: { required: false, type: "richText" } },
+      label: "Rich text",
+      type: "richText",
+      version: 1,
+    },
   ],
-  blocks: ["hero", "quote"],
+  blocks: ["hero", "quote", "richText"],
   fields: {},
   key: "posts",
   kind: "collection",
@@ -103,12 +117,188 @@ test("authors, reorders, and saves blocks through the browser", async ({ page })
   });
   await page.goto("/admin/content/posts/entry-1");
   await page.getByRole("heading", { name: "Edit posts" }).waitFor();
-  await page.getByRole("button", { name: "Add Hero" }).click();
-  await page.getByRole("button", { name: "Add Quote" }).click();
-  await page.getByRole("button", { name: "Move up" }).nth(1).click();
+  await addBlock(page, "Hero");
+  await addBlock(page, "Quote");
+  await page.getByRole("button", { name: "Actions for Quote block" }).click();
+  await page.getByRole("menuitem", { name: "Move up" }).click();
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Quote");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText("Saved revision 3")).toBeVisible();
   expect(savedTypes).toEqual(["quote", "hero"]);
+});
+
+test("inserts between blocks and reorders with the keyboard drag handle", async ({ page }) => {
+  let savedTypes: string[] = [];
+  await mockEditor(page, "editor", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/api/v1/admin/entries/entry-1/draft")
+      return false;
+    savedTypes = (route.request().postDataJSON() as { blocks: Array<{ type: string }> }).blocks.map(
+      (block) => block.type,
+    );
+    return false;
+  });
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  await addBlock(page, "Hero");
+  await addBlock(page, "Hero");
+  await page.getByRole("button", { name: "Insert block at position 2" }).click();
+  const menu = page.getByRole("dialog", { name: "Add block" });
+  await menu.getByRole("searchbox", { name: "Filter blocks" }).fill("quo");
+  await page.keyboard.press("Enter");
+  const cards = page.getByRole("article");
+  await expect(cards.nth(1)).toHaveAccessibleName("Quote");
+  await expect(cards.nth(1)).toBeFocused();
+  await expect(cards.nth(1)).toHaveAttribute("data-active", "true");
+
+  const handle = page.getByRole("button", { name: "Reorder Quote block" });
+  await handle.focus();
+  await page.keyboard.press("Space");
+  await expect(handle).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("ArrowUp");
+  const live = page.locator("[id^=DndLiveRegion]");
+  await expect(live).toHaveText("Quote block moved to position 1 of 3.");
+  await page.keyboard.press("Space");
+  await expect(live).toHaveText("Quote block dropped at position 1 of 3.");
+  await expect(cards.first()).toHaveAccessibleName("Quote");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Saved revision 3")).toBeVisible();
+  expect(savedTypes).toEqual(["quote", "hero", "hero"]);
+});
+
+test("formats rich text from the toolbar and keyboard and follows the validation summary", async ({
+  page,
+}) => {
+  type SavedBlock = { data: { body?: { content: unknown[] } } };
+  let saved: SavedBlock[] = [];
+  let reject = false;
+  await mockEditor(page, "editor", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/api/v1/admin/entries/entry-1/draft")
+      return false;
+    if (reject) {
+      await json(
+        route,
+        {
+          error: {
+            code: "VALIDATION_FAILED",
+            details: {
+              issues: [
+                {
+                  code: "invalid_field_value",
+                  message: "does not conform to its field definition.",
+                  path: "/blocks/0/data/body/content/0",
+                },
+              ],
+            },
+            message: "The request did not satisfy the API contract.",
+          },
+        },
+        422,
+      );
+      return true;
+    }
+    saved = (route.request().postDataJSON() as { blocks: SavedBlock[] }).blocks;
+    return false;
+  });
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  await addBlock(page, "Rich text");
+  const body = page.getByRole("textbox", { name: "Body" });
+  await expect(body).toHaveAttribute("aria-placeholder", "Write something…");
+  await body.click();
+  await page.keyboard.type("Hello world");
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("ControlOrMeta+b");
+
+  const toolbar = page.getByRole("toolbar", { name: "Body formatting" });
+  await page.keyboard.press("Alt+F10");
+  await expect(toolbar.getByRole("combobox", { name: "Text style" })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(toolbar.getByRole("button", { name: "Italic" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(toolbar.getByRole("button", { name: "Italic" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await expect(body).toBeFocused();
+
+  await page.keyboard.press("ControlOrMeta+k");
+  const url = page.getByLabel("Link URL");
+  await expect(url).toBeFocused();
+  await url.fill("javascript:alert(1)");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Links must start with https://")).toBeVisible();
+  await url.fill("https://example.com");
+  await page.keyboard.press("Enter");
+  await expect(body).toBeFocused();
+  await expect(body.getByRole("link", { name: "Hello world" })).toHaveAttribute(
+    "href",
+    "https://example.com",
+  );
+  await toolbar.getByRole("button", { name: "Numbered list" }).click();
+
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Saved revision 3")).toBeVisible();
+  expect(saved[0]?.data.body?.content).toEqual([
+    {
+      content: [
+        {
+          content: [
+            {
+              content: [
+                {
+                  marks: [
+                    { attrs: { href: "https://example.com" }, type: "link" },
+                    { type: "bold" },
+                    { type: "italic" },
+                  ],
+                  text: "Hello world",
+                  type: "text",
+                },
+              ],
+              type: "paragraph",
+            },
+          ],
+          type: "listItem",
+        },
+      ],
+      type: "orderedList",
+    },
+  ]);
+
+  reject = true;
+  await body.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("!");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  const summary = page.getByRole("alert").filter({ hasText: "There is 1 problem to fix" });
+  await expect(summary).toBeFocused();
+  await summary.getByRole("link", { name: "Body in Rich text block 1" }).click();
+  await expect(body).toBeFocused();
+  await expect(body).toHaveAttribute("aria-invalid", "true");
+});
+
+test("saves with the keyboard shortcut while header actions stay visible", async ({ page }) => {
+  let saves = 0;
+  await mockEditor(page, "editor", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/v1/admin/entries/entry-1/draft")
+      saves += 1;
+    return false;
+  });
+  await page.setViewportSize({ height: 600, width: 1280 });
+  await page.goto("/admin/content/posts/entry-1");
+  await page.getByRole("heading", { name: "Edit posts" }).waitFor();
+  for (let index = 0; index < 6; index += 1) await addBlock(page, "Hero");
+  const header = page.getByRole("banner");
+  await expect(header.getByRole("status")).toHaveText("Unsaved changes");
+  await page.mouse.wheel(0, 4000);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInViewport();
+  await expect(header.getByRole("button", { name: "Save draft" })).toBeInViewport();
+  await page.keyboard.press("Control+s");
+  await expect(header.getByRole("status")).toHaveText("Saved revision 3");
+  expect(saves).toBe(1);
 });
 
 test("offers only explicit conflict recovery after a concurrent save", async ({ page }) => {
@@ -157,7 +347,7 @@ test("limits publication to admins and preserves public output after a later dra
   await admin.getByRole("textbox", { name: "Title" }).fill("Later private draft");
   await admin.getByRole("button", { name: "Save draft" }).click();
   await expect(admin.getByRole("region", { name: "Publication status" })).toContainText(
-    "Public path: /posts/first-post",
+    "/posts/first-post",
   );
   await admin.close();
 });
@@ -483,7 +673,7 @@ test("uploads in the picker dialog and reuses images in a block from the keyboar
 
   await page.goto("/admin/content/posts/entry-1");
   await page.getByRole("heading", { name: "Edit posts" }).waitFor();
-  await page.getByRole("button", { name: "Add Hero" }).click();
+  await addBlock(page, "Hero");
   const choose = page.getByRole("button", { name: "Choose media for Image" });
   await choose.focus();
   await page.keyboard.press("Enter");

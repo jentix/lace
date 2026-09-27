@@ -934,6 +934,8 @@ and arbitrary style attributes are rejected. The reference Astro renderer
 escapes text and renders only this allowlist; custom sites receive structured
 JSON and remain responsible for using an equally safe renderer.
 
+Each block definition may carry an optional one-sentence description next to its label. Both are display metadata: they reach the admin through the block projection, change the configuration projection hash, and never change the structural hash. The built-in blocks ship with labels and descriptions. Block icons are not configuration. The admin maps the built-in types to icons and gives any other block type a default icon.
+
 The initial admin editor should render block forms from serializable field metadata. Exact site rendering and custom React admin editors are not required for every block in the MVP.
 
 ## 12. REST API
@@ -1020,7 +1022,11 @@ preserve the same snapshot-revision invariant.
 - Requests and responses use shared Valibot runtime schemas.
 - Hono request validation uses `@hono/standard-validator`, keeping route integration based on Standard Schema rather than a validator-specific Hono API.
 - Database rows are never exposed directly as API DTOs.
-- Errors use one stable machine-readable envelope.
+- Errors use one stable machine-readable envelope. Validation failures,
+  including content validation while creating, saving, or publishing an entry,
+  return `422 VALIDATION_FAILED` with one issue per failure: its code, a
+  message that never repeats the submitted value, and a JSON Pointer such as
+  `/blocks/0/data/body` or `/fields/summary`.
 - Collection lists use cursor pagination. Admin entry lists accept `q` (title
   or slug substring), `status` (`draft`, `published`, or `changed`, derived from
   the draft and published revisions), and `sort`; cursors are bound to the
@@ -1354,6 +1360,45 @@ The media library at `/media` follows the same URL-state rules for its filename 
 Model and block media fields choose through a picker dialog built from the same grid, search, type filter, sort, and upload queue. Its query is local state that resets on each opening and never enters the URL. It offers only active items, and a confirmed upload can be used directly from its queue row. A field with a value shows a thumbnail card with filename, Replace, and Remove. The card resolves the stored ID through the media detail read, so it never searches loaded pages. It names pending-deletion, missing (`NOT_FOUND`), and unreadable items explicitly, and it keeps the ID in the draft until the writer replaces or removes it. The raw ID is never shown.
 
 The editor must make draft/published/build status visible and must surface optimistic-concurrency conflicts rather than overwriting a newer draft.
+
+The shell header stays pinned while a screen scrolls. It gives the screen an actions slot beside the breadcrumbs. The entry editor fills that slot with a save-state indicator (unsaved, saving, not saved, saved revision, or view only), one Save button, and Publish for administrators. Save is bound to the draft form and to `⌘S`/`Ctrl+S`, and the shortcut always suppresses the browser's page save. The title is a large input at the top of the main column, and the blocks follow it. A right-hand column, which stacks after the blocks on narrow screens, holds two cards:
+
+- Publication: the derived status, the live and draft revisions, the last editor's display name, relative times with the absolute time on hover, the public path, and the latest build state. Raw IDs and ISO timestamps never appear.
+- Fields: the entry's slug and model fields.
+
+Until the Builds screen reads persisted builds in Step 21, the latest build state is the dispatch result of the most recent publish from the editor. The field controls are built on the shared primitives:
+
+- Select is a Radix listbox.
+- Date and datetime use a calendar popover. Datetime adds a time input in UTC, and both parse values textually so days never shift.
+- Boolean is a switch.
+- URL can open http(s) values in a new tab.
+
+Controls hold a cleared value as `null` in form state, because React Hook Form would show the loaded default again for `undefined`. The editor strips those values before it saves or copies a draft. Viewers see the editor read-only: native controls sit in a disabled fieldset, rich text is not editable, media fields show their item without picker actions, and there is no Save or Publish. Publication is confirmed in a dialog that names the revision and path and can be cancelled. The discard-changes prompt is a modal alert dialog.
+
+Blocks render as cards. A card header shows the following:
+
+- a drag handle;
+- the block's icon and label;
+- a one-line summary of its data: the first text value, then rich-text plain text, then a URL or select value, then "Media selected", otherwise "Empty block".
+
+Collapsing hides only the fields, so a collapsed card stays recognizable. A block with a validation error stays expanded. The block that focus or a pointer last entered is highlighted. A block that has just been added, inserted, or duplicated is highlighted, expanded, and focused.
+
+Each card's actions menu offers Move up, Move down, Duplicate, and Remove. Removal leaves an inline notice with Undo, which restores the same key and data at the same place. The next structural action makes the removal final.
+
+An insert control between adjacent blocks and an Add block button after the list open the same popover. It lists the model's allowed blocks with icon, label, and description, and it has a text filter.
+
+Keyboard and pointer drag reordering stay on dnd-kit. The screen-reader announcements name blocks by label and position, never by key.
+
+Each editable rich-text field has a fixed toolbar named after the field. It holds the following controls:
+
+- a text style menu (Paragraph, Heading 1–3);
+- Bold, Italic, Strike, and Code toggles;
+- Bulleted list, Numbered list, and Quote toggles;
+- a Link control.
+
+The toggles report their pressed state for the selection. The toolbar is one tab stop with arrow-key movement, `Alt+F10` moves focus from the text to it, and Escape returns. Tooltips and `aria-keyshortcuts` name each shortcut. The editor adds undo and redo and keeps Tiptap's mark, list, heading, and Markdown shortcuts. `⌘K`/`Ctrl+K` opens the link popover, which applies only URLs that pass the shared allowlist and says which forms are permitted. The Tiptap schema declares only allowlisted attributes: links carry `href` and lists carry nothing. Every document the editor produces therefore passes the shared validator. Empty fields show a placeholder, also exposed as `aria-placeholder`. Viewers get neither the toolbar nor the placeholder.
+
+Validation problems appear where they occur. Field messages are sentences such as "Enter at least 5 characters." A block card shows its block-level problems and a "Has problems" marker: a type that is not allowed, a stale version, a key problem, or data for an undefined field. A block whose type the model no longer allows still renders, so it can be removed. When Save is blocked, or the server rejects a save or publish, a summary above the title takes focus. It counts the problems and links each one, in reading order, to its control or block card. The admin maps server JSON Pointers, including deep rich-text paths, to the same locations. Issues it cannot place are listed as text.
 
 ### Component source and design tokens
 

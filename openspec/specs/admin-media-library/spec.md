@@ -137,8 +137,12 @@ The admin SHALL offer media selection as a modal dialog labelled by the field it
 - **THEN** the dialog closes and the field holds the uploaded item even though the grid did not show it
 
 #### Scenario: A viewer opens the picker
-- **WHEN** a viewer opens a media picker
+- **WHEN** the picker dialog is open for a user whose role is `viewer`
 - **THEN** active items can be browsed and previewed while upload and drop-zone controls are absent
+
+#### Scenario: A viewer sees a media field in the read-only editor
+- **WHEN** a viewer opens an entry whose media field holds an item
+- **THEN** the field shows that item's thumbnail and filename without Choose media, Replace, or Remove, and the picker cannot be opened from it
 
 #### Scenario: Items pending deletion are not offered
 - **WHEN** a picker page contains an active item and an item whose status is `deleting`

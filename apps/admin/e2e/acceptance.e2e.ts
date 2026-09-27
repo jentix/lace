@@ -79,7 +79,11 @@ test("administrator completes the local editorial flow and preserves published o
   await sidebar.getByRole("link", { name: "Content", exact: true }).click();
   await main.getByRole("link", { name: "home" }).click();
   await page.getByRole("textbox", { name: "Title" }).fill("Acceptance home");
-  await page.getByRole("button", { name: "Add Image" }).click();
+  await page.getByRole("button", { name: "Add block" }).click();
+  await page
+    .getByRole("dialog", { name: "Add block" })
+    .getByRole("button", { name: "Image" })
+    .click();
   await page.getByRole("textbox", { name: "Alt" }).fill("Acceptance image");
   await page.getByRole("button", { name: "Choose media for Media" }).click();
   await page

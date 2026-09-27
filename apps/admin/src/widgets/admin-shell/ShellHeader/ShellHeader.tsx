@@ -8,17 +8,22 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "../../../shared/u
 import { breadcrumbsFor, type Breadcrumb } from "../navigation.js";
 import { SidebarNav } from "../SidebarNav/index.js";
 
-/** Route header: the narrow-screen navigation sheet and breadcrumbs for the current screen. */
+/**
+ * Sticky route header: the narrow-screen navigation sheet, breadcrumbs for the
+ * current screen, and the element that receives the screen's page actions.
+ */
 export function ShellHeader({
+  actionsRef,
   onSignOut,
   signingOut,
 }: {
+  readonly actionsRef?: (element: HTMLElement | null) => void;
   readonly onSignOut: () => void;
   readonly signingOut: boolean;
 }) {
   const [navOpen, setNavOpen] = useState(false);
   return (
-    <header className="flex min-h-12 items-center gap-2 border-b border-border px-4 md:px-6">
+    <header className="sticky top-0 z-30 flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border bg-background px-4 py-1.5 md:rounded-t-xl md:px-6">
       <Sheet onOpenChange={setNavOpen} open={navOpen}>
         <SheetTrigger asChild>
           <Button
@@ -40,6 +45,11 @@ export function ShellHeader({
         </SheetContent>
       </Sheet>
       <Breadcrumbs />
+      <div
+        className="ml-auto flex shrink-0 items-center gap-2 empty:hidden"
+        data-slot="header-actions"
+        ref={actionsRef}
+      />
     </header>
   );
 }
@@ -64,7 +74,7 @@ function Breadcrumbs() {
   });
   if (crumbs.length === 0) return null;
   return (
-    <nav aria-label="Breadcrumb" className="min-w-0">
+    <nav aria-label="Breadcrumb" className="min-w-0 flex-1 basis-48">
       <ol className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0 text-sm text-muted-foreground">
         {crumbs.map((crumb, index) => (
           <li className="flex min-w-0 items-center gap-1.5" key={`${index}:${crumb.label}`}>

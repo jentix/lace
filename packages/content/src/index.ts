@@ -1263,16 +1263,19 @@ export function validateBlockData<Fields extends ModelFieldDefinitions>(
 /** Starter blocks implemented exclusively through the public block and field DSL. */
 export const builtInBlocks = deepFreeze({
   cta: defineBlock({
+    description: "A heading and a link that prompts the reader to act.",
     fields: {
       actionLabel: field.text({ required: true }),
       actionUrl: field.url({ required: true }),
       body: field.richText(),
       heading: field.text({ required: true }),
     },
+    label: "Call to action",
     type: "cta",
     version: 1,
   }),
   hero: defineBlock({
+    description: "Large heading with optional text, image, and action.",
     fields: {
       body: field.richText(),
       eyebrow: field.text(),
@@ -1281,28 +1284,35 @@ export const builtInBlocks = deepFreeze({
       primaryActionLabel: field.text(),
       primaryActionUrl: field.url(),
     },
+    label: "Hero",
     type: "hero",
     version: 1,
   }),
   image: defineBlock({
+    description: "A single image with alt text and an optional caption.",
     fields: {
       alt: field.text({ required: true }),
       caption: field.text(),
       media: field.media({ required: true }),
     },
+    label: "Image",
     type: "image",
     version: 1,
   }),
   quote: defineBlock({
+    description: "A quotation with optional attribution.",
     fields: {
       attribution: field.text(),
       quote: field.text({ required: true }),
     },
+    label: "Quote",
     type: "quote",
     version: 1,
   }),
   richText: defineBlock({
+    description: "Formatted text with headings, lists, and links.",
     fields: { content: field.richText({ required: true }) },
+    label: "Rich text",
     type: "richText",
     version: 1,
   }),

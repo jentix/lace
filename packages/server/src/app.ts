@@ -1,5 +1,6 @@
 import {
   ContentUseCases,
+  ContentValidationError,
   MAX_MEDIA_BYTES,
   MediaUseCases,
   opaqueCursor,
@@ -196,6 +197,18 @@ function standardIssues(
   return issues.map((issue) => ({
     code: "invalid_value",
     message: "The submitted value is invalid.",
+    path: pointer(issue.path),
+  }));
+}
+
+/**
+ * Content validation messages are static text (some embed configured limits),
+ * never submitted values, so they are safe to return with their pointers.
+ */
+function contentIssues(error: ContentValidationError): ContractValidationIssue[] {
+  return error.issues.map((issue) => ({
+    code: issue.code,
+    message: issue.message,
     path: pointer(issue.path),
   }));
 }
@@ -418,9 +431,11 @@ export function createLaceApp(input: LaceAppInput): Hono {
   app.onError((error) =>
     error instanceof RequestValidationError
       ? validationResponse(error.issues)
-      : error instanceof AuthorizationError
-        ? errorResponse(transportError("AUTHORIZATION_DENIED"))
-        : errorResponse(classifyError(error)),
+      : error instanceof ContentValidationError
+        ? validationResponse(contentIssues(error))
+        : error instanceof AuthorizationError
+          ? errorResponse(transportError("AUTHORIZATION_DENIED"))
+          : errorResponse(classifyError(error)),
   );
 
   app.use(async (context, next) => {

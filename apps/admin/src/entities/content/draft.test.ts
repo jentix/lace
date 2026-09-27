@@ -1,6 +1,12 @@
 import type { ContentEntryDto, ContentModelDto } from "@lacecms/contracts";
 import { expect, test } from "vitest";
-import { draftValues, fieldLabel, localDraftJson, resolvedPublicPath } from "./draft.js";
+import {
+  draftValues,
+  entryStatus,
+  fieldLabel,
+  localDraftJson,
+  resolvedPublicPath,
+} from "./draft.js";
 
 const model: ContentModelDto = {
   blockDefinitions: [
@@ -42,4 +48,19 @@ test("labels keys and serializes local drafts canonically", () => {
   expect(localDraftJson({ blocks: [], fields: { b: 1, a: 2 }, title: "T" })).toBe(
     '{"blocks":[],"fields":{"a":2,"b":1},"title":"T"}',
   );
+});
+
+test("derives draft, published, and changed status from the revisions", () => {
+  const draft = { draft: { revision: 3 } } as unknown as ContentEntryDto;
+  const published = {
+    draft: { revision: 3 },
+    published: { revision: 3 },
+  } as unknown as ContentEntryDto;
+  const changed = {
+    draft: { revision: 4 },
+    published: { revision: 3 },
+  } as unknown as ContentEntryDto;
+  expect(entryStatus(draft)).toBe("draft");
+  expect(entryStatus(published)).toBe("published");
+  expect(entryStatus(changed)).toBe("changed");
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { builtInBlocks, canonicalizeJson, field } from "@lacecms/content";
+import { builtInBlocks, canonicalizeJson, defineBlock, field } from "@lacecms/content";
 import fixtureConfig from "../dist/config.fixture.js";
 import {
   ConfigurationError,
@@ -217,6 +217,31 @@ test("produces stable per-model and whole-config hashes", async () => {
   expect(renamed.runtime.content[1]).toMatchObject({ renamedFrom: "articles" });
   expect(Object.isFrozen(first)).toBe(true);
   expect(Object.isFrozen(first.content)).toBe(true);
+});
+
+test("block labels and descriptions change only the projection hash", async () => {
+  const redescribed = blocks.map((block) =>
+    block.type === "hero"
+      ? defineBlock({
+          description: "A different description.",
+          fields: block.fields,
+          label: "Banner",
+          type: block.type,
+          version: block.version,
+        })
+      : block,
+  );
+  const original = await defineConfig({ blocks, content: [homeModel()] });
+  const changed = await defineConfig({ blocks: redescribed, content: [homeModel()] });
+
+  expect(original.blocks.find((block) => block.type === "hero")).toMatchObject({
+    description: "Large heading with optional text, image, and action.",
+    label: "Hero",
+  });
+  expect(changed.projectionHash).not.toBe(original.projectionHash);
+  expect(changed.structureHash).toBe(original.structureHash);
+  expect(changed.content[0].projectionHash).not.toBe(original.content[0].projectionHash);
+  expect(changed.content[0].structureHash).toBe(original.content[0].structureHash);
 });
 
 test("rejects model blocks missing from the root registry and separates projections", async () => {

@@ -1,6 +1,12 @@
 import type { NormalizedContentModel, RuntimeConfigProjection } from "@lacecms/config";
 import { sha256CanonicalJson, validateEntryAggregate } from "@lacecms/content";
 import type { FieldDefinition, JsonObject, JsonValue } from "@lacecms/content";
+
+/**
+ * Thrown by the content use cases when a submitted or published aggregate
+ * fails content validation; its issues carry stable codes and paths.
+ */
+export { ContentValidationError } from "@lacecms/content";
 import {
   DomainError,
   assertOrderedBlockPositions,

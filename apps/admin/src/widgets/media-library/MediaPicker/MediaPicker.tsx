@@ -9,13 +9,17 @@ import { SelectedMedia } from "../SelectedMedia/index.js";
 /**
  * The media field renderer: shows the selected item as a card with Replace and
  * Remove, or a Choose media action, and chooses through the picker dialog.
- * Focus returns to whichever of those actions remains after a change.
+ * Focus returns to whichever of those actions remains after a change. A
+ * read-only field shows its value without any choosing action.
  */
 export function MediaPicker({
   fieldKey,
+  id,
   onChange,
+  readOnly = false,
   value,
-}: Pick<FieldRendererProps, "fieldKey" | "onChange" | "value">) {
+}: Pick<FieldRendererProps, "fieldKey" | "onChange" | "value"> &
+  Partial<Pick<FieldRendererProps, "id" | "readOnly">>) {
   const label = fieldLabel(fieldKey, undefined);
   const mediaId = typeof value === "string" ? value : undefined;
   const [open, setOpen] = useState(false);
@@ -30,8 +34,10 @@ export function MediaPicker({
   }, [mediaId]);
 
   return (
-    <div className="grid gap-2">
-      {mediaId === undefined ? (
+    <div className="grid gap-2" id={id}>
+      {mediaId === undefined && readOnly ? (
+        <p className="m-0 text-sm text-muted-foreground">No media selected</p>
+      ) : mediaId === undefined ? (
         <div className="flex flex-wrap items-center gap-3">
           <Button
             aria-haspopup="dialog"
@@ -56,23 +62,26 @@ export function MediaPicker({
           }}
           onReplace={() => setOpen(true)}
           placeholder={chosen}
+          readOnly={readOnly}
         />
       )}
-      <MediaPickerDialog
-        currentId={mediaId}
-        label={label}
-        onChoose={(item) => {
-          setChosen(item);
-          onChange(item.id);
-          setOpen(false);
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          action.current?.focus();
-        }}
-        onOpenChange={setOpen}
-        open={open}
-      />
+      {readOnly ? undefined : (
+        <MediaPickerDialog
+          currentId={mediaId}
+          label={label}
+          onChoose={(item) => {
+            setChosen(item);
+            onChange(item.id);
+            setOpen(false);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            action.current?.focus();
+          }}
+          onOpenChange={setOpen}
+          open={open}
+        />
+      )}
     </div>
   );
 }

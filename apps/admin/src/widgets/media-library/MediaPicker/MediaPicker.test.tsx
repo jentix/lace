@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ContentModelDto, MediaMetadataDto } from "@lacecms/contracts";
 import {
+  addBlock,
   draftEntry,
   mediaItem,
   renderRoute,
@@ -151,14 +152,17 @@ test("a missing selection is kept until it is replaced or removed", async () => 
   expect(screen.getByRole("button", { name: "Choose media for Hero" })).toHaveFocus();
 });
 
-test("a viewer can browse the picker without upload controls", async () => {
-  const user = userEvent.setup();
-  mount({ overrides: { listMedia: async () => ({ items: [mediaItem] }) }, role: "viewer" });
-  await user.click(await screen.findByRole("button", { name: "Choose media for Hero" }));
-  const dialog = screen.getByRole("dialog", { name: "Choose media for Hero" });
-  expect(await within(dialog).findByRole("button", { name: "cover.png" })).toBeInTheDocument();
-  expect(within(dialog).queryByRole("button", { name: "Upload images" })).not.toBeInTheDocument();
-  expect(within(dialog).queryByLabelText("Upload images")).not.toBeInTheDocument();
+test("a viewer sees the selected media without choosing, replacing, or removing it", async () => {
+  mount({ hero: mediaItem.id, role: "viewer" });
+  expect(await screen.findByText("cover.png")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Replace media for Hero" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove media from Hero" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  document.body.replaceChildren();
+  mount({ role: "viewer" });
+  expect(await screen.findByText("No media selected")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Choose media for Hero" })).not.toBeInTheDocument();
 });
 
 test("a block picker uploads several files, reports each, and uses an upload explicitly", async () => {
@@ -180,7 +184,7 @@ test("a block picker uploads several files, reports each, and uses an upload exp
     },
   });
   await screen.findByRole("heading", { name: "Edit posts" });
-  await user.click(screen.getByRole("button", { name: "Add Hero" }));
+  await addBlock(user, "Hero");
   await user.click(screen.getByRole("button", { name: "Choose media for Image" }));
   const dialog = screen.getByRole("dialog", { name: "Choose media for Image" });
   expect(await within(dialog).findByText("Media list failed")).toBeInTheDocument();

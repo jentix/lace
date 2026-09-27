@@ -46,6 +46,7 @@
     "@tiptap/extension-paragraph": "catalog:",
     "@tiptap/extension-strike": "catalog:",
     "@tiptap/extension-text": "catalog:",
+    "@tiptap/extensions": "catalog:",
     "@tiptap/react": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
