@@ -1,0 +1,39 @@
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${LACE_MINIO_ROOT_ACCESS_KEY:?set LACE_MINIO_ROOT_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${LACE_MINIO_ROOT_SECRET:?set LACE_MINIO_ROOT_SECRET}
+    volumes: [minio-data:/data]
+    networks: [backend]
+
+  api:
+    image: ${LACE_API_IMAGE:?set LACE_API_IMAGE}
+    environment:
+      LACE_AUTH_SECRET: ${LACE_AUTH_SECRET:?set LACE_AUTH_SECRET}
+      LACE_PUBLIC_BASE_URL: ${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}
+      LACE_DATABASE_PATH: /data/lace.sqlite
+      LACE_MINIO_ENDPOINT: http://minio:9000
+      LACE_MINIO_ROOT_ACCESS_KEY: ${LACE_MINIO_ROOT_ACCESS_KEY:?set LACE_MINIO_ROOT_ACCESS_KEY}
+      LACE_MINIO_ROOT_SECRET: ${LACE_MINIO_ROOT_SECRET:?set LACE_MINIO_ROOT_SECRET}
+    volumes: [sqlite-data:/data]
+    ports: ["3000:3000"]
+    networks: [backend]
+    depends_on: [minio]
+
+  builder:
+    image: ${LACE_BUILDER_IMAGE:?set LACE_BUILDER_IMAGE}
+    environment:
+      LACE_BUILDER_SECRET: ${LACE_BUILDER_SECRET:?set LACE_BUILDER_SECRET}
+      LACE_BUILD_TOKEN: ${LACE_BUILD_TOKEN:?set LACE_BUILD_TOKEN}
+      LACE_API_BASE_URL: http://api:3000/
+    networks: [backend]
+    depends_on: [api]
+
+volumes:
+  minio-data:
+  sqlite-data:
+
+networks:
+  backend:
