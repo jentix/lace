@@ -12,7 +12,7 @@ const attribution = readOptionalString(block, context, "attribution");
 const quote = readRequiredString(block, context, "quote");
 ---
 
-<blockquote>
-  <p>{quote}</p>
-  {attribution !== undefined && <footer>{attribution}</footer>}
+<blockquote data-lace-block={block.type} data-lace-block-key={block.key}>
+  <p data-lace-part="text">{quote}</p>
+  {attribution !== undefined && <footer data-lace-part="attribution">{attribution}</footer>}
 </blockquote>

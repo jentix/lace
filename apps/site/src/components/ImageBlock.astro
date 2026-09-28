@@ -14,7 +14,7 @@ const caption = readOptionalString(block, context, "caption");
 const media = readRequiredString(block, context, "media");
 ---
 
-<figure>
-  <img alt={alt} src={mediaUrl(media)} />
-  {caption !== undefined && <figcaption>{caption}</figcaption>}
+<figure data-lace-block={block.type} data-lace-block-key={block.key}>
+  <img alt={alt} data-lace-part="media" src={mediaUrl(media)} />
+  {caption !== undefined && <figcaption data-lace-part="caption">{caption}</figcaption>}
 </figure>
