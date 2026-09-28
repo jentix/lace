@@ -9,3 +9,4 @@ export interface AppliedMigration {
 }
 
 export * from "./schema.js";
+export * from "./sql-content.js";

@@ -1273,6 +1273,9 @@ Cloudflare Worker with D1 and R2.
    `/admin`, and preserve API/auth routing order.
 4. Implement scheduled outbox recovery and event leasing. `waitUntil` may improve
    latency after commit but is never the only recovery path.
+5. Implement D1 security-service persistence (setup tokens, first-admin
+   bootstrap, users, API tokens, and rate-limit buckets) with the same guarded
+   batch rules as 22A, together with Better Auth on D1.
 
 ### Session 22C — Cloudflare development and deploy hook
 

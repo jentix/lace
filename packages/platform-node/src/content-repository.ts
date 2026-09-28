@@ -1,14 +1,12 @@
 import {
   actorDisplayName,
-  ALLOWED_MEDIA_MIME_TYPES,
   DISPATCHER_LEASE_DURATION_MS,
   SITE_BUILD_DEBOUNCE_MS,
   dispatcherEventId,
   foldAscii,
-  MAX_CONTENT_ENTRY_SEARCH_LENGTH,
+  ALLOWED_MEDIA_MIME_TYPES,
   MAX_MEDIA_USAGE_ENTRIES,
   dispatcherLeaseId,
-  opaqueCursor,
   planConfigurationSynchronization,
   renderConfigurationSyncPlanJson,
 } from "@lacecms/application";
@@ -22,12 +20,7 @@ import type {
   ContentCommandResult,
   ContentEntryCommandPort,
   ContentEntryListPage,
-  ContentEntryListValues,
   ContentEntryReadPort,
-  ContentEntrySort,
-  ContentEntryStatus,
-  ContentEntryStatusTotals,
-  ContentEntrySummary,
   ConfigurationSyncApplyPort,
   ConfigurationSyncStateReadPort,
   CreateContentEntryInput,
@@ -48,10 +41,7 @@ import type {
   MediaDeletionDispatchPort,
   MediaListPort,
   MediaReadPort,
-  MediaSort,
   MediaUsageEntry,
-  MediaUsageLocation,
-  MediaUsageState,
   PublishContentEntryCommand,
   PublishContentEntryResult,
   PublicContentEntry,
@@ -68,475 +58,90 @@ import type {
   StoredContentModelState,
 } from "@lacecms/application";
 import {
+  BLOCK_COLUMNS_SQL,
+  ENTRY_COLUMNS_SQL,
+  ENTRY_SEARCH_SQL,
+  ENTRY_SORT_SQL,
+  ENTRY_SOURCE_SQL,
+  ENTRY_STATUS_SQL,
+  MEDIA_BY_ID_SQL,
+  MEDIA_CATALOG_SQL,
+  MEDIA_SORT_SQL,
+  MEDIA_USAGE_SQL,
+  PUBLICATION_IDEMPOTENCY_TTL_MS,
+  PUBLIC_MEDIA_SQL,
+  PUBLIC_ROUTE_SQL,
+  SNAPSHOT_COLUMNS_SQL,
+  STORED_MODEL_STATE_SQL,
+  SQL_MAX_PAGE_SIZE,
+  assertDraftPersistenceBounds,
+  assertNonNegativeInteger,
+  assertPageSize,
+  assertTimestamp,
+  chunks,
+  decodeCursor,
+  decodeEntryCursor,
+  decodeMediaCursor,
+  encodeCursor,
+  encodeSortCursor,
+  entryCursorKind,
+  entryStatus,
+  entrySummary,
+  entryTotals,
+  entryTotalsSql,
+  failure,
+  hydrateEntries,
+  mediaCatalogItem,
+  mediaCursorKind,
+  mediaMetadata,
+  mediaUsageEntries,
+  parseObject,
+  publicEntry,
+  sameStoredModelStates,
+  sanitizeBuildReason,
+  sanitizeDispatchError,
+  siteBuildPayload,
+  siteBuildRecord,
+  snapshotIdsOf,
+  sqliteWriteError,
+  storedModelStates,
+  storedSnapshots,
+} from "@lacecms/db";
+import type {
+  BlockRow,
+  ContentModelResolver,
+  EntryRow,
+  MediaUsageRow,
+  OutboxRow,
+  PublicRow,
+  SiteBuildRow,
+  SnapshotRow,
+  StoredModelStateRow,
+  StoredSnapshot,
+  SummaryRow,
+  TotalsRow,
+} from "@lacecms/db";
+import {
   DomainError,
-  actorId,
-  blockKey,
-  contentEntryId,
-  contentModelKey,
   contentSnapshotId,
   resolveContentPublicPath,
   siteBuildId,
   unixMilliseconds,
 } from "@lacecms/domain";
 import type {
-  Actor,
   ActorId,
-  ContentBlock,
   ContentEntry,
-  ContentModelRoute,
   DraftSnapshot,
   MediaMetadata,
   PublishedSnapshot,
-  Role,
 } from "@lacecms/domain";
-import type { JsonObject } from "@lacecms/content";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import type { NodeDatabase } from "./index.js";
 
-const CURSOR_VERSION = 1;
-const MAX_PAGE_SIZE = 100;
 const SQLITE_BIND_CHUNK = 200;
 
-interface SiteBuildRow {
-  readonly id: string;
-  readonly reason: string;
-  readonly status: SiteBuildRecord["status"];
-  readonly target_version: number;
-  readonly requested_by: string;
-  readonly requested_at: number;
-  readonly started_at: number | null;
-  readonly completed_at: number | null;
-  readonly provider_build_id: string | null;
-  readonly error: string | null;
-}
-
-function siteBuildRecord(row: SiteBuildRow): SiteBuildRecord {
-  return {
-    id: siteBuildId(row.id),
-    reason: row.reason,
-    status: row.status,
-    targetVersion: row.target_version,
-    requestedBy: row.requested_by,
-    requestedAt: unixMilliseconds(row.requested_at),
-    ...(row.started_at === null ? {} : { startedAt: unixMilliseconds(row.started_at) }),
-    ...(row.completed_at === null ? {} : { completedAt: unixMilliseconds(row.completed_at) }),
-    ...(row.provider_build_id === null ? {} : { providerBuildId: row.provider_build_id }),
-    ...(row.error === null ? {} : { error: sanitizeBuildReason(row.error) }),
-  };
-}
-
-type CursorKind = string;
-
-interface DecodedCursor {
-  readonly id: string;
-  readonly timestamp: number;
-}
-
-interface EntryRow {
-  readonly draft_snapshot_id: string | null;
-  readonly id: string;
-  readonly model_key: string;
-  readonly published_snapshot_id: string | null;
-}
-
-interface OutboxRow {
-  readonly attempts: number;
-  readonly available_at: number;
-  readonly id: string;
-  readonly payload_json: string;
-  readonly type: string;
-}
-
-interface SnapshotRow {
-  readonly created_at: number;
-  readonly entry_id: string;
-  readonly fields_json: string;
-  readonly id: string;
-  readonly revision: number;
-  readonly role: string | null;
-  readonly schema_version: number;
-  readonly slug: string | null;
-  readonly title: string;
-  readonly updated_at: number;
-  readonly updated_by: string;
-}
-
-interface BlockRow {
-  readonly block_key: string;
-  readonly block_type: string;
-  readonly created_at: number;
-  readonly data_json: string;
-  readonly position: number;
-  readonly schema_version: number;
-  readonly snapshot_id: string;
-  readonly updated_at: number;
-}
-
-interface StoredSnapshot {
-  readonly blocks: readonly ContentBlock[];
-  readonly createdAt: number;
-  readonly entryId: string;
-  readonly fields: JsonObject;
-  readonly id: string;
-  readonly revision: number;
-  readonly slug?: string;
-  readonly title: string;
-  readonly updatedAt: number;
-  readonly updatedBy: Actor;
-}
-
-interface SummaryRow {
-  readonly draft_revision: number;
-  readonly fields_json: string;
-  readonly id: string;
-  readonly model_key: string;
-  readonly published_at: number | null;
-  readonly published_snapshot_id: string | null;
-  readonly slug: string | null;
-  readonly sort_value: number | string;
-  readonly status: string;
-  readonly title: string;
-  readonly updated_at: number;
-  readonly updated_by: string;
-  readonly updated_by_name: string | null;
-}
-
-interface TotalsRow {
-  readonly changed_count: number | null;
-  readonly draft_count: number | null;
-  readonly published_count: number | null;
-  readonly total_count: number;
-}
-
-interface DecodedEntryCursor {
-  readonly id: string;
-  readonly value: number | string;
-}
-
-const SORT_CURSOR_VERSION = 2;
-const ENTRY_SOURCE_SQL = `content_entries e
-  join content_snapshots d on d.id = e.draft_snapshot_id
-  left join content_snapshots p on p.id = e.published_snapshot_id`;
-const ENTRY_STATUS_SQL = `case when e.published_snapshot_id is null then 'draft'
-  when p.revision = d.revision then 'published' else 'changed' end`;
-const ENTRY_SEARCH_SQL = "(instr(lower(d.title), ?) > 0 or instr(coalesce(d.slug, ''), ?) > 0)";
-const ENTRY_SORT_SQL: Readonly<Record<string, { readonly order: string; readonly value: string }>> =
-  {
-    publishedAt: { order: "coalesce(p.created_at, -1)", value: "coalesce(p.created_at, -1)" },
-    title: { order: "d.title collate nocase", value: "d.title" },
-    updatedAt: { order: "e.updated_at", value: "e.updated_at" },
-  };
-const MAX_MEDIA_FILENAME_LENGTH = 255;
-const MEDIA_COLUMNS_SQL =
-  "m.id, m.storage_key, m.filename, m.mime_type, m.size, m.width, m.height, m.status, m.created_by, m.created_at, m.updated_at";
-/** Distinct entries whose current draft or published snapshot references the media row `m`. */
-const MEDIA_USAGE_COUNT_SQL = `(select count(distinct s.entry_id)
-  from content_media_references r
-  join content_snapshots s on s.id = r.snapshot_id
-  where r.media_id = m.id)`;
-const MEDIA_CATALOG_SQL = `select ${MEDIA_COLUMNS_SQL}, u.name as created_by_name,
-  ${MEDIA_USAGE_COUNT_SQL} as usage_count`;
-const MEDIA_SORT_SQL: Readonly<Record<string, { readonly order: string; readonly value: string }>> =
-  {
-    createdAt: { order: "m.created_at", value: "m.created_at" },
-    filename: { order: "m.filename collate nocase", value: "m.filename" },
-    size: { order: "m.size", value: "m.size" },
-  };
-
-interface MediaUsageRow {
-  readonly block_type: string | null;
-  readonly entry_id: string;
-  readonly field_path: string;
-  readonly model_key: string;
-  readonly position: number | null;
-  readonly slug: string | null;
-  readonly source_key: string;
-  readonly state: MediaUsageState;
-  readonly status: string;
-  readonly title: string;
-}
-
-interface MediaUsageLocationDraft {
-  readonly blockKey?: string;
-  blockType?: string;
-  readonly field: string;
-  position: number;
-  readonly states: Set<MediaUsageState>;
-}
-
-interface PublicRow extends EntryRow {
-  readonly path: string;
-  readonly published_created_at: number;
-}
-
-interface StoredModelStateRow {
-  readonly draft_snapshot_count: number;
-  readonly entry_count: number;
-  readonly key: string;
-  readonly kind: string;
-  readonly projection_hash: string;
-  readonly published_snapshot_count: number;
-  readonly structure_hash: string;
-  readonly version: number;
-}
-
-function sameStoredModelStates(
-  expected: readonly StoredContentModelState[],
-  actual: readonly StoredContentModelState[],
-): boolean {
-  if (expected.length !== actual.length) return false;
-  return expected.every((value, index) => {
-    const candidate = actual[index];
-    return (
-      candidate !== undefined &&
-      value.key === candidate.key &&
-      value.kind === candidate.kind &&
-      value.version === candidate.version &&
-      value.structureHash === candidate.structureHash &&
-      value.projectionHash === candidate.projectionHash &&
-      value.entryCount === candidate.entryCount &&
-      value.draftSnapshotCount === candidate.draftSnapshotCount &&
-      value.publishedSnapshotCount === candidate.publishedSnapshotCount
-    );
-  });
-}
-
-function failure(message: string): never {
-  throw new DomainError("CONTENT_INVALID_STATE", message);
-}
-
-function assertPageSize(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PAGE_SIZE) {
-    failure(`Page limit must be a positive integer no greater than ${MAX_PAGE_SIZE}.`);
-  }
-  return value;
-}
-
-function assertNonNegativeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    failure(`${label} is invalid.`);
-  }
-  return value;
-}
-
-function sanitizeDispatchError(value: string): string {
-  return (
-    value
-      .replace(/[\r\n\t]/gu, " ")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, 160) || "storage_unavailable"
-  );
-}
-
-function sanitizeBuildReason(value: string): string {
-  return [
-    "trigger_unavailable",
-    "provider_failed",
-    "build_timeout",
-    "invalid_build_event",
-  ].includes(value)
-    ? value
-    : "provider_failed";
-}
-
-function parseObject(value: string, label: string): JsonObject {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
-      failure(`${label} must contain a JSON object.`);
-    }
-    return parsed as JsonObject;
-  } catch (error) {
-    if (error instanceof DomainError) throw error;
-    failure(`${label} contains invalid JSON.`);
-  }
-}
-
-function role(value: string | null): Role {
-  return value === "admin" || value === "editor" || value === "viewer" ? value : "viewer";
-}
-
-function assertTimestamp(value: number, label: string): number {
-  if (!Number.isSafeInteger(value) || value < 0)
-    failure(`${label} must be a UTC millisecond value.`);
-  return value;
-}
-
-function encodeCursor(
-  kind: CursorKind,
-  timestamp: number,
-  id: string,
-): ReturnType<typeof opaqueCursor> {
-  return opaqueCursor(
-    Buffer.from(JSON.stringify({ id, kind, timestamp, version: CURSOR_VERSION })).toString(
-      "base64url",
-    ),
-  );
-}
-
-function decodeCursor(value: string, kind: CursorKind): DecodedCursor {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) failure("Cursor is not base64url encoded.");
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      parsed === null ||
-      typeof parsed !== "object" ||
-      Array.isArray(parsed) ||
-      Object.keys(parsed).length !== 4
-    ) {
-      failure("Cursor has an invalid shape.");
-    }
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      candidate.version !== CURSOR_VERSION ||
-      candidate.kind !== kind ||
-      typeof candidate.id !== "string" ||
-      candidate.id.length === 0 ||
-      typeof candidate.timestamp !== "number"
-    ) {
-      failure("Cursor is unsupported or belongs to a different list.");
-    }
-    return {
-      id: candidate.id,
-      timestamp: assertTimestamp(candidate.timestamp, "Cursor timestamp"),
-    };
-  } catch (error) {
-    if (error instanceof DomainError) throw error;
-    failure("Cursor contains invalid JSON.");
-  }
-}
-
-function entryCursorKind(input: ListContentEntriesInput): string {
-  return JSON.stringify([
-    "entries",
-    input.modelKey,
-    input.sort,
-    input.status ?? null,
-    input.q ?? null,
-  ]);
-}
-
-function encodeSortCursor(
-  kind: string,
-  value: number | string,
-  id: string,
-): ReturnType<typeof opaqueCursor> {
-  return opaqueCursor(
-    Buffer.from(JSON.stringify({ id, kind, value, version: SORT_CURSOR_VERSION })).toString(
-      "base64url",
-    ),
-  );
-}
-
-function decodeSortCursor(
-  value: string,
-  kind: string,
-  validValue: (sortValue: unknown) => boolean,
-): DecodedEntryCursor {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) failure("Cursor is not base64url encoded.");
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      parsed === null ||
-      typeof parsed !== "object" ||
-      Array.isArray(parsed) ||
-      Object.keys(parsed).length !== 4
-    ) {
-      failure("Cursor has an invalid shape.");
-    }
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      candidate.version !== SORT_CURSOR_VERSION ||
-      candidate.kind !== kind ||
-      typeof candidate.id !== "string" ||
-      candidate.id.length === 0
-    ) {
-      failure("Cursor is unsupported or belongs to a different list.");
-    }
-    if (!validValue(candidate.value)) failure("Cursor sort value is invalid.");
-    return { id: candidate.id, value: candidate.value as number | string };
-  } catch (error) {
-    if (error instanceof DomainError) throw error;
-    failure("Cursor contains invalid JSON.");
-  }
-}
-
-function decodeEntryCursor(
-  value: string,
-  kind: string,
-  sort: ContentEntrySort,
-): DecodedEntryCursor {
-  return decodeSortCursor(value, kind, (sortValue) =>
-    sort.endsWith("title")
-      ? typeof sortValue === "string" && sortValue.length <= MAX_CONTENT_ENTRY_SEARCH_LENGTH
-      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= -1,
-  );
-}
-
-function mediaCursorKind(input: ListMediaInput): string {
-  return JSON.stringify(["media", input.sort, input.type ?? null, input.q ?? null]);
-}
-
-function decodeMediaCursor(value: string, kind: string, sort: MediaSort): DecodedEntryCursor {
-  return decodeSortCursor(value, kind, (sortValue) =>
-    sort.endsWith("filename")
-      ? typeof sortValue === "string" && sortValue.length <= MAX_MEDIA_FILENAME_LENGTH
-      : typeof sortValue === "number" && Number.isSafeInteger(sortValue) && sortValue >= 0,
-  );
-}
-
-/** Orders usage locations: entry fields by name, then blocks by position and key. */
-function compareUsageLocations(
-  left: MediaUsageLocationDraft,
-  right: MediaUsageLocationDraft,
-): number {
-  if ((left.blockKey === undefined) !== (right.blockKey === undefined)) {
-    return left.blockKey === undefined ? -1 : 1;
-  }
-  if (left.position !== right.position) return left.position - right.position;
-  const leftKey = `${left.blockKey ?? ""}\u0000${left.field}`;
-  const rightKey = `${right.blockKey ?? ""}\u0000${right.field}`;
-  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-}
-
-function usageStates(states: ReadonlySet<MediaUsageState>): readonly MediaUsageState[] {
-  return Object.freeze((["draft", "published"] as const).filter((state) => states.has(state)));
-}
-
-function entryStatus(value: string): ContentEntryStatus {
-  if (value === "changed" || value === "draft" || value === "published") return value;
-  failure("Entry status is invalid.");
-}
-
-function listValues(fieldsJson: string, listFields: readonly string[]): ContentEntryListValues {
-  const values: Record<string, boolean | number | string> = {};
-  if (listFields.length === 0) return Object.freeze(values);
-  const fields = parseObject(fieldsJson, "Snapshot fields");
-  for (const key of listFields) {
-    const value = Object.hasOwn(fields, key) ? fields[key] : undefined;
-    if (
-      typeof value === "string" ||
-      typeof value === "boolean" ||
-      (typeof value === "number" && Number.isFinite(value))
-    ) {
-      values[key] = value;
-    }
-  }
-  return Object.freeze(values);
-}
-
-function chunks<Value>(values: readonly Value[]): readonly (readonly Value[])[] {
-  const result: Value[][] = [];
-  for (let index = 0; index < values.length; index += SQLITE_BIND_CHUNK) {
-    result.push(values.slice(index, index + SQLITE_BIND_CHUNK));
-  }
-  return result;
-}
-
-/** Maps the current runtime configuration to a persisted content-model identity. */
-export type ContentModelResolver = (key: string) => ContentModelRoute | undefined;
+export type { ContentModelResolver } from "@lacecms/db";
 
 export interface NodeRepositoryOptions {
   readonly beforeMutation?: (checkpoint: string) => void;
@@ -711,6 +316,7 @@ export class NodeContentRepository
 
   public async create(input: CreateContentEntryInput): Promise<ContentCommandResult> {
     const { draft, id, model } = input.entry;
+    assertDraftPersistenceBounds(draft.blocks, input.mediaReferences);
     try {
       this.connection.transaction(() => {
         const version = this.connection
@@ -745,6 +351,7 @@ export class NodeContentRepository
   }
 
   public async saveCompleteDraft(input: SaveCompleteDraftInput): Promise<ContentCommandResult> {
+    assertDraftPersistenceBounds(input.mutation.blocks, input.mutation.mediaReferences);
     const existing = this.entryRow(input.entryId);
     if (existing === undefined || existing.draft_snapshot_id === null) {
       failure("Content entry does not have a mutable draft.");
@@ -887,7 +494,7 @@ export class NodeContentRepository
               input.idempotency.fingerprint,
               JSON.stringify(committed),
               input.publishedAt,
-              input.publishedAt + 86_400_000,
+              input.publishedAt + PUBLICATION_IDEMPOTENCY_TTL_MS,
             );
         if (entry.published !== undefined)
           this.connection
@@ -1015,7 +622,7 @@ export class NodeContentRepository
   }
 
   public async claim(input: ClaimDispatcherEventsInput): Promise<readonly DispatcherLease[]> {
-    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAX_PAGE_SIZE) {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > SQL_MAX_PAGE_SIZE) {
       failure("Dispatcher claim limit is invalid.");
     }
     if (input.eventTypes.length === 0 || input.eventTypes.some((type) => type.length === 0)) {
@@ -1226,7 +833,7 @@ export class NodeContentRepository
 
   public async describeActors(ids: readonly ActorId[]): Promise<readonly ActorSummary[]> {
     const names = new Map<string, string>();
-    for (const group of chunks([...new Set(ids)])) {
+    for (const group of chunks([...new Set(ids)], SQLITE_BIND_CHUNK)) {
       const rows = this.connection
         .prepare(`select id, name from user where id in (${group.map(() => "?").join(", ")})`)
         .all(...group) as readonly { readonly id: string; readonly name: string }[];
@@ -1276,7 +883,7 @@ export class NodeContentRepository
         limit + 1,
       ) as readonly SummaryRow[];
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((row) => this.summary(row, input.listFields));
+    const items = pageRows.map((row) => entrySummary(row, input.listFields));
     const last = pageRows.at(-1);
     return Object.freeze({
       items: Object.freeze(items),
@@ -1287,47 +894,12 @@ export class NodeContentRepository
     });
   }
 
-  private entryTotals(modelKey: string, term: string | undefined): ContentEntryStatusTotals {
-    const row = this.connection
-      .prepare(
-        `select count(*) as total_count,
-                sum(case when e.published_snapshot_id is null then 1 else 0 end) as draft_count,
-                sum(case when p.revision = d.revision then 1 else 0 end) as published_count,
-                sum(case when p.revision <> d.revision then 1 else 0 end) as changed_count
-           from ${ENTRY_SOURCE_SQL}
-          where e.model_key = ? ${term === undefined ? "" : `and ${ENTRY_SEARCH_SQL}`}`,
-      )
-      .get(modelKey, ...(term === undefined ? [] : [term, term])) as TotalsRow;
-    return Object.freeze({
-      all: assertNonNegativeInteger(row.total_count, "Entry total"),
-      changed: assertNonNegativeInteger(row.changed_count ?? 0, "Changed entry total"),
-      draft: assertNonNegativeInteger(row.draft_count ?? 0, "Draft entry total"),
-      published: assertNonNegativeInteger(row.published_count ?? 0, "Published entry total"),
-    });
-  }
-
-  private summary(row: SummaryRow, listFields: readonly string[]): ContentEntrySummary {
-    const status = entryStatus(row.status);
-    return Object.freeze({
-      draftRevision: row.draft_revision,
-      id: contentEntryId(row.id),
-      listValues: listValues(row.fields_json, listFields),
-      modelKey: contentModelKey(row.model_key),
-      ...(row.published_snapshot_id === null || row.published_at === null
-        ? {}
-        : {
-            publishedAt: unixMilliseconds(assertTimestamp(row.published_at, "Publication time")),
-            publishedSnapshotId: contentSnapshotId(row.published_snapshot_id),
-          }),
-      ...(row.slug === null ? {} : { slug: row.slug }),
-      status,
-      title: row.title,
-      updatedAt: unixMilliseconds(assertTimestamp(row.updated_at, "Entry timestamp")),
-      updatedBy: Object.freeze({
-        displayName: actorDisplayName(row.updated_by, row.updated_by_name),
-        id: actorId(row.updated_by),
-      }),
-    });
+  private entryTotals(modelKey: string, term: string | undefined) {
+    return entryTotals(
+      this.connection
+        .prepare(entryTotalsSql(term !== undefined))
+        .get(modelKey, ...(term === undefined ? [] : [term, term])) as TotalsRow,
+    );
   }
 
   public async listPublic(input: ListPublicContentInput): Promise<CursorPage<PublicContentEntry>> {
@@ -1336,11 +908,7 @@ export class NodeContentRepository
     const after = input.after === undefined ? undefined : decodeCursor(input.after, cursorKind);
     const rows = this.connection
       .prepare(
-        `select e.id, e.model_key, e.draft_snapshot_id, e.published_snapshot_id,
-                r.path, s.created_at as published_created_at
-           from published_routes r
-           join content_entries e on e.id = r.entry_id and e.published_snapshot_id = r.snapshot_id
-           join content_snapshots s on s.id = r.snapshot_id
+        `${PUBLIC_ROUTE_SQL}
           where e.model_key = ?
             ${after === undefined ? "" : "and (s.created_at < ? or (s.created_at = ? and e.id < ?))"}
           order by s.created_at desc, e.id desc limit ?`,
@@ -1355,7 +923,7 @@ export class NodeContentRepository
     const items = pageRows.map((row) => {
       const entry = entries.get(row.id);
       if (entry === undefined) failure("Published route references an unreadable entry.");
-      return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
+      return Object.freeze({ entry: publicEntry(entry), path: row.path });
     });
     const last = pageRows.at(-1);
     return Object.freeze({
@@ -1375,45 +943,27 @@ export class NodeContentRepository
 
   public async loadPublic(path: string): Promise<PublicContentEntry | null> {
     const row = this.connection
-      .prepare(
-        `select e.id, e.model_key, e.draft_snapshot_id, e.published_snapshot_id,
-                r.path, s.created_at as published_created_at
-           from published_routes r
-           join content_entries e on e.id = r.entry_id and e.published_snapshot_id = r.snapshot_id
-           join content_snapshots s on s.id = r.snapshot_id
-          where r.path = ? limit 1`,
-      )
+      .prepare(`${PUBLIC_ROUTE_SQL} where r.path = ? limit 1`)
       .get(path) as PublicRow | undefined;
     if (row === undefined) return null;
     const entry = this.hydrate([row]).get(row.id);
     return entry === undefined
       ? null
-      : Object.freeze({ entry: this.publicEntry(entry), path: row.path });
+      : Object.freeze({ entry: publicEntry(entry), path: row.path });
   }
 
   public async loadPublicMedia(id: string): Promise<MediaMetadata | null> {
-    const row = this.connection
-      .prepare(
-        `select m.id, m.storage_key, m.filename, m.mime_type, m.size, m.width, m.height,
-                m.status, m.created_by, m.created_at, m.updated_at
-           from media m
-          where m.id = ? and exists (
-            select 1 from content_media_references r
-            join content_entries e on e.published_snapshot_id = r.snapshot_id
-            where r.media_id = m.id
-          ) limit 1`,
-      )
-      .get(id) as Record<string, unknown> | undefined;
-    return row === undefined ? null : this.mapMedia(row);
+    const row = this.connection.prepare(PUBLIC_MEDIA_SQL).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? null : mediaMetadata(row);
   }
 
   public async loadMedia(id: string): Promise<MediaMetadata | null> {
-    const row = this.connection
-      .prepare(
-        "select id, storage_key, filename, mime_type, size, width, height, status, created_by, created_at, updated_at from media where id = ? limit 1",
-      )
-      .get(id) as Record<string, unknown> | undefined;
-    return row === undefined ? null : this.mapMedia(row);
+    const row = this.connection.prepare(MEDIA_BY_ID_SQL).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? null : mediaMetadata(row);
   }
 
   public async listMedia(input: ListMediaInput): Promise<CursorPage<MediaCatalogItem>> {
@@ -1455,7 +1005,7 @@ export class NodeContentRepository
       )
       .all(...bindings, limit + 1) as readonly Record<string, unknown>[];
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((row) => this.catalogItem(row));
+    const items = pageRows.map((row) => mediaCatalogItem(row));
     const last = pageRows.at(-1);
     return Object.freeze({
       items: Object.freeze(items),
@@ -1476,7 +1026,7 @@ export class NodeContentRepository
           where m.id = ? limit 1`,
       )
       .get(id) as Record<string, unknown> | undefined;
-    return row === undefined ? null : this.catalogItem(row);
+    return row === undefined ? null : mediaCatalogItem(row);
   }
 
   public async loadMediaUsage(input: LoadMediaUsageInput): Promise<readonly MediaUsageEntry[]> {
@@ -1488,106 +1038,14 @@ export class NodeContentRepository
       failure(`Media usage limit must be between 1 and ${MAX_MEDIA_USAGE_ENTRIES}.`);
     }
     const rows = this.connection
-      .prepare(
-        `with used as (
-           select distinct s.entry_id
-             from content_media_references r
-             join content_snapshots s on s.id = r.snapshot_id
-            where r.media_id = ?
-         ), page as (
-           select e.id
-             from content_entries e
-             join used on used.entry_id = e.id
-            order by e.updated_at desc, e.id desc
-            limit ?
-         )
-         select e.id as entry_id, e.model_key, d.title, d.slug,
-                ${ENTRY_STATUS_SQL} as status,
-                case when r.snapshot_id = e.draft_snapshot_id then 'draft' else 'published' end as state,
-                r.source_key, r.field_path, b.block_type, b.position
-           from content_media_references r
-           join content_snapshots s on s.id = r.snapshot_id
-           join content_entries e on e.id = s.entry_id
-           join content_snapshots d on d.id = e.draft_snapshot_id
-           left join content_snapshots p on p.id = e.published_snapshot_id
-           left join content_blocks b on b.snapshot_id = r.snapshot_id and b.block_key = r.source_key
-          where r.media_id = ? and e.id in (select id from page)
-          order by e.updated_at desc, e.id desc`,
-      )
+      .prepare(MEDIA_USAGE_SQL)
       .all(input.mediaId, input.limit, input.mediaId) as readonly MediaUsageRow[];
-    const entries = new Map<
-      string,
-      { readonly locations: Map<string, MediaUsageLocationDraft>; readonly row: MediaUsageRow }
-    >();
-    for (const row of rows) {
-      let entry = entries.get(row.entry_id);
-      if (entry === undefined) {
-        entry = { locations: new Map(), row };
-        entries.set(row.entry_id, entry);
-      }
-      const isBlock = row.source_key !== "$fields";
-      if (isBlock && (row.block_type === null || row.position === null)) {
-        throw new Error("A media reference names a block that does not exist.");
-      }
-      const key = `${row.source_key}\u0000${row.field_path}`;
-      let location = entry.locations.get(key);
-      if (location === undefined) {
-        location = {
-          ...(isBlock ? { blockKey: row.source_key, blockType: row.block_type! } : {}),
-          field: row.field_path,
-          position: isBlock ? row.position! : 0,
-          states: new Set(),
-        };
-        entry.locations.set(key, location);
-      } else if (isBlock) {
-        // The draft's block type describes what an editor sees now.
-        if (row.state === "draft") location.blockType = row.block_type!;
-        location.position = Math.min(location.position, row.position!);
-      }
-      location.states.add(row.state);
-    }
-    return Object.freeze(
-      [...entries.values()].map(({ locations, row }) =>
-        Object.freeze({
-          entryId: contentEntryId(row.entry_id),
-          locations: Object.freeze(
-            [...locations.values()]
-              .sort(compareUsageLocations)
-              .map((location): MediaUsageLocation =>
-                location.blockKey === undefined
-                  ? Object.freeze({
-                      field: location.field,
-                      source: "field" as const,
-                      states: usageStates(location.states),
-                    })
-                  : Object.freeze({
-                      blockKey: blockKey(location.blockKey),
-                      blockType: location.blockType!,
-                      field: location.field,
-                      source: "block" as const,
-                      states: usageStates(location.states),
-                    }),
-              ),
-          ),
-          modelKey: contentModelKey(row.model_key),
-          ...(row.slug === null ? {} : { slug: row.slug }),
-          status: entryStatus(row.status),
-          title: row.title,
-        }),
-      ),
-    );
+    return mediaUsageEntries(rows);
   }
 
   public async exportBuildContent(): Promise<BuildContentExport> {
     const rows = this.connection
-      .prepare(
-        `select e.id, e.model_key, e.draft_snapshot_id, e.published_snapshot_id,
-                r.path, s.created_at as published_created_at
-           from published_routes r
-           join content_entries e on e.id = r.entry_id and e.published_snapshot_id = r.snapshot_id
-           join content_snapshots s on s.id = r.snapshot_id
-          order by r.path asc`,
-      )
+      .prepare(`${PUBLIC_ROUTE_SQL} order by r.path asc`)
       .all() as readonly PublicRow[];
     const entries = this.hydrate(rows);
     return Object.freeze({
@@ -1595,7 +1053,7 @@ export class NodeContentRepository
         rows.map((row) => {
           const entry = entries.get(row.id);
           if (entry === undefined) failure("Build export contains an unreadable entry.");
-          return Object.freeze({ entry: this.publicEntry(entry), path: row.path });
+          return Object.freeze({ entry: publicEntry(entry), path: row.path });
         }),
       ),
       version: await this.publishedContentVersion(),
@@ -1603,41 +1061,14 @@ export class NodeContentRepository
   }
 
   private entryRow(id: string): EntryRow | undefined {
-    return this.connection
-      .prepare(
-        "select id, model_key, draft_snapshot_id, published_snapshot_id from content_entries where id = ?",
-      )
-      .get(id) as EntryRow | undefined;
+    return this.connection.prepare(`${ENTRY_COLUMNS_SQL} where id = ?`).get(id) as
+      | EntryRow
+      | undefined;
   }
 
   private readConfigurationSyncStateNow(): readonly StoredContentModelState[] {
-    const rows = this.connection
-      .prepare(
-        `select m.key, m.kind, m.config_version as version, m.structure_hash, m.projection_hash,
-                count(e.id) as entry_count,
-                sum(case when e.draft_snapshot_id is null then 0 else 1 end) as draft_snapshot_count,
-                sum(case when e.published_snapshot_id is null then 0 else 1 end) as published_snapshot_count
-           from content_models m
-           left join content_entries e on e.model_key = m.key
-          group by m.key, m.kind, m.config_version, m.structure_hash, m.projection_hash
-          order by m.key asc`,
-      )
-      .all() as readonly StoredModelStateRow[];
-    return Object.freeze(
-      rows.map((row) => {
-        if (row.kind !== "collection" && row.kind !== "page")
-          failure("Stored model kind is invalid.");
-        return Object.freeze({
-          draftSnapshotCount: row.draft_snapshot_count,
-          entryCount: row.entry_count,
-          key: contentModelKey(row.key),
-          kind: row.kind,
-          projectionHash: row.projection_hash,
-          publishedSnapshotCount: row.published_snapshot_count,
-          structureHash: row.structure_hash,
-          version: row.version,
-        });
-      }),
+    return storedModelStates(
+      this.connection.prepare(STORED_MODEL_STATE_SQL).all() as readonly StoredModelStateRow[],
     );
   }
 
@@ -1647,129 +1078,30 @@ export class NodeContentRepository
     return this.hydrate([row]).get(row.id) ?? null;
   }
 
-  /** Public projections cannot disclose the independently mutable draft snapshot. */
-  private publicEntry(entry: ContentEntry): ContentEntry {
-    if (entry.published === undefined) failure("Public entry is missing its published snapshot.");
-    return Object.freeze({
-      draft: Object.freeze({ ...entry.published, state: "draft" as const }),
-      id: entry.id,
-      model: entry.model,
-      published: entry.published,
-    });
-  }
-
   private hydrate(rows: readonly EntryRow[]): Map<string, ContentEntry> {
-    const snapshotIds = [
-      ...new Set(
-        rows
-          .flatMap((row) => [row.draft_snapshot_id, row.published_snapshot_id])
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    const snapshots = this.loadSnapshots(snapshotIds);
-    const result = new Map<string, ContentEntry>();
-    for (const row of rows) {
-      if (row.draft_snapshot_id === null) failure("Content entry is missing its draft snapshot.");
-      const draftSource = snapshots.get(row.draft_snapshot_id);
-      if (draftSource === undefined) failure("Content entry draft snapshot is missing.");
-      const model = this.resolveModel(row.model_key);
-      if (model === undefined)
-        failure(`Content model ${row.model_key} is unavailable in runtime configuration.`);
-      const draft = this.snapshot(draftSource, "draft");
-      const publishedSource =
-        row.published_snapshot_id === null ? undefined : snapshots.get(row.published_snapshot_id);
-      if (row.published_snapshot_id !== null && publishedSource === undefined) {
-        failure("Content entry published snapshot is missing.");
-      }
-      result.set(
-        row.id,
-        Object.freeze({
-          draft,
-          id: contentEntryId(row.id),
-          model: Object.freeze({ ...model }),
-          ...(publishedSource === undefined
-            ? {}
-            : { published: this.snapshot(publishedSource, "published") }),
-        }),
-      );
-    }
-    return result;
+    return hydrateEntries(rows, this.loadSnapshots(snapshotIdsOf(rows)), this.resolveModel);
   }
 
   private loadSnapshots(ids: readonly string[]): Map<string, StoredSnapshot> {
     if (ids.length === 0) return new Map();
-    const snapshots = new Map<string, StoredSnapshot>();
+    const snapshotRows: SnapshotRow[] = [];
     const blockRows: BlockRow[] = [];
-    for (const group of chunks(ids)) {
+    for (const group of chunks(ids, SQLITE_BIND_CHUNK)) {
       const bindings = group.map(() => "?").join(", ");
-      const rows = this.connection
-        .prepare(
-          `select s.id, s.entry_id, s.revision, s.slug, s.title, s.fields_json, s.schema_version,
-                  s.created_at, s.updated_at, s.updated_by, u.role
-             from content_snapshots s left join user u on u.id = s.updated_by
-            where s.id in (${bindings})`,
-        )
-        .all(...group) as readonly SnapshotRow[];
-      for (const row of rows) {
-        snapshots.set(row.id, {
-          blocks: [],
-          createdAt: assertTimestamp(row.created_at, "Snapshot creation time"),
-          entryId: row.entry_id,
-          fields: parseObject(row.fields_json, "Snapshot fields"),
-          id: row.id,
-          revision: row.revision,
-          ...(row.slug === null ? {} : { slug: row.slug }),
-          title: row.title,
-          updatedAt: assertTimestamp(row.updated_at, "Snapshot update time"),
-          updatedBy: { id: actorId(row.updated_by), role: role(row.role) },
-        });
-      }
+      snapshotRows.push(
+        ...(this.connection
+          .prepare(`${SNAPSHOT_COLUMNS_SQL} where s.id in (${bindings})`)
+          .all(...group) as readonly SnapshotRow[]),
+      );
       blockRows.push(
         ...(this.connection
           .prepare(
-            `select snapshot_id, block_key, block_type, position, schema_version, data_json, created_at, updated_at
-               from content_blocks where snapshot_id in (${bindings}) order by snapshot_id asc, position asc`,
+            `${BLOCK_COLUMNS_SQL} where snapshot_id in (${bindings}) order by snapshot_id asc, position asc`,
           )
           .all(...group) as readonly BlockRow[]),
       );
     }
-    const grouped = new Map<string, ContentBlock[]>();
-    for (const row of blockRows) {
-      const blocks = grouped.get(row.snapshot_id) ?? [];
-      blocks.push({
-        data: parseObject(row.data_json, "Block data"),
-        key: blockKey(row.block_key),
-        position: row.position,
-        schemaVersion: row.schema_version,
-        type: row.block_type,
-      });
-      grouped.set(row.snapshot_id, blocks);
-    }
-    for (const [id, snapshot] of snapshots) {
-      snapshots.set(id, { ...snapshot, blocks: Object.freeze(grouped.get(id) ?? []) });
-    }
-    return snapshots;
-  }
-
-  private snapshot(source: StoredSnapshot, state: "draft"): DraftSnapshot;
-  private snapshot(source: StoredSnapshot, state: "published"): PublishedSnapshot;
-  private snapshot(
-    source: StoredSnapshot,
-    state: "draft" | "published",
-  ): DraftSnapshot | PublishedSnapshot {
-    return Object.freeze({
-      blocks: source.blocks,
-      createdAt: unixMilliseconds(source.createdAt),
-      entryId: contentEntryId(source.entryId),
-      fields: source.fields,
-      id: contentSnapshotId(source.id),
-      revision: source.revision,
-      ...(source.slug === undefined ? {} : { slug: source.slug }),
-      state,
-      title: source.title,
-      updatedAt: unixMilliseconds(source.updatedAt),
-      updatedBy: Object.freeze({ ...source.updatedBy }),
-    }) as DraftSnapshot | PublishedSnapshot;
+    return storedSnapshots(snapshotRows, blockRows);
   }
 
   private insertSnapshot(snapshot: DraftSnapshot, schemaVersion: number): void {
@@ -1954,26 +1286,8 @@ export class NodeContentRepository
             )
             .run(input.now, leaseId, row.id, input.now - DISPATCHER_LEASE_DURATION_MS);
           if (claimed.changes !== 1) continue;
-          let payload: JsonObject;
-          try {
-            payload = parseObject(row.payload_json, "Build payload");
-          } catch {
-            this.connection
-              .prepare(
-                "update outbox_events set attempts = attempts + 1, processed_at = ?, locked_at = null, locked_by = null, last_error = 'invalid_build_event' where id = ? and locked_by = ?",
-              )
-              .run(input.now, row.id, leaseId);
-            continue;
-          }
-          if (
-            !Number.isSafeInteger(payload.targetVersion) ||
-            Number(payload.targetVersion) < 0 ||
-            typeof payload.requestedBy !== "string" ||
-            !payload.requestedBy ||
-            typeof payload.reason !== "string" ||
-            !payload.reason ||
-            !Number.isSafeInteger(payload.requestedAt)
-          ) {
+          const payload = siteBuildPayload(row.payload_json);
+          if (payload === null) {
             this.connection
               .prepare(
                 "update outbox_events set attempts = attempts + 1, processed_at = ?, locked_at = null, locked_by = null, last_error = 'invalid_build_event' where id = ? and locked_by = ?",
@@ -2225,19 +1539,6 @@ export class NodeContentRepository
     };
   }
 
-  private catalogItem(row: Record<string, unknown>): MediaCatalogItem {
-    const media = this.mapMedia(row);
-    const createdByName = typeof row.created_by_name === "string" ? row.created_by_name : null;
-    return Object.freeze({
-      createdBy: Object.freeze({
-        displayName: actorDisplayName(media.createdBy, createdByName),
-        id: media.createdBy,
-      }),
-      media,
-      usageCount: assertNonNegativeInteger(row.usage_count, "Media usage count"),
-    });
-  }
-
   /** Classifies a refused deletion inside the same write transaction as its guard. */
   private refuseDeletion(
     mediaId: string,
@@ -2257,48 +1558,8 @@ export class NodeContentRepository
     failure(message);
   }
 
-  private mapMedia(row: Record<string, unknown>): MediaMetadata {
-    const string = (name: string): string =>
-      typeof row[name] === "string" ? row[name] : failure(`Media ${name} is invalid.`);
-    const integer = (name: string): number =>
-      typeof row[name] === "number" && Number.isSafeInteger(row[name])
-        ? row[name]
-        : failure(`Media ${name} is invalid.`);
-    const status = string("status");
-    if (status !== "active" && status !== "deleting" && status !== "delete_failed") {
-      failure("Media status is invalid.");
-    }
-    const width = row.width;
-    const height = row.height;
-    return Object.freeze({
-      createdAt: unixMilliseconds(integer("created_at")),
-      createdBy: actorId(string("created_by")),
-      filename: string("filename"),
-      ...(typeof height === "number" ? { height } : {}),
-      id: string("id") as MediaMetadata["id"],
-      mimeType: string("mime_type"),
-      size: integer("size"),
-      status,
-      storageKey: string("storage_key"),
-      updatedAt: unixMilliseconds(integer("updated_at")),
-      ...(typeof width === "number" ? { width } : {}),
-    });
-  }
-
   private throwWriteError(error: unknown, pageCreation: boolean): never {
-    if (error instanceof DomainError) throw error;
-    if (
-      pageCreation &&
-      error instanceof Error &&
-      (error.message.includes("content_entries_singleton_idx") ||
-        error.message.includes("UNIQUE constraint failed: content_entries.model_key"))
-    ) {
-      throw new DomainError(
-        "CONTENT_MODEL_CARDINALITY_CONFLICT",
-        "A page model already has its singleton entry.",
-      );
-    }
-    throw new DomainError("CONTENT_INVALID_STATE", "SQLite content write failed.");
+    sqliteWriteError(error, pageCreation, "SQLite");
   }
 }
 

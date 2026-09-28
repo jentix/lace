@@ -1108,3 +1108,4 @@ export class InMemoryContentStore
     return `${input.entryId}:${input.idempotency.actorId}:${input.idempotency.key}`;
   }
 }
+export * from "./repository-contract.js";

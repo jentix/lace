@@ -1,10 +1,4 @@
-# content-repository-contracts Specification
-
-## Purpose
-
-Defines reusable persistence contracts that prove lifecycle invariants across database runtimes.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Repository contract fixtures preserve lifecycle invariants
 The system SHALL provide a reusable, factory-driven repository contract suite

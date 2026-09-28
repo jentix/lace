@@ -16,7 +16,7 @@ const allowedDependencies = new Map([
   ["@lacecms/domain", new Set(["@lacecms/content"])],
   ["@lacecms/application", new Set(["@lacecms/domain", "@lacecms/content", "@lacecms/config"])],
   ["@lacecms/contracts", new Set(["@lacecms/domain", "@lacecms/content"])],
-  ["@lacecms/db", new Set(["@lacecms/application", "@lacecms/domain"])],
+  ["@lacecms/db", new Set(["@lacecms/application", "@lacecms/domain", "@lacecms/content"])],
   ["@lacecms/auth", new Set(["@lacecms/application", "@lacecms/domain"])],
   ["@lacecms/server", new Set(["@lacecms/application", "@lacecms/contracts", "@lacecms/auth"])],
   ["@lacecms/sdk", new Set(["@lacecms/contracts"])],
@@ -32,6 +32,8 @@ const allowedDependencies = new Map([
       "@lacecms/db",
       "@lacecms/auth",
       "@lacecms/config",
+      "@lacecms/content",
+      "@lacecms/domain",
     ]),
   ],
   [
