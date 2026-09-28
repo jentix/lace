@@ -32,4 +32,36 @@ They provide bounded reads, draft lifecycle writes, guarded publication, and
 entry deletion. Public-projection mutations atomically enqueue durable build
 work; build dispatch occurs later. Media deletion only marks unreferenced media
 for asynchronous cleanup, never deleting an object in the database transaction.
-Repository contract tests run against both file-backed and in-memory SQLite.
+
+## Cloudflare D1
+
+The D1 content repository (`@lacecms/platform-cloudflare`) uses the same
+checked-in migrations. D1 has no interactive transactions, so every multi-row
+mutation is one atomic `batch()`:
+
+- Publication starts with a guarded `INSERT ... SELECT` of the new snapshot;
+  every later statement requires that snapshot, and a zero-row insert is a
+  revision conflict (or an idempotent replay).
+- Other conditional mutations first insert a batch-unique row into
+  `mutation_guards` (migration `0002_mutation_guards`) only when their
+  precondition holds, require that row in every later statement, and delete it
+  as the batch's final statement. The table is therefore always empty outside a
+  running batch; Node SQLite transactions never use it.
+- Draft block and media-reference inserts are chunked to D1's 100 bound
+  parameters per statement inside the same batch. Drafts are capped at 200
+  blocks and 200 media references, keeping a maximal save within the
+  50-query-per-invocation free-plan budget.
+
+Apply D1 migrations with `pnpm db:migrate:cloudflare -- --local` (the persisted
+`dev-data/cloudflare` state that `pnpm dev:cloudflare` uses) or
+`pnpm db:migrate:cloudflare -- --remote`; see
+[Cloudflare Worker runtime](cloudflare-worker.md#d1-migrations). Adapter tests
+apply the SQL files to Miniflare directly.
+
+## Repository contract suite
+
+`@lacecms/test-utils` exports `contentRepositoryContractCases`, one shared set of
+lifecycle cases. The same cases run against file-backed SQLite, in-memory
+SQLite, and local D1 through Miniflare; each runtime only supplies a factory for
+a freshly migrated database, and every run also asserts that no
+`mutation_guards` row remains.

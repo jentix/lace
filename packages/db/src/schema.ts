@@ -285,6 +285,15 @@ export const rateLimitBuckets = sqliteTable("rate_limit_buckets", {
   expiresAt: timestamp("expires_at"),
 });
 
+/**
+ * Batch-unique markers for D1 guarded mutations. A row exists only inside the
+ * atomic batch that inserts it; the same batch always deletes it.
+ */
+export const mutationGuards = sqliteTable("mutation_guards", {
+  token: text("token").primaryKey(),
+  createdAt: timestamp("created_at"),
+});
+
 export const authUsers = sqliteTable(
   "user",
   {

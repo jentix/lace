@@ -14,10 +14,25 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
-    "test": "vitest run src/index.test.mjs"
+    "test": "vitest run src/*.test.mjs"
+  },
+  "dependencies": {
+    "@lacecms/application": "workspace:*",
+    "@lacecms/auth": "workspace:*",
+    "@lacecms/config": "workspace:*",
+    "@lacecms/content": "workspace:*",
+    "@lacecms/db": "workspace:*",
+    "@lacecms/domain": "workspace:*",
+    "@lacecms/server": "workspace:*",
+    "better-auth": "catalog:",
+    "drizzle-orm": "catalog:",
+    "ulid": "catalog:"
   },
   "devDependencies": {
+    "@lacecms/test-utils": "workspace:*",
+    "miniflare": "catalog:",
     "oxlint": "catalog:",
+    "sharp": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

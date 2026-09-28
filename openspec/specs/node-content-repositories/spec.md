@@ -53,14 +53,23 @@ authorization claim, and neither SHALL require a signature.
 The Node platform adapter SHALL be permitted to consume portable domain and
 content values through their declared public package entry points when mapping
 SQLite records to application contracts. Dependency enforcement SHALL continue
-to reject reverse dependencies and cycles; shared schema/migration packages
-SHALL NOT become owners of Node runtime row mapping solely to avoid this edge.
+to reject reverse dependencies and cycles. Runtime-neutral SQLite-dialect row
+mapping, cursor encoding, and shared SQL fragments used by both the Node and D1
+adapters SHALL be permitted to live in the shared schema package so both
+runtimes map the same rows identically; that shared code SHALL NOT use Node-only APIs, and each
+platform adapter SHALL still declare its own domain and content dependencies.
 
 #### Scenario: Node repository passes architecture-boundary verification
 - **WHEN** the Node repository imports the portable value constructors and JSON
   types needed to return application content contracts
 - **THEN** the source-level boundary verification accepts those public-entry-point
   dependencies and still rejects a cycle or an undeclared cross-package import
+
+#### Scenario: Shared row mapping is runtime-neutral
+- **WHEN** Node and D1 adapters decode the same cursor or stored rows through
+  the shared SQLite-dialect helpers
+- **THEN** they produce equal portable values, and the shared helpers import no
+  Node built-in module
 
 ### Requirement: Node draft writes are complete and atomic
 The Node persistence adapter SHALL create an entry with exactly one mutable
@@ -109,7 +118,8 @@ The Node persistence adapter SHALL atomically publish guarded drafts, replace ro
 
 #### Scenario: Route collision rolls back publication
 - **WHEN** a publication path is owned by another entry
-- **THEN** routes and public projections remain unchanged
+- **THEN** the adapter returns the stable `CONTENT_ROUTE_CONFLICT` failure and
+  routes and public projections remain unchanged
 
 #### Scenario: Media deletion is asynchronous
 - **WHEN** eligible media is marked for deletion

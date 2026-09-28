@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lace-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Better Auth requires AsyncLocalStorage from the Node.js compatibility layer.
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lace",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/db/drizzle",
+    },
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "lace-media" }],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "../admin/dist",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true,
+  },
+  // Scheduled outbox recovery; post-commit waitUntil dispatch only reduces latency.
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": { "LACE_PUBLIC_BASE_URL": "http://localhost:8787/" },
+  // Secrets: LACE_AUTH_SECRET and optional LACE_DEPLOY_HOOK_URL via `wrangler secret put`.
+}

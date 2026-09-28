@@ -1273,6 +1273,12 @@ Cloudflare Worker with D1 and R2.
    `/admin`, and preserve API/auth routing order.
 4. Implement scheduled outbox recovery and event leasing. `waitUntil` may improve
    latency after commit but is never the only recovery path.
+5. Implement D1 security-service persistence (setup tokens, first-admin
+   bootstrap, users, API tokens, and rate-limit buckets) with the same guarded
+   batch rules as 22A, together with Better Auth on D1.
+
+The Worker bindings, secrets, routing, and recovery model are documented in
+[`docs/cloudflare-worker.md`](cloudflare-worker.md).
 
 ### Session 22C — Cloudflare development and deploy hook
 
@@ -1284,6 +1290,9 @@ Cloudflare Worker with D1 and R2.
    selection and confirmation outside CI.
 4. Add smoke tests for auth, upload/R2, publish, scheduled dispatch, build export,
    static admin fallback, and health endpoints.
+
+Local development, the deploy hook, and D1 migration commands are documented in
+[`docs/cloudflare-worker.md`](cloudflare-worker.md).
 
 ### Acceptance
 

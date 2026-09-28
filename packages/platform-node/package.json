@@ -36,6 +36,7 @@
     "ulid": "catalog:"
   },
   "devDependencies": {
+    "@lacecms/test-utils": "workspace:*",
     "@types/better-sqlite3": "catalog:",
     "@types/node": "catalog:",
     "better-auth": "catalog:",
