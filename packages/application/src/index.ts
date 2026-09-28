@@ -22,6 +22,7 @@ export const packageName = "@lacecms/application";
 
 export * from "./configuration-sync.js";
 export * from "./site-build-use-cases.js";
+export * from "./dispatchers.js";
 
 export type OpaqueCursor = Brand<string, "OpaqueCursor">;
 export type OpaqueTokenSecret = Brand<string, "OpaqueTokenSecret">;

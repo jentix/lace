@@ -1109,3 +1109,4 @@ export class InMemoryContentStore
   }
 }
 export * from "./repository-contract.js";
+export * from "./security-contract.js";

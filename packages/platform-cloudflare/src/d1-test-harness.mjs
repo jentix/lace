@@ -19,20 +19,33 @@ export async function migrationStatements() {
   return statements;
 }
 
-/** Starts an isolated in-memory local D1 database with every migration applied. */
-export async function openLocalD1() {
+/** Starts isolated in-memory local D1 (migrated), R2, and KV bindings. */
+export async function openLocalCloudflare() {
   const miniflare = new Miniflare(
     convertV4MiniflareOptions({
       compatibilityDate: "2026-09-01",
       d1Databases: ["DB"],
+      kvNamespaces: ["CACHE"],
       modules: true,
+      r2Buckets: ["MEDIA"],
       script: "export default { fetch() { return new Response(null, { status: 404 }); } };",
     }),
   );
   const database = await miniflare.getD1Database("DB");
   const statements = await migrationStatements();
   await database.batch(statements.map((statement) => database.prepare(statement)));
-  return { database, dispose: () => miniflare.dispose() };
+  return {
+    bucket: await miniflare.getR2Bucket("MEDIA"),
+    database,
+    dispose: () => miniflare.dispose(),
+    kv: await miniflare.getKVNamespace("CACHE"),
+  };
+}
+
+/** Starts an isolated in-memory local D1 database with every migration applied. */
+export async function openLocalD1() {
+  const { database, dispose } = await openLocalCloudflare();
+  return { database, dispose };
 }
 
 /** Counts queries and bound parameters issued through a D1 binding. */

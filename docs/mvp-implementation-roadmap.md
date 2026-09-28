@@ -1277,6 +1277,9 @@ Cloudflare Worker with D1 and R2.
    bootstrap, users, API tokens, and rate-limit buckets) with the same guarded
    batch rules as 22A, together with Better Auth on D1.
 
+The Worker bindings, secrets, routing, and recovery model are documented in
+[`docs/cloudflare-worker.md`](cloudflare-worker.md).
+
 ### Session 22C — Cloudflare development and deploy hook
 
 1. Implement `pnpm dev:cloudflare` with persisted local D1/R2 state and same-origin
