@@ -86,8 +86,10 @@ fields or allowed blocks. A collection uses a canonical `route` with exactly
 one `:slug` segment instead of `path`. All allowed block keys must be listed
 in the config's registered block definitions.
 
-Choose the site presentation alongside the model definition. The current
-`home` route is [`apps/site/src/pages/index.astro`](../apps/site/src/pages/index.astro)
+Choose the site presentation alongside the model definition. Public block
+styling hooks and the site-owned stylesheet are documented in
+[`site-styling.md`](site-styling.md). The current `home` route is
+[`apps/site/src/pages/index.astro`](../apps/site/src/pages/index.astro)
 and `posts` uses
 [`apps/site/src/pages/blog/[slug].astro`](../apps/site/src/pages/blog/[slug].astro).
 The additional examples use

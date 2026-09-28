@@ -12,6 +12,6 @@ const { about } = Astro.props;
 const { mediaUrl } = await getSiteData();
 ---
 
-<BaseLayout title={about.title}>
+<BaseLayout entry={about} title={about.title}>
   <BlockRenderer entry={about} mediaUrl={mediaUrl} />
 </BaseLayout>

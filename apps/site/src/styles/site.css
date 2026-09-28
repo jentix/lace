@@ -1,0 +1,4 @@
+/* Site-owned styles can target the stable public HTML hooks. */
+:where([data-lace-block="hero"]) {
+  padding-block: 2rem;
+}

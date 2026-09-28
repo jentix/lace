@@ -140,6 +140,7 @@ foundation
   -> complete browser-admin workflows
   -> admin redesign (design system, shell, media, editor)
   -> outbox + builder
+  -> public site styling hooks
   -> Cloudflare runtime
   -> generator + upgrade
   -> cross-runtime/security/release gate
@@ -170,12 +171,13 @@ foundation
 | 19 | Block editor | L | 19A, 19B, 19C |
 | 20 | Remaining screens and redesign acceptance | M | 20A, 20B |
 | 21 | Outbox, builds, and VPS builder | L | 21A, 21B, 21C |
+| 21.5 | Public site styling hooks | S | 21.5A |
 | 22 | Cloudflare runtime | L | 22A, 22B, 22C |
 | 23 | CLI generator and operational commands | L | 23A, 23B, 23C |
 | 24 | Upgrade safety | M | 24A, 24B |
 | 25 | MVP release gate | L | 25A, 25B, 25C |
 
-The roadmap is therefore **64 recommended session units**. Small neighboring
+The roadmap is therefore **65 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
@@ -1211,6 +1213,37 @@ can see/retry failures.
 
 **Session boundary:** L; use 21A, 21B, and 21C.
 
+## Step 21.5 — Public site styling hooks
+
+**Outcome:** site owners can style built-in blocks globally, within one model,
+or on one published entry using stable public HTML selectors without editing
+block renderers or content data.
+
+### Session 21.5A — Entry, block, and semantic part selectors
+
+1. Add `data-lace-model` and `data-lace-entry` to the published entry container
+   in the reference Astro site. Add `data-lace-block` and
+   `data-lace-block-key` to each built-in block's semantic root.
+2. Expose documented `data-lace-part` hooks for the meaningful parts of `hero`,
+   `richText`, `image`, `quote`, and `cta`; omit hooks for absent optional parts.
+   Keep rich-text safety and unsupported-block build failures intact.
+3. Provide a site-owned global stylesheet entry and document type, model,
+   entry, and instance selectors. Keep styling out of the CMS config, admin,
+   REST contracts, and database.
+4. Verify selectors and published-only output in the reference site's fixture
+   build across all four routes.
+
+### Acceptance
+
+- Site-owned CSS can target a block type site-wide, in one model, or in one
+  entry without changing the block renderer or CMS data.
+- Each built-in block exposes its specified semantic parts; optional parts are
+  absent when their data is absent.
+- Routes and build data remain code-owned and published-only. No persistence or
+  API migration is required.
+
+**Session boundary:** S; use 21.5A as one OpenSpec change.
+
 ## Step 22 — Cloudflare runtime
 
 **Outcome:** the same contracts and application behavior run locally and in a
@@ -1433,10 +1466,12 @@ best checkpoints for demonstrating useful progress are:
 11. **After step 21:** the self-hosted VPS deployment works with the reference
     site, including recoverable builds and build history in the admin; generated
     projects are verified in Step 23.
-12. **After step 22:** Cloudflare reaches behavioral parity.
-13. **After step 23:** generated projects and full operational CLI commands pass
+12. **After step 21.5:** site owners can style blocks through stable selectors
+    in the reference Astro output without editing renderers.
+13. **After step 22:** Cloudflare reaches behavioral parity.
+14. **After step 23:** generated projects and full operational CLI commands pass
     acceptance on the supported runtimes.
-14. **After step 25:** the MVP is release-ready.
+15. **After step 25:** the MVP is release-ready.
 
 Steps 0–3 should be implemented in order. After step 5, SDK fixture work and
 some admin visual-foundation work may proceed in parallel, but persistence,

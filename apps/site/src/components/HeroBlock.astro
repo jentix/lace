@@ -18,10 +18,10 @@ const actionLabel = readOptionalString(block, context, "primaryActionLabel");
 const actionUrl = actionLabel === undefined ? undefined : readUrl(block, context, "primaryActionUrl");
 ---
 
-<section class="hero">
-  {eyebrow !== undefined && <p>{eyebrow}</p>}
-  <h1>{heading}</h1>
-  {body !== undefined && <RichText document={body} />}
-  {image !== undefined && <img alt="" src={mediaUrl(image)} />}
-  {actionLabel !== undefined && actionUrl !== undefined && <a href={actionUrl}>{actionLabel}</a>}
+<section class="hero" data-lace-block={block.type} data-lace-block-key={block.key}>
+  {eyebrow !== undefined && <p data-lace-part="eyebrow">{eyebrow}</p>}
+  <h1 data-lace-part="heading">{heading}</h1>
+  {body !== undefined && <div data-lace-part="body"><RichText document={body} /></div>}
+  {image !== undefined && <img alt="" data-lace-part="media" src={mediaUrl(image)} />}
+  {actionLabel !== undefined && actionUrl !== undefined && <a data-lace-part="action" href={actionUrl}>{actionLabel}</a>}
 </section>

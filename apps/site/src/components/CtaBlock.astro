@@ -15,8 +15,8 @@ const body = readOptionalDocument(block, context, "body");
 const heading = readRequiredString(block, context, "heading");
 ---
 
-<aside class="cta">
-  <h2>{heading}</h2>
-  {body !== undefined && <RichText document={body} />}
-  <a href={actionUrl}>{actionLabel}</a>
+<aside class="cta" data-lace-block={block.type} data-lace-block-key={block.key}>
+  <h2 data-lace-part="heading">{heading}</h2>
+  {body !== undefined && <div data-lace-part="body"><RichText document={body} /></div>}
+  <a data-lace-part="action" href={actionUrl}>{actionLabel}</a>
 </aside>

@@ -12,4 +12,4 @@ const { block, context } = Astro.props;
 const document = readDocument(block, context, "content");
 ---
 
-<section class="rich-text"><RichText document={document} /></section>
+<section class="rich-text" data-lace-block={block.type} data-lace-block-key={block.key}><div data-lace-part="content"><RichText document={document} /></div></section>
