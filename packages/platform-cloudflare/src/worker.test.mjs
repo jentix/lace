@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import sharp from "sharp";
 import {
   applyPreparedConfigurationSynchronization,
@@ -19,6 +19,7 @@ import { countingD1, openLocalCloudflare } from "./d1-test-harness.mjs";
 const cleanups = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.unstubAllGlobals();
 });
 
 const origin = "https://cms.lace.test";
@@ -34,7 +35,11 @@ test("settings require D1, R2, auth secret, and public URL and name issues witho
     LACE_PUBLIC_BASE_URL: `${origin}/`,
     MEDIA: fakeBucket,
   });
-  expect(settings).toMatchObject({ production: true, storageTimeoutMs: 10_000 });
+  expect(settings).toMatchObject({
+    deployHookTimeoutMs: 10_000,
+    production: true,
+    storageTimeoutMs: 10_000,
+  });
   expect(settings.publicBaseUrl.href).toBe(`${origin}/`);
   expect(settings).not.toHaveProperty("cache");
   expect(settings).not.toHaveProperty("assets");
@@ -44,13 +49,14 @@ test("settings require D1, R2, auth secret, and public URL and name issues witho
       CACHE: { delete() {}, get() {}, put() {} },
       DB: fakeDatabase,
       LACE_AUTH_SECRET: secret,
+      LACE_DEPLOY_HOOK_TIMEOUT_MS: "2500",
       LACE_DEPLOY_HOOK_URL: "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/x",
       LACE_ENVIRONMENT: "development",
       LACE_PUBLIC_BASE_URL: "http://localhost:8787/",
       LACE_R2_TIMEOUT_MS: "250",
       MEDIA: fakeBucket,
     }),
-  ).toMatchObject({ production: false, storageTimeoutMs: 250 });
+  ).toMatchObject({ deployHookTimeoutMs: 2500, production: false, storageTimeoutMs: 250 });
   const leaked = "https://user:hunter2@hooks.example.test/?q=1#x";
   let failure;
   try {
@@ -58,6 +64,7 @@ test("settings require D1, R2, auth secret, and public URL and name issues witho
       CACHE: "not-a-binding",
       DB: {},
       LACE_AUTH_SECRET: " ",
+      LACE_DEPLOY_HOOK_TIMEOUT_MS: "60001",
       LACE_DEPLOY_HOOK_URL: leaked,
       LACE_ENVIRONMENT: "staging",
       LACE_PUBLIC_BASE_URL: "https://cms.lace.test/path?x=1",
@@ -71,6 +78,7 @@ test("settings require D1, R2, auth secret, and public URL and name issues witho
     "CACHE",
     "DB",
     "LACE_AUTH_SECRET",
+    "LACE_DEPLOY_HOOK_TIMEOUT_MS",
     "LACE_DEPLOY_HOOK_URL",
     "LACE_ENVIRONMENT",
     "LACE_PUBLIC_BASE_URL",
@@ -405,4 +413,46 @@ test("a scheduled run with many pending deletions stays within 50 D1 queries", a
   expect(remaining).toHaveLength(3);
   await fixture.worker.scheduled({}, env, fixture.ctx);
   for (const id of ids) expect(await fixture.local.bucket.head(`media/${id}`)).toBeNull();
+});
+
+test("a configured deploy hook receives scheduled builds and records the provider ID", async () => {
+  const hook = "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/hook-secret";
+  const calls = [];
+  vi.stubGlobal("fetch", async (target, init) => {
+    calls.push({ body: init.body, method: init.method, target: String(target) });
+    return Response.json({ result: { id: "dep-42" }, success: true });
+  });
+  const fixture = await workerFixture({
+    buildTrigger: undefined,
+    env: { LACE_DEPLOY_HOOK_URL: hook },
+  });
+  await fixture.signIn();
+  const created = await fixture.call("/api/v1/admin/models/posts/entries", {
+    json: { blocks: [], fields: { publishedAt: "2026-09-24" }, slug: "hooked", title: "Hooked" },
+    method: "POST",
+  });
+  await fixture.call(`/api/v1/admin/entries/${created.body.id}/publish`, {
+    json: { expectedRevision: 1 },
+    method: "POST",
+  });
+  fixture.pending.splice(0);
+  fixture.advance(6_000);
+  await fixture.worker.scheduled({}, fixture.env, fixture.ctx);
+  await fixture.worker.scheduled({}, fixture.env, fixture.ctx);
+  expect(calls).toEqual([{ body: undefined, method: "POST", target: hook }]);
+  const builds = await fixture.call("/api/v1/admin/site-builds");
+  expect(builds.body.items[0]).toMatchObject({ providerBuildId: "dep-42", status: "running" });
+  expect(JSON.stringify(builds.body)).not.toContain("hook-secret");
+  expect(JSON.stringify(fixture.logs)).not.toContain("hook-secret");
+});
+
+test("without a deploy hook, dispatch records a sanitized trigger-unavailable failure", async () => {
+  const fixture = await workerFixture({ buildTrigger: undefined });
+  await fixture.signIn();
+  await fixture.call("/api/v1/admin/builds", { method: "POST" });
+  fixture.pending.splice(0);
+  fixture.advance(6_000);
+  await fixture.worker.scheduled({}, fixture.env, fixture.ctx);
+  const builds = await fixture.call("/api/v1/admin/site-builds");
+  expect(builds.body.items[0]).toMatchObject({ error: "trigger_unavailable", status: "pending" });
 });

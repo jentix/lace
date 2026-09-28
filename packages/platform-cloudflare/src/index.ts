@@ -3,6 +3,7 @@ export const packageName = "@lacecms/platform-cloudflare";
 export * from "./d1.js";
 export * from "./d1-content-repository.js";
 export * from "./r2-storage.js";
+export * from "./deploy-hook.js";
 export * from "./image-inspector.js";
 export * from "./d1-security.js";
 export * from "./cache.js";

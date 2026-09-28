@@ -1,4 +1,5 @@
 import type { KVNamespace } from "./cache.js";
+import { DEFAULT_DEPLOY_HOOK_TIMEOUT_MS } from "./deploy-hook.js";
 import type { D1Database } from "./d1.js";
 import { DEFAULT_R2_TIMEOUT_MS, type R2Bucket } from "./r2-storage.js";
 
@@ -13,6 +14,7 @@ export interface CloudflareWorkerEnv {
   readonly CACHE?: unknown;
   readonly DB?: unknown;
   readonly LACE_AUTH_SECRET?: unknown;
+  readonly LACE_DEPLOY_HOOK_TIMEOUT_MS?: unknown;
   readonly LACE_DEPLOY_HOOK_URL?: unknown;
   readonly LACE_ENVIRONMENT?: unknown;
   readonly LACE_PUBLIC_BASE_URL?: unknown;
@@ -38,6 +40,7 @@ export interface CloudflareSettings {
   readonly authSecret: string;
   readonly cache?: KVNamespace;
   readonly database: D1Database;
+  readonly deployHookTimeoutMs: number;
   readonly deployHookUrl?: URL;
   readonly media: R2Bucket;
   readonly production: boolean;
@@ -138,6 +141,20 @@ function hookUrl(
   }
 }
 
+/** An optional whole-millisecond timeout from 1 to 60000. */
+function timeout(
+  value: unknown,
+  variable: string,
+  fallback: number,
+  issues: CloudflareEnvironmentIssue[],
+): number {
+  const raw = text(value, variable, issues, true);
+  const parsed = raw === undefined ? fallback : Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 60_000)
+    issues.push({ reason: "invalid", variable });
+  return parsed;
+}
+
 /** Parses Worker bindings and secrets once, without exposing supplied values in errors. */
 export function parseCloudflareSettings(env: CloudflareWorkerEnv): CloudflareSettings {
   const issues: CloudflareEnvironmentIssue[] = [];
@@ -159,10 +176,18 @@ export function parseCloudflareSettings(env: CloudflareWorkerEnv): CloudflareSet
   const mode = text(env.LACE_ENVIRONMENT, "LACE_ENVIRONMENT", issues, true) ?? "production";
   if (mode !== "production" && mode !== "development")
     issues.push({ reason: "invalid", variable: "LACE_ENVIRONMENT" });
-  const rawTimeout = text(env.LACE_R2_TIMEOUT_MS, "LACE_R2_TIMEOUT_MS", issues, true);
-  const storageTimeoutMs = rawTimeout === undefined ? DEFAULT_R2_TIMEOUT_MS : Number(rawTimeout);
-  if (!Number.isSafeInteger(storageTimeoutMs) || storageTimeoutMs < 1 || storageTimeoutMs > 60_000)
-    issues.push({ reason: "invalid", variable: "LACE_R2_TIMEOUT_MS" });
+  const storageTimeoutMs = timeout(
+    env.LACE_R2_TIMEOUT_MS,
+    "LACE_R2_TIMEOUT_MS",
+    DEFAULT_R2_TIMEOUT_MS,
+    issues,
+  );
+  const deployHookTimeoutMs = timeout(
+    env.LACE_DEPLOY_HOOK_TIMEOUT_MS,
+    "LACE_DEPLOY_HOOK_TIMEOUT_MS",
+    DEFAULT_DEPLOY_HOOK_TIMEOUT_MS,
+    issues,
+  );
   if (
     issues.length > 0 ||
     database === undefined ||
@@ -177,6 +202,7 @@ export function parseCloudflareSettings(env: CloudflareWorkerEnv): CloudflareSet
     authSecret,
     ...(cache === undefined ? {} : { cache }),
     database,
+    deployHookTimeoutMs,
     ...(deployHookUrl === undefined ? {} : { deployHookUrl }),
     media,
     production: mode !== "development",

@@ -52,8 +52,11 @@ mutation is one atomic `batch()`:
   blocks and 200 media references, keeping a maximal save within the
   50-query-per-invocation free-plan budget.
 
-Local and remote D1 migration commands arrive with `pnpm dev:cloudflare`
-(roadmap Session 22C); tests apply the SQL files to Miniflare directly.
+Apply D1 migrations with `pnpm db:migrate:cloudflare -- --local` (the persisted
+`dev-data/cloudflare` state that `pnpm dev:cloudflare` uses) or
+`pnpm db:migrate:cloudflare -- --remote`; see
+[Cloudflare Worker runtime](cloudflare-worker.md#d1-migrations). Adapter tests
+apply the SQL files to Miniflare directly.
 
 ## Repository contract suite
 

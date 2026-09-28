@@ -29,6 +29,7 @@ import { ulid } from "ulid";
 import { createCloudflareAdminAssets } from "./admin-assets.js";
 import { CloudflareKvCache, NoopCloudflareCache } from "./cache.js";
 import { D1ContentRepository } from "./d1-content-repository.js";
+import { DeployHookSiteBuildTrigger } from "./deploy-hook.js";
 import { D1FixedWindowRateLimiter, D1SecurityService } from "./d1-security.js";
 import type { D1Database } from "./d1.js";
 import { WorkerImageInspector } from "./image-inspector.js";
@@ -102,7 +103,7 @@ export interface CloudflareWorker {
   ): Promise<void>;
 }
 
-/** Until the deploy-hook adapter lands, dispatch records the Node "trigger unavailable" outcome. */
+/** Without a deploy hook, dispatch records the Node "trigger unavailable" outcome. */
 export class UnavailableSiteBuildTrigger implements SiteBuildTrigger {
   public async trigger(): Promise<BuildTriggerResult> {
     return { status: "failed", reason: "trigger_unavailable" };
@@ -175,6 +176,15 @@ function wait(delayMs: number): Promise<void> {
   return new Promise((resolve) => timers.setTimeout(resolve, delayMs));
 }
 
+function defaultBuildTrigger(settings: CloudflareSettings): SiteBuildTrigger {
+  return settings.deployHookUrl === undefined
+    ? new UnavailableSiteBuildTrigger()
+    : new DeployHookSiteBuildTrigger({
+        timeoutMs: settings.deployHookTimeoutMs,
+        url: settings.deployHookUrl,
+      });
+}
+
 /** Creates the Worker composition from D1, R2, optional KV, assets, and secrets. */
 export function createCloudflareRuntime(
   settings: CloudflareSettings,
@@ -216,7 +226,7 @@ export function createCloudflareRuntime(
   const buildDispatcher = new SiteBuildDispatcher({
     clock,
     logger: { error: (entry) => logger.error({ component: "site-build", ...entry }) },
-    trigger: input.buildTrigger?.(settings) ?? new UnavailableSiteBuildTrigger(),
+    trigger: input.buildTrigger?.(settings) ?? defaultBuildTrigger(settings),
     work: repository,
   });
   const content = new ContentUseCases({

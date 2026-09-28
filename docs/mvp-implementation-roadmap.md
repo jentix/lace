@@ -1291,6 +1291,9 @@ The Worker bindings, secrets, routing, and recovery model are documented in
 4. Add smoke tests for auth, upload/R2, publish, scheduled dispatch, build export,
    static admin fallback, and health endpoints.
 
+Local development, the deploy hook, and D1 migration commands are documented in
+[`docs/cloudflare-worker.md`](cloudflare-worker.md).
+
 ### Acceptance
 
 - Node SQLite and local D1 pass the exact same repository contract suite.

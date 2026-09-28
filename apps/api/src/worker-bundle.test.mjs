@@ -1,61 +1,19 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { buildWorkerBundle } from "./worker-bundle-harness.mjs";
 
-const run = promisify(execFile);
-const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const wrangler = join(appDirectory, "node_modules", ".bin", "wrangler");
 const secret = "bundle-test-auth-secret-that-is-long-enough";
-let directory;
+let built;
 let bundle;
 let config;
 
-/** Wrangler configuration is JSONC: whole-line comments and trailing commas only. */
-function parseJsonc(text) {
-  return JSON.parse(
-    text
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("//"))
-      .join("\n")
-      .replace(/,(\s*[}\]])/gu, "$1"),
-  );
-}
-
 beforeAll(async () => {
-  config = parseJsonc(await readFile(join(appDirectory, "wrangler.jsonc"), "utf8"));
-  directory = await mkdtemp(join(tmpdir(), "lace-worker-bundle-"));
-  // Bundle the checked-in Worker with a stand-in assets directory so the admin build is optional.
-  const assets = join(directory, "assets");
-  await mkdir(assets);
-  await writeFile(join(assets, "index.html"), "<!doctype html>");
-  const configPath = join(directory, "wrangler.json");
-  await writeFile(
-    configPath,
-    JSON.stringify({
-      ...config,
-      $schema: undefined,
-      assets: { ...config.assets, directory: assets },
-      d1_databases: config.d1_databases.map(
-        ({ migrations_dir: _ignored, ...database }) => database,
-      ),
-      main: join(appDirectory, config.main),
-    }),
-  );
-  const outdir = join(directory, "out");
-  await run(wrangler, ["deploy", "--dry-run", "--config", configPath, "--outdir", outdir], {
-    cwd: appDirectory,
-    env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
-  });
-  bundle = await readFile(join(outdir, "index.js"), "utf8");
+  built = await buildWorkerBundle();
+  ({ bundle, config } = built);
 }, 120_000);
 
 afterAll(async () => {
-  if (directory !== undefined) await rm(directory, { force: true, recursive: true });
+  await built?.dispose();
 });
 
 test("Worker configuration enables Better Auth compatibility and declares recovery bindings", () => {
