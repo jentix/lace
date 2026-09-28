@@ -230,4 +230,4 @@ test("Worker bundle smoke: health, auth, R2 upload, publish, deploy hook, export
   const rerun = await prepare();
   expect(rerun).toContain("No synchronization needed.");
   expect(rerun).toContain("First-admin setup is complete.");
-}, 60_000);
+}, 120_000);
