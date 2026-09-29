@@ -7,7 +7,7 @@ export interface TemplateFile {
   readonly interpolateName?: true;
 }
 
-export const TEMPLATE_VERSION = "0.1.0";
+export const TEMPLATE_VERSION = "0.2.0";
 
 /** Every bundled template must appear here with an explicit ownership decision. */
 export const TEMPLATE_FILES: readonly TemplateFile[] = [
@@ -15,6 +15,8 @@ export const TEMPLATE_FILES: readonly TemplateFile[] = [
   { path: ".gitignore", owner: "managed" },
   { path: ".github/workflows/cloudflare.yml", owner: "managed", cloudflare: true },
   { path: "docker-compose.yml", owner: "managed" },
+  { path: "deploy/nginx.conf", owner: "managed" },
+  { path: "docs/lace-operations.md", owner: "managed" },
   { path: "lace.config.ts", owner: "user" },
   { path: "package.json", owner: "managed", interpolateName: true },
   { path: "pnpm-workspace.yaml", owner: "managed" },

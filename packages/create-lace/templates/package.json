@@ -4,6 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --dir site dev",
+    "dev:api": "docker compose up -d minio minio-init migrate api",
+    "dev:stop": "docker compose down",
+    "prod:start": "docker compose up -d",
+    "prod:stop": "docker compose down",
     "build": "pnpm --dir site build",
     "typecheck": "pnpm --dir site typecheck",
     "db:migrate": "lace db migrate",

@@ -12,7 +12,7 @@ To initialize an existing otherwise empty repository, run `create-lace init .` f
 
 The generated `site/**` files and `lace.config.ts` belong to the project owner. Edit them to define models and design the public site. The root workspace files, `.env.example`, Docker Compose, and optional Cloudflare files are managed. `.lace/manifest.json` records the template version, file ownership, and SHA-256 of each managed file. It contains no credentials. It does not hash itself. Future `lace upgrade` work will use these digests to detect local edits.
 
-Copy `.env.example` to `.env` and set your own credentials and image references before using the infrastructure. The current repository has private `0.0.0` Lace packages and no final published image coordinates; Session 23C will verify generated projects with locally packed packages and deployment artifacts. The generator itself requires no network or credentials.
+Copy `.env.example` to `.env` and set your own credentials and image references before using the infrastructure. The generated `docs/lace-operations.md` gives the Node, Compose, and optional Cloudflare commands. The current repository has private `0.0.0` Lace packages and no final published image coordinates; the repository acceptance command verifies generated projects with locally packed packages and built images. The generator itself requires no network or credentials.
 
 Generation stages a complete tree beside the target. For an existing allowed directory, it briefly moves that directory to a sibling `.lace-backup-*` path and restores it if publication fails. If a filesystem error prevents cleanup or restoration, the command prints the exact staging or backup path. Inspect that path, move the backup to the original target if necessary, and remove leftover staging files only after confirming the target is intact.
 
@@ -21,4 +21,5 @@ For repository development:
 ```bash
 pnpm --filter create-lace test
 node packages/create-lace/dist/bin.js create /tmp/my-site
+node scripts/generated-project-acceptance.mjs all
 ```
