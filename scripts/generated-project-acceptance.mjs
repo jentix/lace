@@ -216,6 +216,9 @@ async function prepareCompose(project, parent) {
       .map(([name, value]) => `${name}=${value}`)
       .join("\n")}\n`,
   );
+  await compose("image-minio", ["build", "--no-cache", "minio"], {
+    timeoutMs: 30 * 60_000,
+  });
   return { apiPort, httpPort, parent, project, values };
 }
 
