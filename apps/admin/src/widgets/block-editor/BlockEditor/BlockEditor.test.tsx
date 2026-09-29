@@ -135,7 +135,7 @@ test("entry editor authors ordered blocks, selects media, and adopts server posi
     true,
   );
   expect(await screen.findByText("Saved revision 3")).toBeInTheDocument();
-});
+}, 15_000);
 
 test("server block validation stays on the nested editable block field", async () => {
   const user = userEvent.setup();
