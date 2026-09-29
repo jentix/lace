@@ -1,0 +1,49 @@
+## Purpose
+
+Proves that the generated Lace starter is a usable consumer project whose package, runtime, and deployment behavior does not depend on the Lace source workspace.
+
+## ADDED Requirements
+
+### Requirement: Acceptance installs an isolated generated consumer
+
+The repository SHALL provide a repeatable acceptance command that packs the local Lace package graph, generates a disposable project, installs its dependencies from those packed artifacts, and fails if a Lace dependency resolves to a workspace link or source-workspace path. It SHALL leave the generated template and manifest unchanged while substituting local tarball references for the test installation.
+
+#### Scenario: Local package acceptance
+- **WHEN** the acceptance command runs with the supported Node and pnpm versions
+- **THEN** `pnpm install` succeeds from the generated project using packed Lace artifacts, and no Lace dependency resolves to the source workspace
+
+#### Scenario: Missing pack artifact
+- **WHEN** a required Lace package cannot be packed or installed
+- **THEN** acceptance fails with the affected package identified rather than falling back to a workspace import
+
+### Requirement: Generated Node project passes an operator and content journey
+
+Acceptance SHALL exercise a generated project's Node development startup, explicit migration, guarded configuration sync, bootstrap setup, administrator login, draft edit, publication, and Astro build against its own configuration and persistent state. It SHALL confirm published content is served by the generated site and SHALL redact credentials from failure diagnostics after the one intentional bootstrap reveal.
+
+#### Scenario: Published content journey
+- **WHEN** a fresh generated Node project is installed and started
+- **THEN** the operator commands prepare its database, an administrator can log in and publish an edit, and the Astro build contains the published content
+
+#### Scenario: Operator failure
+- **WHEN** an acceptance step fails after bootstrap
+- **THEN** diagnostics identify the failed step without repeating the bootstrap token, password, or complete secret environment values
+
+### Requirement: Generated deployment paths pass local smoke tests
+
+Acceptance SHALL run the generated Docker Compose production configuration with locally built, versioned API and builder images, verify API readiness and serving behavior, and stop its containers and volumes after the test. For a project generated with `--cloudflare`, acceptance SHALL bundle the optional deployment template and run a local Worker smoke test without requiring a Cloudflare account.
+
+#### Scenario: Compose production flow
+- **WHEN** the required local images and generated environment are supplied to the generated Compose project
+- **THEN** its production services start and the migrated API reaches readiness without accessing engine source in the generated project
+
+#### Scenario: Optional Cloudflare flow
+- **WHEN** the generator is invoked with `--cloudflare`
+- **THEN** the generated site deployment configuration bundles and the local Worker smoke path succeeds without remote credentials
+
+### Requirement: Generated output has a reviewed byte-stable contract
+
+The repository SHALL keep a committed snapshot of the generated file tree and ownership manifest for default and Cloudflare variants. Acceptance SHALL regenerate both variants, compare their managed bytes and manifests with the snapshots, verify each managed digest, and reject editable admin or engine source, usable secrets, or unclassified generated files.
+
+#### Scenario: Repeatable generation
+- **WHEN** two projects with the same name and template options are generated in different disposable parents
+- **THEN** their file trees, managed bytes, and ownership manifests match the committed contract and one another

@@ -1,4 +1,5 @@
 import { appliedMigrationQuery } from "@lacecms/db";
+export { checkedInMigrations } from "@lacecms/db";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { fileURLToPath } from "node:url";
@@ -34,7 +35,7 @@ export function openNodeDatabase(databasePath: string): NodeDatabase {
   return { connection, drizzle: drizzle(connection) };
 }
 
-const migrationFolder = fileURLToPath(new URL("../../db/drizzle", import.meta.url));
+const migrationFolder = fileURLToPath(new URL("../drizzle", import.meta.resolve("@lacecms/db")));
 
 export function listAppliedMigrations(connection: Database.Database): readonly AppliedMigration[] {
   const records = connection.prepare(appliedMigrationQuery).all() as readonly {

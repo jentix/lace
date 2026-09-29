@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { FixedCommandBuilder } from "../dist/index.js";
 
 const cleanup = [];
@@ -138,4 +138,61 @@ test("build failure or changed version leaves current release intact", async () 
     reason: "version_changed",
   });
   expect(await readlink(join(root, "output/current"))).toBe(current);
+});
+
+test("tool failure logs only a fixed diagnostic category", async () => {
+  const { builder, tool } = await fixture();
+  await writeFile(tool, '#!/bin/sh\necho "secret=private ENOSPC /source/private" >&2\nexit 1\n');
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await builder.build({ buildId: "disk-full", targetVersion: 1 })).toEqual({
+      status: "failed",
+      reason: "install_failed",
+    });
+    expect(log).toHaveBeenCalledWith(
+      JSON.stringify({ component: "builder-tool", phase: "install", failure: "disk_full" }),
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain("secret=private");
+    expect(JSON.stringify(log.mock.calls)).not.toContain("/source/private");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test("builds the exact generated site layout with fixed commands", async () => {
+  const { root, source, tool } = await fixture();
+  await rm(join(source, "apps"), { recursive: true });
+  await mkdir(join(source, "site"));
+  await writeFile(join(source, "site/package.json"), "{}");
+  await writeFile(
+    tool,
+    `#!/bin/sh
+if [ "$1" = "install" ]; then
+  test "$2" = "--frozen-lockfile" || exit 1
+  test "$#" = "2" || exit 1
+  exit 0
+fi
+test "$1" = "--dir" || exit 1
+test "$2" = "site" || exit 1
+test "$3" = "build" || exit 1
+mkdir -p site/dist
+echo '<h1>generated</h1>' > site/dist/index.html
+`,
+  );
+  const builder = new FixedCommandBuilder({
+    sourceRoot: source,
+    workRoot: join(root, "generated-work"),
+    outputRoot: join(root, "generated-output"),
+    apiBaseUrl: "http://api.test/",
+    buildToken: "build-token",
+    toolPath: tool,
+    versionReader: async () => 1,
+  });
+  expect(await builder.build({ buildId: "generated", targetVersion: 1 })).toEqual({
+    status: "succeeded",
+  });
+  const current = await readlink(join(root, "generated-output/current"));
+  expect(await readFile(join(root, "generated-output", current, "index.html"), "utf8")).toContain(
+    "generated",
+  );
 });

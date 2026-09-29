@@ -1,0 +1,38 @@
+{
+  "tree": [
+    ".env.example",
+    ".gitignore",
+    ".lace/manifest.json",
+    "deploy/minio.Dockerfile",
+    "deploy/nginx.conf",
+    "docker-compose.yml",
+    "docs/lace-operations.md",
+    "lace.config.ts",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "site/astro.config.mjs",
+    "site/package.json",
+    "site/src/pages/blog/[slug].astro",
+    "site/src/pages/index.astro",
+    "site/src/styles/global.css",
+    "site/tsconfig.json"
+  ],
+  "manifest": "{\n  \"schemaVersion\": 1,\n  \"templateVersion\": \"0.2.1\",\n  \"files\": {\n    \".env.example\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"f6a488a35fd133b0d1207b52a6a85d054625e52746df9223fef6d969b69ed003\"\n    },\n    \".gitignore\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"b6e23ce9de20ebb6c9a514e392465fffdeb1a59a0f437ff2e23d5094ddaa60c1\"\n    },\n    \"deploy/minio.Dockerfile\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"14ec240a2a063cc7c9ad8a08bcc33089272180274a46ec17b3b711a098060eb0\"\n    },\n    \"deploy/nginx.conf\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"56d8f307614f7f680521b27fb841282415d6daca268e89691da10c319c52d580\"\n    },\n    \"docker-compose.yml\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"c753114078c655a95e4d2cedd9d6e8ddd53066c9353732134d747707c0cc05c6\"\n    },\n    \"docs/lace-operations.md\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"34a32de62c385bcccb32f5325f06babe985acdb83e4d175797220e6822e8b21a\"\n    },\n    \"lace.config.ts\": {\n      \"owner\": \"user\"\n    },\n    \"package.json\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"da31dcc0040dd44273f64a9f99c42c652ab7d0d1909116a2dadb927c19aae23c\"\n    },\n    \"pnpm-workspace.yaml\": {\n      \"owner\": \"managed\",\n      \"sha256\": \"4333dbd280dcb963cfb646d4f2a40abde0ad66643c69d6590264f1e2bb213d1e\"\n    },\n    \"site/astro.config.mjs\": {\n      \"owner\": \"user\"\n    },\n    \"site/package.json\": {\n      \"owner\": \"user\"\n    },\n    \"site/src/pages/blog/[slug].astro\": {\n      \"owner\": \"user\"\n    },\n    \"site/src/pages/index.astro\": {\n      \"owner\": \"user\"\n    },\n    \"site/src/styles/global.css\": {\n      \"owner\": \"user\"\n    },\n    \"site/tsconfig.json\": {\n      \"owner\": \"user\"\n    }\n  }\n}\n",
+  "digests": {
+    ".env.example": "f6a488a35fd133b0d1207b52a6a85d054625e52746df9223fef6d969b69ed003",
+    ".gitignore": "b6e23ce9de20ebb6c9a514e392465fffdeb1a59a0f437ff2e23d5094ddaa60c1",
+    "deploy/minio.Dockerfile": "14ec240a2a063cc7c9ad8a08bcc33089272180274a46ec17b3b711a098060eb0",
+    "deploy/nginx.conf": "56d8f307614f7f680521b27fb841282415d6daca268e89691da10c319c52d580",
+    "docker-compose.yml": "c753114078c655a95e4d2cedd9d6e8ddd53066c9353732134d747707c0cc05c6",
+    "docs/lace-operations.md": "34a32de62c385bcccb32f5325f06babe985acdb83e4d175797220e6822e8b21a",
+    "lace.config.ts": "25cdafc9a3c6c1ce5af311fe4ddbc37e9f307bc18d610ad7ebcec4f3d8edda34",
+    "package.json": "da31dcc0040dd44273f64a9f99c42c652ab7d0d1909116a2dadb927c19aae23c",
+    "pnpm-workspace.yaml": "4333dbd280dcb963cfb646d4f2a40abde0ad66643c69d6590264f1e2bb213d1e",
+    "site/astro.config.mjs": "24c02ad92893a23e639ca3f37b8653c78bb58e56c1ec9957f4d89de9023d1f7a",
+    "site/package.json": "b2c70ca4b440240a1a6224f7c14e654200118c63dfcba24bbcc614bfc8b814eb",
+    "site/src/pages/blog/[slug].astro": "34d18710b7ad69008d4db4cf993155a2ef3d39c20fc2dd92257cba3231127e40",
+    "site/src/pages/index.astro": "322d73205876bfce7e8feaafd5b1cb463698763e6a661899e0becc471076c58d",
+    "site/src/styles/global.css": "143cf0eeff2849f63dfdbfe78cccbe47e1ac36f022c287d089495a0e9b698733",
+    "site/tsconfig.json": "90f5def2f40919bf2a15d31fc4b4f1f180cb577ceff1a3288ff4153a4cd38ab6"
+  }
+}

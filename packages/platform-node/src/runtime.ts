@@ -9,7 +9,7 @@ import type {
 } from "@lacecms/application";
 import { type ContentModelDefinition, type NormalizedConfig } from "@lacecms/config";
 import { createBetterAuthBoundary } from "@lacecms/auth";
-import { betterAuthSchema } from "@lacecms/db";
+import { appliedMigrationQuery, betterAuthSchema, checkedInMigrations } from "@lacecms/db";
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
@@ -279,8 +279,11 @@ export class NodeSqliteReadiness implements ReadinessProbe {
 
   public async isReady(): Promise<boolean> {
     try {
-      this.connection.prepare("select 1").get();
-      return true;
+      const installed = this.connection.prepare(appliedMigrationQuery).all() as {
+        created_at: number;
+      }[];
+      const versions = new Set(installed.map((row) => row.created_at));
+      return checkedInMigrations.every((migration) => versions.has(migration.createdAt));
     } catch {
       return false;
     }
@@ -367,6 +370,19 @@ function hasStartupStorageCheck(
 /** Creates the SQLite-backed Node composition without importing Node code into portable packages. */
 export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
   const database = openNodeDatabase(input.settings.databasePath);
+  try {
+    const installed = database.connection.prepare(appliedMigrationQuery).all() as {
+      created_at: number;
+    }[];
+    const versions = new Set(installed.map((row) => row.created_at));
+    const pending = checkedInMigrations.filter((migration) => !versions.has(migration.createdAt));
+    if (pending.length > 0)
+      console.error(
+        `Database schema is outdated. Run lace db migrate; pending: ${pending.map((item) => item.name).join(", ")}.`,
+      );
+  } catch {
+    console.error("Database schema is outdated. Run lace db migrate.");
+  }
   const ids = new UlidGenerator();
   const repository = new NodeContentRepository(
     database.connection,

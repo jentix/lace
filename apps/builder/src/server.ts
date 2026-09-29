@@ -116,6 +116,7 @@ export function createBuilderHandler(input: {
       send(response, 200, { status: "succeeded", log: "Static build succeeded." });
     else {
       const reason = SAFE_REASONS.has(result.reason) ? result.reason : "build_failed";
+      console.error(JSON.stringify({ component: "builder", status: "failed", reason }));
       send(response, 503, {
         status: "failed",
         reason,

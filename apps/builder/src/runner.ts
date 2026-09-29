@@ -13,7 +13,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 
 export interface BuildRequest {
   readonly buildId: string;
@@ -41,6 +41,7 @@ export interface BuilderSettings {
 }
 
 type Stage = "source_invalid" | "install_failed" | "build_failed" | "version_changed";
+type ProjectLayout = "workspace" | "generated";
 
 class StageError extends Error {
   public constructor(readonly stage: Stage) {
@@ -59,11 +60,13 @@ const SKIPPED_NAMES = new Set([
   ".lace-acceptance",
 ]);
 
-async function copyProject(sourceRoot: string, destination: string): Promise<void> {
+async function copyProject(sourceRoot: string, destination: string): Promise<ProjectLayout> {
   await cp(sourceRoot, destination, {
     recursive: true,
     filter: async (source) => {
       const name = basename(source);
+      const location = relative(sourceRoot, source);
+      if (location === ".lace/data" || location.startsWith(`.lace/data${sep}`)) return false;
       if (
         source !== sourceRoot &&
         (SKIPPED_NAMES.has(name) || name === ".env" || name.startsWith(".env."))
@@ -75,18 +78,27 @@ async function copyProject(sourceRoot: string, destination: string): Promise<voi
       return true;
     },
   });
-  for (const required of [
-    "package.json",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml",
-    "apps/site/package.json",
-  ]) {
+  for (const required of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
     try {
       if (!(await lstat(join(destination, required))).isFile()) throw new Error();
     } catch {
       throw new StageError("source_invalid");
     }
   }
+  const layouts: readonly [ProjectLayout, string][] = [
+    ["workspace", "apps/site/package.json"],
+    ["generated", "site/package.json"],
+  ];
+  const matches: ProjectLayout[] = [];
+  for (const [layout, file] of layouts) {
+    try {
+      if ((await lstat(join(destination, file))).isFile()) matches.push(layout);
+    } catch {
+      /* This layout is absent. */
+    }
+  }
+  if (matches.length !== 1) throw new StageError("source_invalid");
+  return matches[0]!;
 }
 
 async function execute(
@@ -94,18 +106,50 @@ async function execute(
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
   toolPath: string,
+  phase: "install" | "build",
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(toolPath, [...args], { cwd, env: environment, stdio: "ignore" });
+    const child = spawn(toolPath, [...args], {
+      cwd,
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const collect = (chunk: Buffer) => {
+      output = (output + chunk.toString("utf8")).slice(-16_384);
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    let timedOut = false;
     const timeout = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGKILL");
     }, 10 * 60_000);
     child.on("error", () => {
       clearTimeout(timeout);
+      console.error(JSON.stringify({ component: "builder-tool", phase, failure: "spawn_failed" }));
       resolve(false);
     });
-    child.on("exit", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timeout);
+      if (code !== 0) {
+        const failure = timedOut
+          ? "timeout"
+          : /ENOSPC|no space left on device/iu.test(output)
+            ? "disk_full"
+            : /ENOMEM|out of memory|heap out of memory/iu.test(output)
+              ? "memory_exhausted"
+              : /EACCES|permission denied/iu.test(output)
+                ? "permission_denied"
+                : /ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)/iu.test(output)
+                  ? "missing_dependency"
+                  : /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/iu.test(output)
+                    ? "network_unavailable"
+                    : signal === null
+                      ? "command_failed"
+                      : "signal";
+        console.error(JSON.stringify({ component: "builder-tool", phase, failure }));
+      }
       resolve(code === 0);
     });
   });
@@ -160,7 +204,7 @@ export class FixedCommandBuilder {
       await mkdir(releasesRoot, { recursive: true });
       workDirectory = await mkdtemp(join(workRoot, "build-"));
       const project = join(workDirectory, "project");
-      await copyProject(sourceRoot, project);
+      const layout = await copyProject(sourceRoot, project);
       if (
         (await (this.settings.versionReader?.() ?? currentVersion(this.settings))) !==
         request.targetVersion
@@ -182,22 +226,28 @@ export class FixedCommandBuilder {
       if (
         !(await execute(
           project,
-          ["install", "--frozen-lockfile", "--filter", "@lacecms/app-site..."],
+          layout === "workspace"
+            ? ["install", "--frozen-lockfile", "--filter", "@lacecms/app-site..."]
+            : ["install", "--frozen-lockfile"],
           environment,
           this.settings.toolPath ?? "pnpm",
+          "install",
         ))
       )
         throw new StageError("install_failed");
       if (
         !(await execute(
           project,
-          ["--filter", "@lacecms/app-site...", "build"],
+          layout === "workspace"
+            ? ["--filter", "@lacecms/app-site...", "build"]
+            : ["--dir", "site", "build"],
           environment,
           this.settings.toolPath ?? "pnpm",
+          "build",
         ))
       )
         throw new StageError("build_failed");
-      const siteOutput = join(project, "apps/site/dist");
+      const siteOutput = join(project, layout === "workspace" ? "apps/site/dist" : "site/dist");
       if (!(await lstat(join(siteOutput, "index.html"))).isFile())
         throw new StageError("build_failed");
       if (

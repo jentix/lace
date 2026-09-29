@@ -1,0 +1,6 @@
+node_modules/
+.lace/data/
+dist/
+.astro/
+.env
+.env.*.local

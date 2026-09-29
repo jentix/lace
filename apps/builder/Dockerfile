@@ -7,7 +7,10 @@ RUN pnpm install --frozen-lockfile --filter @lacecms/app-builder... \
     && pnpm --filter @lacecms/app-builder build
 
 FROM node:24.12.0-bookworm-slim
-RUN npm install --global pnpm@12.3.4 \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global pnpm@12.3.4 \
     && mkdir -p /source /work /output \
     && chown -R node:node /work /output
 COPY --from=compile /build/apps/builder/dist /opt/lace-builder/dist
