@@ -405,6 +405,7 @@ async function productionSmoke(context, session) {
       /* Wait for the fixed-command builder to publish its release. */
     }
     if (attempt % 30 === 0) {
+      let failedState;
       try {
         const history = await request(session.base, "/api/v1/admin/site-builds", {
           headers: { cookie: session.cookie },
@@ -416,10 +417,15 @@ async function productionSmoke(context, session) {
             lastBuildState = state;
             console.info(`Production build state: ${sanitize(state)}`);
           }
+          if (latest.status === "failed") {
+            failedState = state;
+          }
         }
       } catch {
         /* A transient history read does not stop the release wait. */
       }
+      if (failedState)
+        throw new Error(`compose-production: builder failed (${sanitize(failedState)})`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -647,8 +653,14 @@ try {
   console.error(sanitize(error instanceof Error ? error.message : error));
   if (composeProject && composeCwd) {
     try {
-      const logs = await compose("compose-logs", ["logs", "--no-color", "--tail", "30"]);
-      console.error(sanitize(logs).slice(-6000));
+      const logs = await compose("builder-logs", [
+        "logs",
+        "--no-color",
+        "--tail",
+        "100",
+        "builder",
+      ]);
+      console.error(`Builder diagnostics:\n${sanitize(logs).slice(-6000)}`);
     } catch {
       /* Keep the original acceptance failure. */
     }

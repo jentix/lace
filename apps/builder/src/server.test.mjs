@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createBuilderHandler } from "../dist/index.js";
 
 const secret = "s".repeat(32);
@@ -65,6 +65,7 @@ test("builder serializes concurrent requests", async () => {
 });
 
 test("builder does not return thrown tool output or secrets", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
   const handler = createBuilderHandler({
     secret,
     build: async () => {
@@ -80,4 +81,8 @@ test("builder does not return thrown tool output or secrets", async () => {
   });
   expect(JSON.stringify(response.body)).not.toContain(secret);
   expect(JSON.stringify(response.body)).not.toContain("/source/private");
+  expect(log).toHaveBeenCalledWith(
+    JSON.stringify({ component: "builder", status: "failed", reason: "build_failed" }),
+  );
+  log.mockRestore();
 });
