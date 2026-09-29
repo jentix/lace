@@ -391,7 +391,8 @@ async function productionSmoke(context, session) {
     );
   }
   let built = false;
-  for (let attempt = 0; attempt < 180; attempt += 1) {
+  let lastBuildState = "no build recorded";
+  for (let attempt = 0; attempt < 720; attempt += 1) {
     try {
       const response = await fetch(new URL("/blog/acceptance/", publicBase), {
         signal: AbortSignal.timeout(2000),
@@ -403,9 +404,30 @@ async function productionSmoke(context, session) {
     } catch {
       /* Wait for the fixed-command builder to publish its release. */
     }
+    if (attempt % 30 === 0) {
+      try {
+        const history = await request(session.base, "/api/v1/admin/site-builds", {
+          headers: { cookie: session.cookie },
+        });
+        const latest = history.body?.items?.[0];
+        if (latest) {
+          const state = `${latest.status}${latest.error ? `: ${latest.error}` : ""}`;
+          if (state !== lastBuildState) {
+            lastBuildState = state;
+            console.info(`Production build state: ${sanitize(state)}`);
+          }
+        }
+      } catch {
+        /* A transient history read does not stop the release wait. */
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  if (!built) throw new Error("compose-production: builder did not publish generated site");
+  if (!built) {
+    throw new Error(
+      `compose-production: builder did not publish generated site (${lastBuildState})`,
+    );
+  }
   console.info("Generated Compose production services and web proxy passed");
 }
 

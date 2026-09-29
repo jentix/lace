@@ -19,3 +19,4 @@
 - [x] 4.1 Document generated Node, Compose, and optional Cloudflare local acceptance commands and prerequisites; verify each documented command against a disposable generated project.
 - [x] 4.2 Wire the full generated-project acceptance into CI, run focused tests and the acceptance command, then root typecheck, Oxlint, Oxfmt check, and strict OpenSpec change validation; verify all gates pass.
 - [x] 4.3 Replace the withdrawn MinIO image reference in the generated Compose path with a pinned-source build, verify a cold local image build and full generated acceptance, then rerun focused and root quality gates before re-archiving.
+- [x] 4.4 Allow a cold Linux builder to complete within bounded acceptance time, include safe persisted build-state diagnostics, and verify the revised full acceptance and quality gates before re-archiving.
