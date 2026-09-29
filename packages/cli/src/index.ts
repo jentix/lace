@@ -1,5 +1,10 @@
 export const packageName = "@lacecms/cli";
 
+export { planUpgrade, presentUpgradePlan } from "./upgrade.js";
+export type { UpgradePlan, UpgradeDecision, UpgradeAction } from "./upgrade.js";
+export { UpgradeError, validateUpgradeManifest } from "./upgrade-input.js";
+export type { UpgradeManifest } from "./upgrade-input.js";
+
 export const EXIT = Object.freeze({
   OK: 0,
   PENDING: 2,
