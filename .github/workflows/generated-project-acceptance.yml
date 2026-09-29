@@ -1,0 +1,36 @@
+name: Generated project acceptance
+
+# Label the PR with run-generated-acceptance to run this expensive Docker journey.
+# After this workflow reaches main, it can also be started from the Actions tab.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: generated-project-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generated-project-acceptance:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-generated-acceptance'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.12.0
+          package-manager-cache: false
+
+      - name: Enable the pinned pnpm release
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.3.4 --activate
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Accept generated project
+        run: pnpm acceptance:generated

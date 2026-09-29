@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { FixedCommandBuilder } from "../dist/index.js";
 
 const cleanup = [];
@@ -138,6 +138,25 @@ test("build failure or changed version leaves current release intact", async () 
     reason: "version_changed",
   });
   expect(await readlink(join(root, "output/current"))).toBe(current);
+});
+
+test("tool failure logs only a fixed diagnostic category", async () => {
+  const { builder, tool } = await fixture();
+  await writeFile(tool, '#!/bin/sh\necho "secret=private ENOSPC /source/private" >&2\nexit 1\n');
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await builder.build({ buildId: "disk-full", targetVersion: 1 })).toEqual({
+      status: "failed",
+      reason: "install_failed",
+    });
+    expect(log).toHaveBeenCalledWith(
+      JSON.stringify({ component: "builder-tool", phase: "install", failure: "disk_full" }),
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain("secret=private");
+    expect(JSON.stringify(log.mock.calls)).not.toContain("/source/private");
+  } finally {
+    log.mockRestore();
+  }
 });
 
 test("builds the exact generated site layout with fixed commands", async () => {
