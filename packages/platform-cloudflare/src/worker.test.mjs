@@ -260,6 +260,17 @@ async function upload(fixture, name = "cover.png") {
   return fixture.call("/api/v1/admin/media", { body: form, method: "POST" });
 }
 
+test("Worker readiness rejects a D1 database with a pending migration", async () => {
+  const fixture = await workerFixture();
+  await fixture.local.database
+    .prepare("delete from d1_migrations where name = ?")
+    .bind("0002_mutation_guards.sql")
+    .run();
+  const ready = await fixture.call("/health/ready");
+  expect(ready.response.status).toBe(503);
+  expect(ready.body).toEqual({ status: "not_ready" });
+});
+
 test("Worker composition serves setup, auth, R2 media, and publication from D1", async () => {
   const fixture = await workerFixture();
   expect((await fixture.call("/health/ready")).response.status).toBe(200);

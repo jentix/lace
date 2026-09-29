@@ -34,6 +34,15 @@ export async function openLocalCloudflare() {
   const database = await miniflare.getD1Database("DB");
   const statements = await migrationStatements();
   await database.batch(statements.map((statement) => database.prepare(statement)));
+  await database
+    .prepare("create table d1_migrations (id integer primary key, name text not null)")
+    .run();
+  const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql")).sort();
+  for (const [index, name] of files.entries())
+    await database
+      .prepare("insert into d1_migrations (id, name) values (?, ?)")
+      .bind(index + 1, name)
+      .run();
   return {
     bucket: await miniflare.getR2Bucket("MEDIA"),
     database,

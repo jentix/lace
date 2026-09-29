@@ -484,6 +484,50 @@ test("reports cheap SQLite readiness failures after the connection closes", asyn
   }
 });
 
+test("unmigrated SQLite is not ready until the explicit migration command runs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-readiness-pending-"));
+  const databasePath = join(directory, "lace.sqlite");
+  try {
+    let database = openNodeDatabase(databasePath);
+    await expect(new NodeSqliteReadiness(database.connection).isReady()).resolves.toBe(false);
+    database.connection.close();
+    migrateNodeDatabase(databasePath);
+    database = openNodeDatabase(databasePath);
+    await expect(new NodeSqliteReadiness(database.connection).isReady()).resolves.toBe(true);
+    database.connection.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("Node API does not migrate an outdated database on startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lace-startup-pending-"));
+  const databasePath = join(directory, "lace.sqlite");
+  const settings = parseNodeRuntimeSettings({
+    ...minioEnvironment,
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough-for-better-auth",
+    LACE_DATABASE_PATH: databasePath,
+    LACE_PUBLIC_BASE_URL: "https://lace.test/",
+  });
+  const config = await defineConfig({
+    content: [definePage({ key: "home", path: "/", version: 1 })],
+  });
+  try {
+    const runtime = createNodeRuntime({ config, settings });
+    try {
+      await expect(runtime.readiness.isReady()).resolves.toBe(false);
+      const tables = runtime.database.connection
+        .prepare("select name from sqlite_master where type = 'table'")
+        .all();
+      expect(tables.some((row) => row.name === "__drizzle_migrations")).toBe(false);
+    } finally {
+      runtime.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Node composition maps a Better Auth session into a protected actor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lace-node-auth-"));
   const databasePath = join(directory, "lace.sqlite");

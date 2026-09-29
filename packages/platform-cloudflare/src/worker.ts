@@ -16,7 +16,7 @@ import type {
 } from "@lacecms/application";
 import { createBetterAuthBoundary } from "@lacecms/auth";
 import type { ContentModelDefinition, NormalizedConfig } from "@lacecms/config";
-import { betterAuthSchema } from "@lacecms/db";
+import { betterAuthSchema, checkedInMigrations } from "@lacecms/db";
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
@@ -121,8 +121,11 @@ class D1Readiness implements ReadinessProbe {
 
   public async isReady(): Promise<boolean> {
     try {
-      await this.database.prepare("select 1").first();
-      return true;
+      const installed = await this.database
+        .prepare("select name from d1_migrations")
+        .all<{ name: string }>();
+      const names = new Set(installed.results.map((row) => row.name));
+      return checkedInMigrations.every((migration) => names.has(migration.name));
     } catch {
       return false;
     }

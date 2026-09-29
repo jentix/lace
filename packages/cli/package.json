@@ -2,6 +2,9 @@
   "name": "@lacecms/cli",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "lace": "./dist/bin.js"
+  },
   "type": "module",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -14,9 +17,17 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src",
-    "test": "vitest run src/index.test.mjs"
+    "test": "vitest run src/*.test.mjs"
+  },
+  "dependencies": {
+    "@lacecms/application": "workspace:*",
+    "@lacecms/config": "workspace:*",
+    "@lacecms/platform-cloudflare": "workspace:*",
+    "@lacecms/platform-node": "workspace:*",
+    "miniflare": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

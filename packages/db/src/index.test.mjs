@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   assertDraftPersistenceBounds,
   decodeBase64Url,
@@ -7,10 +8,23 @@ import {
   encodeCursor,
   encodeSortCursor,
   packageName,
+  checkedInMigrations,
   sqliteWriteError,
 } from "../dist/index.js";
 
 test("exports its package identity", () => expect(packageName).toBe("@lacecms/db"));
+
+test("checked-in migration inventory matches the Drizzle journal", async () => {
+  const journal = JSON.parse(
+    await readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
+  );
+  expect(checkedInMigrations).toEqual(
+    journal.entries.map((entry) => ({
+      createdAt: entry.when,
+      name: `${entry.tag}.sql`,
+    })),
+  );
+});
 
 test("encodes cursors byte-identically to Node Buffer base64url", () => {
   for (const text of ["", "a", "ab", "abc", '{"kind":"é✓😀","id":"x"}', "\u0000ÿ/+?"]) {

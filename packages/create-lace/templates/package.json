@@ -5,9 +5,13 @@
   "scripts": {
     "dev": "pnpm --dir site dev",
     "build": "pnpm --dir site build",
-    "typecheck": "pnpm --dir site typecheck"
+    "typecheck": "pnpm --dir site typecheck",
+    "db:migrate": "lace db migrate",
+    "content:sync": "lace content sync",
+    "auth:bootstrap": "lace auth bootstrap"
   },
   "dependencies": {
+    "@lacecms/cli": "0.0.0",
     "@lacecms/config": "0.0.0",
     "@lacecms/content": "0.0.0"
   },

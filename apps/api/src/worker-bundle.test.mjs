@@ -65,7 +65,8 @@ test("bundled Worker serves health and Better Auth routes under workerd", async 
     expect(live.status).toBe(200);
     expect(await live.json()).toEqual({ status: "live" });
     const ready = await miniflare.dispatchFetch("http://localhost:8787/health/ready");
-    expect(await ready.json()).toEqual({ status: "ready" });
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toEqual({ status: "not_ready" });
     const session = await miniflare.dispatchFetch("http://localhost:8787/api/auth/get-session");
     expect(session.status).toBe(200);
     expect(await session.json()).toBeNull();
