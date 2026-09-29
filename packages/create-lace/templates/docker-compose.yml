@@ -99,6 +99,15 @@ services:
       retries: 3
     restart: unless-stopped
 
+  static-output-init:
+    image: ${LACE_BUILDER_IMAGE:?set LACE_BUILDER_IMAGE}
+    user: "0:0"
+    entrypoint: ["chown", "node:node", "/output"]
+    network_mode: none
+    volumes:
+      - static-output:/output
+    restart: "no"
+
   builder:
     image: ${LACE_BUILDER_IMAGE:?set LACE_BUILDER_IMAGE}
     environment:
@@ -111,6 +120,7 @@ services:
       - static-output:/output
     depends_on:
       api: { condition: service_healthy }
+      static-output-init: { condition: service_completed_successfully }
     networks: [backend, build-egress]
     healthcheck:
       test:
@@ -134,6 +144,7 @@ services:
       - static-output:/output:ro
     depends_on:
       api: { condition: service_healthy }
+      static-output-init: { condition: service_completed_successfully }
     networks: [frontend]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/live"]

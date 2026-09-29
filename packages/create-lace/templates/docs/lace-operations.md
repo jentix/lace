@@ -13,7 +13,7 @@ The CLI and API use the same project-local SQLite database. The `.lace/data/` di
 
 ## Compose production
 
-Create a build token in Admin Settings and place its one-time value in `LACE_BUILD_TOKEN` in `.env`. Run `pnpm prod:start` to start the API, MinIO, builder, dispatcher, and web proxy. Compose builds MinIO from the pinned source release in `deploy/minio.Dockerfile`; no MinIO registry image is required. Compose runs the checked-in migrations as an explicit one-shot service before API readiness. The API is exposed at `LACE_API_PORT` (default 3000), and the web proxy at `LACE_HTTP_PORT` (default 8080). The builder reads the generated project as a read-only source mount and publishes static releases to its own volume.
+Create a build token in Admin Settings and place its one-time value in `LACE_BUILD_TOKEN` in `.env`. Run `pnpm prod:start` to start the API, MinIO, builder, dispatcher, and web proxy. Compose builds MinIO from the pinned source release in `deploy/minio.Dockerfile`; no MinIO registry image is required. Compose runs the checked-in migrations as an explicit one-shot service before API readiness and prepares the static-output volume ownership before builder and web start. The API is exposed at `LACE_API_PORT` (default 3000), and the web proxy at `LACE_HTTP_PORT` (default 8080). The builder reads the generated project as a read-only source mount and publishes static releases to its own volume.
 
 Run `pnpm prod:stop` to stop services without deleting content. To reset test-only deployments, use `docker compose down --volumes` and remove `.lace/data/` only after backing up anything needed.
 

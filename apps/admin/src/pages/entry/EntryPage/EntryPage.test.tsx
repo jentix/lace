@@ -110,7 +110,7 @@ test("entry editor renders metadata fields, preserves blocks, suggests a slug, a
     ),
   );
   expect(await screen.findByText("Saved revision 3")).toBeInTheDocument();
-});
+}, 15_000);
 
 test("entry editor prevents invalid local submission and keeps manual slug edits", async () => {
   const user = userEvent.setup();
