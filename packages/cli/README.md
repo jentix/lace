@@ -11,9 +11,9 @@ Deployment order:
 
 Exit codes: `0` success, `2` sync pending, `3` command usage, `4` missing or invalid configuration, `5` missing migration, and `6` failed operation. `--json` prints one result object to stdout, including one-time token data only for successful bootstrap. Other failures print sanitized diagnostics and no supplied secret value. The CLI never prompts, including in CI.
 
-## Upgrade review (Step 24A)
+## Upgrade review and apply (Steps 24A–24B)
 
-`lace upgrade` currently produces a read-only plan. Prepare a pristine project with the target generator release in a separate parent directory, using the same project basename and optional `--cloudflare` setting as the installed project. Its `.lace/manifest.json` and managed bytes are the target template; the installed manifest hashes represent the old template. For example, with `/work/my-site` as the installed project and a reviewed target generator release:
+`lace upgrade` defaults to a read-only plan. Prepare a pristine project with the target generator release in a separate, non-overlapping parent directory, using the same project basename and optional `--cloudflare` setting as the installed project. Its `.lace/manifest.json` and managed bytes are the target template; the installed manifest hashes represent the old template. For example, with `/work/my-site` as the installed project and a reviewed target generator release:
 
 ```sh
 mkdir -p /work/upgrade-target
@@ -30,4 +30,60 @@ Replace `<target-release>` with an explicit compatible generator release. The pl
 
 Actions are `add`, `replace`, `remove`, `current`, `preserve` and `conflict`. Dependency and container-image updates are ordinary replacements when the working managed file still matches its baseline hash. Local edits are preserved when the template has not changed, and conflict when an upgrade would replace or remove them. A working file already equal to the target is current. Existing user-owned paths, `site/**` and `lace.config.ts` are preserved, and untracked files remain untouched. A newly managed path that already exists conflicts. Ownership changes from managed to user also need explicit resolution.
 
-Upgrade exit codes are `0` for a conflict-free plan (including pending changes), `2` for conflicts, `3` for invalid arguments, `4` for invalid/missing manifests or unsafe inputs, and `6` for inspection failure. `--apply` is explicitly refused in 24A. All dry runs leave both directories unchanged, including manifests; transactional application, conflict artifacts, recovery and migration instructions belong to 24B. Hashes describe a read snapshot; they must be rechecked before a later apply.
+Upgrade exit codes are `0` for a conflict-free plan (including pending changes) or successful operation, `2` for conflicts, `3` for invalid arguments, `4` for invalid/missing manifests or unsafe inputs, and `6` for inspection, mutation, recovery or concurrency failures. All dry runs leave both directories unchanged, including manifests, locks and artifacts. Dry runs identify unfinished operations with `UPGRADE_RECOVERY_PENDING` and exit `6`; that partial tree is not a completed installation.
+
+After reviewing the plan, stop deployments and edits to managed files for the operation, keep a project/database backup, and explicitly apply:
+
+```sh
+pnpm exec lace upgrade --template /work/upgrade-target/my-site --apply
+pnpm exec lace upgrade --template /work/upgrade-target/my-site --apply --json
+```
+
+Apply rechecks inspected bytes, stages recovery data before the first working-file mutation, atomically publishes each replacement, preserves existing file permissions and writes the new manifest last. The whole tree is not one atomic filesystem transaction; do not deploy a tree with pending recovery. Node and Cloudflare projects use identical ownership rules. Upgrade does not install packages, load configuration code, contact runtime services or migrate databases.
+
+If **any** plan decision conflicts, apply leaves every working managed file and the installed manifest unchanged. Review `.lace/conflicts/<version>/index.json`, exact proposed managed bytes at `proposed/<path>`, and diffs at `diffs/<path>.diff`. Deletion and ownership-transfer conflicts are explicit records without invented proposed bytes. Identical repeat requests reuse artifacts; edited or different artifacts are preserved and cause a refusal. Move/preserve an older review bundle before publishing a revised one.
+
+Resolve conflicts explicitly in working files: restore the old pristine managed bytes to allow the replacement, or copy accepted exact target bytes after review. Ownership transfers need an explicit, schema-valid inventory decision in `.lace/manifest.json`; keep `site/**` and `lace.config.ts` user-owned. A custom merged file can still conflict: the CLI never silently accepts a merge or blesses local bytes as a pristine baseline. Rerun the dry run, then apply. Never resolve a conflict just by changing a managed baseline hash to an unreviewed local file's hash.
+
+## Interrupted upgrades and filesystem rollback
+
+Recovery metadata lives in `.lace/upgrade/transactions/<operation-id>/`: exact old/new manifests, before-images, proposed managed bytes and guarded operation metadata. `.lace/upgrade/latest.json` records `applying`, `applied`, `rolling-back` or `rolled-back`. Records are private because managed deployment files may contain local secrets; do not share them. Successful repeat apply reports `already-current` and preserves the original rollback checkpoint.
+
+After an interrupted apply, inspect the dry run and repeat the same `--apply` command with the pristine target. The target's manifest and instructions must match the saved operation; its filesystem location may differ. Recovery needs no old pristine template, because saved before-images retain its relevant bytes. Unexpected working-file edits, changed permissions, corrupt saved bytes or a different target cause a refusal. Preserve those edits externally, review the affected path, then restore a recorded pre/post state before retrying; there is no force-overwrite flag.
+
+To undo the latest recorded completed or partial filesystem upgrade, without either template directory:
+
+```sh
+pnpm exec lace upgrade --rollback
+pnpm exec lace upgrade --rollback --project /work/my-site --json
+```
+
+Rollback validates all affected paths before restoration, restores original bytes/permissions and missing-file states, and writes the original manifest last. It preserves user source and refuses subsequent unexpected managed-file edits. Repeat an interrupted rollback using `--rollback`; an apply cannot reverse that recovery direction. Repeating a completed rollback is safe. `--rollback` cannot be combined with `--template` or `--apply`. Only the latest operation is selected; older records are retained for inspection, not a historical rollback stack.
+
+Only one mutation can run per project. A dead local owner of `.lace/upgrade/lock.json` can be reclaimed after checking process liveness. A foreign/uncertain owner or leftover short acquisition gate `.lace/upgrade/lock-access.json` causes `UPGRADE_BUSY`. For manual lock recovery, first verify there is no active apply/rollback process on this filesystem (including another host), preserve owner records, then remove only the stale lock/gate. Keep `latest.json` and transaction data. Removing a lock is not conflict resolution.
+
+After a completed, reviewed operation and a separate backup, an operator may remove old transaction directories that are not selected by `latest.json`. Keep the latest transaction for rollback. Unpublished `.stage-*` directories or `.tmp` metadata from a crash before journal publication may be cleaned only after verifying no upgrade runs; published recovery records must remain intact. The CLI cleans its recorded per-file temporary names when resuming. Process-interruption recovery is supported; it does not promise protection against damaged disks/filesystems.
+
+## Target-version migration instructions
+
+A release/template may optionally provide `.lace/upgrade-instructions.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "templateVersion": "0.3.0",
+  "database": ["Back up the selected database before running its explicit migration command."],
+  "configuration": ["Review required lace.config.ts changes, then explicitly synchronize configuration."]
+}
+```
+
+The exact shape above is required: matching target version, no extra keys, at most 100 nonempty plain-text strings per list and 8,000 characters per string. Tab/newline are allowed; terminal control characters are rejected. Review/apply output includes this guidance (JSON review fields `instructions` and `guidance`; mutation fields `data.instructions` and `guidance`). Older templates without this file remain supported and report that version-specific instructions were not supplied. Applied records retain the guidance for recovery output. Text is displayed and never executed.
+
+After a reviewed upgrade, install reviewed dependencies as needed and follow target release guidance and explicit deployment steps, choosing the correct runtime:
+
+```sh
+pnpm exec lace db migrate --target node
+pnpm exec lace content sync --target node
+```
+
+Use `--target cloudflare-local` or explicitly `--target cloudflare-remote` with its required settings for Cloudflare. Migration/config synchronization order follows the reviewed release and deployment plan; upgrade does not run either command. Filesystem rollback **does not undo database migrations**, uploaded objects or content. Restore database/object backups separately if the release requires data rollback.

@@ -4,6 +4,10 @@ export { planUpgrade, presentUpgradePlan } from "./upgrade.js";
 export type { UpgradePlan, UpgradeDecision, UpgradeAction } from "./upgrade.js";
 export { UpgradeError, validateUpgradeManifest } from "./upgrade-input.js";
 export type { UpgradeManifest } from "./upgrade-input.js";
+export { applyUpgrade } from "./upgrade-apply.js";
+export { rollbackUpgrade } from "./upgrade-rollback.js";
+export type { ApplyOptions, UpgradeOutcome } from "./upgrade-apply.js";
+export type { UpgradeInstructions } from "./upgrade-instructions.js";
 
 export const EXIT = Object.freeze({
   OK: 0,
