@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { CliError, EXIT, loadEnvironment, parseArguments, presentResult, usage } from "./index.js";
-import { runCommand } from "./commands.js";
 import { runUpgradeCommand, upgradeUsage } from "./upgrade-command.js";
 import { UpgradeError } from "./upgrade-input.js";
 
@@ -23,6 +22,8 @@ async function main(): Promise<number> {
     }
     const options = parseArguments(argv);
     const environment = loadEnvironment(options.target, process.env);
+    // Runtime adapters are unnecessary for upgrade, help and invalid settings.
+    const { runCommand } = await import("./commands.js");
     const result = await runCommand(options, environment);
     const output = presentResult(
       { ok: result.ok, code: result.code, message: result.message, data: result.data },
