@@ -143,6 +143,7 @@ foundation
   -> public site styling hooks
   -> Cloudflare runtime
   -> generator + upgrade
+  -> local onboarding + alpha artifact verification
   -> cross-runtime/security/release gate
 ```
 
@@ -175,9 +176,10 @@ foundation
 | 22 | Cloudflare runtime | L | 22A, 22B, 22C |
 | 23 | CLI generator and operational commands | L | 23A, 23B, 23C |
 | 24 | Upgrade safety | M | 24A, 24B |
-| 25 | MVP release gate | L | 25A, 25B, 25C |
+| 25 | Local onboarding and alpha release preparation | L | 25A, 25B, 25C |
+| 26 | MVP release gate | L | 26A, 26B, 26C |
 
-The roadmap is therefore **65 recommended session units**. Small neighboring
+The roadmap is therefore **68 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
@@ -1391,12 +1393,108 @@ managed files without an explicit resolution.
 
 **Session boundary:** M; 24A and 24B.
 
-## Step 25 — MVP release gate
+## Step 25 — Local onboarding and alpha release preparation
+
+**Outcome:** a fresh consumer project can run the CMS and build its Astro site
+locally using the prepared alpha packages and runtime images, without source
+workspace links, manual dependency substitutions, or undocumented setup steps.
+The artifacts are verified before their first publication.
+
+This step prepares an experimental release such as `0.1.0-alpha.1` with the npm
+`next` tag; it does not declare the MVP stable. Actual registry publication, the
+owner's subsequent test repository, and a real Cloudflare deployment follow
+separately. The full release gate remains Step 26. Preserve existing Node/D1 and
+Worker checks; complete Cloudflare consumer onboarding after local user feedback
+and before the Cloudflare deployment acceptance in Step 26.
+
+### Session 25A — Minimal generated-project onboarding
+
+1. Provide one documented local sequence for generation, dependency installation,
+   environment setup, migrations, configuration sync, first-admin setup, login,
+   publication, and Astro build. Use the generated project's commands and
+   packaged runtime; no engine checkout is needed by the consumer.
+2. Make first-admin setup usable through a supported command or browser flow.
+   If the initial alpha retains the explicit setup API request, document that
+   request accurately and do not direct users to a nonexistent setup wizard.
+   Explain one-time setup/build tokens and supply no default credentials.
+3. Include site-owned renderers for the five built-in blocks in the generated
+   Astro starter, reusing the verified reference rendering behavior. Read a
+   consistent published build export, keep rich-text validation and stable
+   styling hooks, and document code-owned routes and custom-block renderers.
+4. Separate the builder's internal API URL from browser-facing media URLs in
+   generated Compose. Verify rendered images work outside Docker and that local
+   API/admin, editable Astro development, and full Compose build commands are
+   documented with their required environment settings.
+5. Document existing content-model synchronization limits, including blocked
+   structural changes to populated models. Keep content migration tooling,
+   additional CMS features, and a complete Cloudflare generator outside this
+   minimal onboarding unit.
+
+### Session 25B — Coherent alpha packages and runtime artifacts
+
+1. Confirm npm package-name ownership and container registry coordinates. Define
+   the publishable runtime dependency graph and keep internal/test-only packages
+   private. Choose explicit compatible prerelease package, generator/template,
+   and API/builder image versions from one reviewed source revision.
+2. Prepare publishable package manifests, exports, CLI executables, compiled
+   files, database migrations, and template assets. Packed dependencies must
+   resolve to release versions rather than `workspace:`, source paths, or the
+   local tarball substitutions used only by acceptance tests.
+3. Prepare versioned API and builder images, including the compatible compiled
+   admin bundle, and document supported container architectures. Generated
+   projects must select usable matching image coordinates without building the
+   engine themselves; do not introduce a separate editable admin application.
+4. Provide a repeatable build/pack/image preparation and publication procedure
+   with an artifact inventory, prerequisites, version checks, and the explicit
+   alpha channel. Keep registry credentials outside artifacts and generated
+   files. Preparing or dry-running this procedure does not itself publish.
+
+### Session 25C — Pre-publication consumer and security checks
+
+1. Extend the existing generated-project acceptance to install the exact packed
+   alpha dependency graph and use its matching built images in an isolated
+   consumer. Allow test-only artifact resolution without changing the delivered
+   template; reject source-workspace imports and undocumented manual patches.
+2. Verify generation, install, migration, sync, bootstrap/setup, login, draft
+   editing, media upload/reuse, publication, and Astro output. Check built-in
+   blocks and browser-reachable media URLs, then restart the local services and
+   confirm database and object persistence.
+3. Exercise the local Compose dispatcher/builder path through publication or an
+   explicit build request. Confirm a successful release is served and a failed
+   build preserves the previous release and can be retried. A remote VPS is not
+   required for these checks.
+4. Verify the essential authorization boundaries: editor/viewer cannot publish,
+   anonymous consumers cannot read drafts or admin resources, a later draft does
+   not alter published output, and build tokens only authorize published export.
+   Check that generated files, package archives, images, static output, and
+   diagnostics contain no setup passwords, tokens, or deployment secrets.
+5. Run the existing Node/D1 and Worker smoke/contract checks relevant to the
+   prepared artifacts, plus required root quality and strict OpenSpec checks.
+   Inspect package/image contents and record the exact tested versions and
+   results. Resolve blocking failures before alpha publication; document the
+   experimental limits and the remaining Step 26 checks explicitly.
+
+### Acceptance
+
+- The prepared alpha artifact set supports a fresh, independent local project
+  from generation through published HTML and media without the engine checkout.
+- The generator, runtime packages, admin bundle, and container images agree on
+  their release versions and documented installation procedure.
+- Draft isolation, essential authorization, secret exclusion, persistence, and
+  local build failure/retry checks pass against the consumer artifacts.
+- Existing Cloudflare behavior remains covered locally; a real account, full
+  Cloudflare onboarding, and stable-MVP release acceptance are not claimed.
+- Artifacts are ready for an explicit alpha publication and subsequent personal
+  testing; registry publication is not performed as a side effect of acceptance.
+
+**Session boundary:** L; use 25A, 25B, and 25C as separate OpenSpec changes.
+
+## Step 26 — MVP release gate
 
 **Outcome:** both supported deployments satisfy the product flow, security
 requirements, and operational recovery promises.
 
-### Session 25A — Cross-runtime and browser suite
+### Session 26A — Cross-runtime and browser suite
 
 1. Run repository contracts against Node SQLite and local D1.
 2. Run API contracts against Node and Worker composition roots using the same
@@ -1406,7 +1504,7 @@ requirements, and operational recovery promises.
 4. Build the Astro fixture from both runtime exports and compare canonical output
    data, routes, and media references.
 
-### Session 25B — Security and resilience pass
+### Session 26B — Security and resilience pass
 
 1. Review auth/session configuration, CSRF/origin behavior, permission checks,
    rate limits, upload parsing, URL/rich-text sanitization, token hashing, secret
@@ -1417,7 +1515,7 @@ requirements, and operational recovery promises.
 4. Audit dependency vulnerabilities and licenses; document accepted risks rather
    than silently suppressing them.
 
-### Session 25C — Operations and release documentation
+### Session 26C — Operations and release documentation
 
 1. Write local development, generated-project, VPS deployment, Cloudflare
    deployment, backup/restore, migration, key rotation, build recovery, and
@@ -1445,7 +1543,7 @@ From a clean machine/project template:
    successful static release throughout.
 9. Run an upgrade dry-run and prove user-owned site source is untouched.
 
-**Session boundary:** L; use 25A, 25B, and 25C. Do not combine the security pass
+**Session boundary:** L; use 26A, 26B, and 26C. Do not combine the security pass
 with the release-documentation session.
 
 ## 7. Recommended first delivery slices
@@ -1480,7 +1578,9 @@ best checkpoints for demonstrating useful progress are:
 13. **After step 22:** Cloudflare reaches behavioral parity.
 14. **After step 23:** generated projects and full operational CLI commands pass
     acceptance on the supported runtimes.
-15. **After step 25:** the MVP is release-ready.
+15. **After step 25:** verified alpha artifacts are ready for publication and
+    independent local consumer testing; stable-MVP acceptance remains open.
+16. **After step 26:** the MVP is release-ready.
 
 Steps 0–3 should be implemented in order. After step 5, SDK fixture work and
 some admin visual-foundation work may proceed in parallel, but persistence,
