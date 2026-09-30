@@ -1,0 +1,97 @@
+import { mkdtemp, mkdir, writeFile, symlink, rm, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  readUpgradeFile,
+  readUpgradeManifest,
+  readTargetTemplate,
+  upgradeHash,
+  validateUpgradeManifest,
+} from "../dist/upgrade-input.js";
+
+const roots = [];
+async function root() {
+  const path = await realpath(await mkdtemp(join(tmpdir(), "lace-upgrade-")));
+  roots.push(path);
+  return path;
+}
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+const manifest = (files = {}) => ({ schemaVersion: 1, templateVersion: "0.2.1", files });
+const managed = { owner: "managed", sha256: upgradeHash(Buffer.from("content")) };
+
+describe("upgrade inputs", () => {
+  it("accepts existing generator metadata and sorts paths", () => {
+    expect(
+      Object.keys(
+        validateUpgradeManifest(manifest({ "z.txt": managed, "a.txt": { owner: "user" } })).files,
+      ),
+    ).toEqual(["a.txt", "z.txt"]);
+  });
+  it.each([
+    null,
+    [],
+    { ...manifest(), schemaVersion: 2 },
+    { ...manifest(), templateVersion: "../secret" },
+    { ...manifest(), extra: true },
+    { ...manifest(), files: [] },
+    manifest({ "a.txt": { owner: "user", sha256: managed.sha256 } }),
+    manifest({ "a.txt": { ...managed, sha256: "A".repeat(64) } }),
+    manifest({ "a.txt": { owner: "other" } }),
+    manifest({ "site/file": managed }),
+    manifest({ "SITE/file": managed }),
+    manifest({ "LACE.CONFIG.TS": managed }),
+    manifest({ "lace.config.ts": managed }),
+    manifest({ a: managed, "a/b": managed }),
+  ])("rejects malformed/unknown manifest %j", (value) => {
+    expect(() => validateUpgradeManifest(value)).toThrow();
+  });
+  it.each([
+    "../outside",
+    "/absolute",
+    "a//b",
+    "a/./b",
+    "a/../b",
+    ".lace/manifest.json",
+    ".LACE/manifest.json",
+    "a\\b",
+    "C:/file",
+    "a\nfile",
+    "constructor/file",
+    "a/",
+  ])("rejects unsafe path %s", (path) => {
+    expect(() => validateUpgradeManifest(manifest({ [path]: managed }))).toThrow("unsafe");
+  });
+  it("refuses symlink leaf, ancestor and root without reading the target", async () => {
+    const path = await root();
+    const outside = await root();
+    await writeFile(join(outside, "file"), "content");
+    await symlink(join(outside, "file"), join(path, "leaf"));
+    await symlink(outside, join(path, "parent"));
+    await expect(readUpgradeFile(path, "leaf")).rejects.toThrow("symbolic");
+    await expect(readUpgradeFile(path, "parent/file")).rejects.toThrow("symbolic");
+    await expect(readUpgradeFile(join(path, "parent"), "file")).rejects.toThrow("symbolic");
+  });
+  it("refuses directories and missing or invalid manifests", async () => {
+    const path = await root();
+    await expect(readUpgradeFile(path, "missing")).resolves.toBeUndefined();
+    await expect(readUpgradeFile(path, ".")).rejects.toThrow("regular");
+    await expect(readUpgradeManifest(path)).rejects.toThrow("Missing");
+    await mkdir(join(path, ".lace"));
+    await writeFile(join(path, ".lace/manifest.json"), "{invalid");
+    await expect(readUpgradeManifest(path)).rejects.toThrow("JSON");
+  });
+  it("verifies target hashes and never reads user-owned bytes", async () => {
+    const path = await root();
+    const metadata = validateUpgradeManifest(
+      manifest({ file: managed, "site/source": { owner: "user" } }),
+    );
+    await expect(readTargetTemplate(path, metadata)).rejects.toThrow("pristine");
+    await writeFile(join(path, "file"), "modified");
+    await expect(readTargetTemplate(path, metadata)).rejects.toThrow("pristine");
+    await writeFile(join(path, "file"), "content");
+    expect([...(await readTargetTemplate(path, metadata))].map(([name]) => name)).toEqual(["file"]);
+  });
+});
