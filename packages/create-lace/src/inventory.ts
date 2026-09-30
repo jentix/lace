@@ -7,7 +7,7 @@ export interface TemplateFile {
   readonly interpolateName?: true;
 }
 
-export const TEMPLATE_VERSION = "0.2.1";
+export const TEMPLATE_VERSION = "0.3.0";
 
 /** Every bundled template must appear here with an explicit ownership decision. */
 export const TEMPLATE_FILES: readonly TemplateFile[] = [
@@ -25,6 +25,19 @@ export const TEMPLATE_FILES: readonly TemplateFile[] = [
   { path: "site/package.json", owner: "user", interpolateName: true },
   { path: "site/src/pages/index.astro", owner: "user" },
   { path: "site/src/pages/blog/[slug].astro", owner: "user" },
+  { path: "site/src/components/RichTextBlock.astro", owner: "user" },
+  { path: "site/src/components/BlockRenderer.astro", owner: "user" },
+  { path: "site/src/components/CtaBlock.astro", owner: "user" },
+  { path: "site/src/components/ImageBlock.astro", owner: "user" },
+  { path: "site/src/components/RichTextNodes.astro", owner: "user" },
+  { path: "site/src/components/RichText.astro", owner: "user" },
+  { path: "site/src/components/HeroBlock.astro", owner: "user" },
+  { path: "site/src/components/QuoteBlock.astro", owner: "user" },
+  { path: "site/src/components/RichTextMarks.astro", owner: "user" },
+  { path: "site/src/lib/rendering.ts", owner: "user" },
+  { path: "site/src/lib/rich-text.ts", owner: "user" },
+  { path: "site/src/layouts/BaseLayout.astro", owner: "user" },
+  { path: "site/src/lib/site-data.ts", owner: "user" },
   { path: "site/src/styles/global.css", owner: "user" },
   { path: "site/tsconfig.json", owner: "user" },
   { path: "wrangler.jsonc", owner: "managed", cloudflare: true, interpolateName: true },

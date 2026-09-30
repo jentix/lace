@@ -239,7 +239,9 @@ export async function runCli(
     const target = command === "init" ? cwd : resolve(cwd, positional[0]!);
     const result = await generateProject({ target, cloudflare: flags.includes("--cloudflare") });
     stdout.write(`Created Lace project at ${result.path}\n`);
-    stdout.write("Next: review lace.config.ts and site/, then set values in .env.\n");
+    stdout.write(
+      "Next: follow docs/lace-operations.md for environment, first-admin setup, publication and build.\n",
+    );
     if (result.warning !== undefined) stderr.write(`${result.warning}\n`);
     return 0;
   } catch (error) {

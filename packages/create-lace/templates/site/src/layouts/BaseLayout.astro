@@ -1,0 +1,23 @@
+---
+import type { SiteEntry } from "../lib/site-data.js";
+import "../styles/global.css";
+
+interface Props {
+  readonly entry: Pick<SiteEntry, "id" | "modelKey">;
+  readonly title: string;
+}
+
+const { entry, title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1" name="viewport" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main data-lace-model={entry.modelKey} data-lace-entry={entry.id}><slot /></main>
+  </body>
+</html>

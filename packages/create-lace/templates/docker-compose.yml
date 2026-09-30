@@ -113,8 +113,8 @@ services:
     environment:
       LACE_BUILDER_SECRET: ${LACE_BUILDER_SECRET:?set LACE_BUILDER_SECRET}
       LACE_API_BASE_URL: http://api:3000/
-      LACE_BUILD_TOKEN: ${LACE_BUILD_TOKEN:?set LACE_BUILD_TOKEN}
-      LACE_PUBLIC_BASE_URL: http://api:3000/
+      LACE_BUILD_TOKEN: ${LACE_BUILD_TOKEN:-}
+      LACE_PUBLIC_BASE_URL: ${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}
     volumes:
       - .:/source:ro
       - static-output:/output

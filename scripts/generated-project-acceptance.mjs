@@ -192,6 +192,8 @@ async function prepareCompose(project, parent) {
     LACE_API_IMAGE: apiImage,
     LACE_BUILDER_IMAGE: builderImage,
     LACE_PUBLIC_BASE_URL: `http://127.0.0.1:${apiPort}/`,
+    LACE_API_BASE_URL: `http://127.0.0.1:${apiPort}/`,
+    LACE_DATABASE_PATH: "./.lace/data/lace.sqlite",
     LACE_API_PORT: String(apiPort),
     LACE_HTTP_PORT: String(httpPort),
     LACE_AUTH_SECRET: randomBytes(32).toString("hex"),
@@ -216,7 +218,7 @@ async function prepareCompose(project, parent) {
       .map(([name, value]) => `${name}=${value}`)
       .join("\n")}\n`,
   );
-  await compose("image-minio", ["build", "--no-cache", "minio"], {
+  await compose("image-minio", ["build", "minio"], {
     timeoutMs: 30 * 60_000,
   });
   return { apiPort, httpPort, parent, project, values };
@@ -255,19 +257,14 @@ async function nodeJourney(context) {
     ["db", "migrate"],
     ["content", "sync"],
   ]) {
-    const output = await run(
-      `cli-${command.join("-")}`,
-      "pnpm",
-      ["exec", "lace", ...command, "--json"],
-      {
-        cwd: project,
-        env,
-      },
-    );
+    const output = await run(`cli-${command.join("-")}`, "pnpm", [command.join(":"), "--json"], {
+      cwd: project,
+      env,
+    });
     if (!JSON.parse(output).ok) throw new Error(`cli-${command.join("-")}: unsuccessful result`);
   }
   const bootstrap = JSON.parse(
-    await run("cli-bootstrap", "pnpm", ["exec", "lace", "auth", "bootstrap", "--json"], {
+    await run("cli-bootstrap", "pnpm", ["auth:bootstrap", "--json"], {
       cwd: project,
       env,
     }),
@@ -307,6 +304,41 @@ async function nodeJourney(context) {
   });
   const homeId = homeEntries.body?.items?.[0]?.id;
   if (typeof homeId !== "string") throw new Error("home: synchronized draft missing");
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5mcAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const form = new FormData();
+  form.append("file", new Blob([png], { type: "image/png" }), "onboarding.png");
+  const uploaded = await request(base, "/api/v1/admin/media", {
+    method: "POST",
+    headers: { cookie },
+    body: form,
+  });
+  const mediaId = uploaded.body?.id;
+  if (typeof mediaId !== "string") throw new Error("media: uploaded ID missing");
+  const richText = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "Published rich text" }] }],
+  };
+  const blocks = [
+    { type: "hero", data: { heading: "Published hero", image: mediaId } },
+    { type: "richText", data: { content: richText } },
+    {
+      type: "image",
+      data: { media: mediaId, alt: "Onboarding image", caption: "Published caption" },
+    },
+    { type: "quote", data: { quote: "Published quote", attribution: "Lace" } },
+    {
+      type: "cta",
+      data: { heading: "Published call to action", actionLabel: "Home", actionUrl: "/" },
+    },
+  ].map((block, index) => ({
+    ...block,
+    key: `01J${String(index).padStart(23, "0")}`,
+    schemaVersion: 1,
+    position: (index + 1) * 1024,
+  }));
   await request(base, `/api/v1/admin/entries/${homeId}/publish`, {
     method: "POST",
     headers: { cookie },
@@ -328,7 +360,7 @@ async function nodeJourney(context) {
     method: "PUT",
     headers: { cookie },
     json: {
-      blocks: [],
+      blocks,
       expectedRevision: 1,
       fields: { summary: "Acceptance summary" },
       slug: "acceptance",
@@ -342,10 +374,25 @@ async function nodeJourney(context) {
     headers: { cookie },
     json: { expectedRevision: revision },
   });
+  const createdToken = await request(base, "/api/v1/admin/api-tokens", {
+    method: "POST",
+    headers: { cookie },
+    json: { name: "acceptance-builder" },
+  });
+  const buildToken = createdToken.body?.token;
+  if (typeof buildToken !== "string") throw new Error("build: token missing");
+  secretValues.add(buildToken);
+  context.values.LACE_BUILD_TOKEN = buildToken;
   await run("astro-build", "pnpm", ["build"], {
     cwd: project,
-    env: { LACE_PUBLIC_BASE_URL: base, ASTRO_TELEMETRY_DISABLED: "1" },
+    env: {
+      LACE_API_BASE_URL: base,
+      LACE_PUBLIC_BASE_URL: base,
+      LACE_BUILD_TOKEN: buildToken,
+      ASTRO_TELEMETRY_DISABLED: "1",
+    },
   });
+  await run("astro-typecheck", "pnpm", ["typecheck"], { cwd: project });
   const html = await readFile(
     join(project, "site", "dist", "blog", "acceptance", "index.html"),
     "utf8",
@@ -353,22 +400,31 @@ async function nodeJourney(context) {
   if (!html.includes("Published acceptance title")) {
     throw new Error("astro-build: published content missing from generated site");
   }
+  await verifyRenderedMedia(html, base, png);
+  for (const type of ["hero", "richText", "image", "quote", "cta"]) {
+    if (!html.includes(`data-lace-block="${type}"`))
+      throw new Error(`astro-build: missing ${type}`);
+  }
+  if (html.includes(buildToken)) throw new Error("astro-build: exposed build token");
   console.info(
     "Generated Node journey: migrate, sync, bootstrap, login, edit, publish, Astro build passed",
   );
-  return { base, cookie };
+  return { base, cookie, png };
+}
+
+async function verifyRenderedMedia(html, base, bytes) {
+  const images = [...html.matchAll(/<img\b[^>]*src="([^"]+)"/gu)];
+  if (images.length < 2) throw new Error("media: generated hero/image links missing");
+  for (const [, url] of images) {
+    if (!url.startsWith(`${base}api/v1/public/media/`))
+      throw new Error("media: URL is not browser-facing");
+    const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    if (!response.ok || !Buffer.from(await response.arrayBuffer()).equals(bytes))
+      throw new Error("media: browser URL did not return uploaded image");
+  }
 }
 
 async function productionSmoke(context, session) {
-  const createdToken = await request(session.base, "/api/v1/admin/api-tokens", {
-    method: "POST",
-    headers: { cookie: session.cookie },
-    json: { name: "acceptance-builder" },
-  });
-  const buildToken = createdToken.body?.token;
-  if (typeof buildToken !== "string") throw new Error("compose-production: build token missing");
-  secretValues.add(buildToken);
-  context.values.LACE_BUILD_TOKEN = buildToken;
   await writeFile(
     join(context.project, ".env"),
     `${Object.entries(context.values)
@@ -393,16 +449,21 @@ async function productionSmoke(context, session) {
   let built = false;
   let lastBuildState = "no build recorded";
   for (let attempt = 0; attempt < 720; attempt += 1) {
+    let html;
     try {
       const response = await fetch(new URL("/blog/acceptance/", publicBase), {
         signal: AbortSignal.timeout(2000),
       });
-      if (response.ok && (await response.text()).includes("Published acceptance title")) {
-        built = true;
-        break;
+      if (response.ok) {
+        html = await response.text();
       }
     } catch {
       /* Wait for the fixed-command builder to publish its release. */
+    }
+    if (html?.includes("Published acceptance title")) {
+      await verifyRenderedMedia(html, session.base, session.png);
+      built = true;
+      break;
     }
     if (attempt % 30 === 0) {
       let failedState;
@@ -451,7 +512,9 @@ async function cloudflareSmoke(context, tarballs) {
     cwd: cloudProject,
     env: {
       ASTRO_TELEMETRY_DISABLED: "1",
+      LACE_API_BASE_URL: `http://127.0.0.1:${context.apiPort}/`,
       LACE_PUBLIC_BASE_URL: `http://127.0.0.1:${context.apiPort}/`,
+      LACE_BUILD_TOKEN: context.values.LACE_BUILD_TOKEN,
     },
   });
   const config = await readFile(join(cloudProject, "wrangler.jsonc"), "utf8");

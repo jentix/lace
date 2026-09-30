@@ -1,24 +1,11 @@
 ---
-import { createLaceClient } from "@lacecms/sdk";
-import "../styles/global.css";
+import BlockRenderer from "../components/BlockRenderer.astro";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getSiteData } from "../lib/site-data.js";
 
-const apiBaseUrl = import.meta.env.LACE_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000/";
-const client = createLaceClient({ baseUrl: apiBaseUrl });
-const page = await client.getPage("home");
-const title = page.entry.published?.title ?? "Home";
+const { home, mediaUrl } = await getSiteData();
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-  </head>
-  <body>
-    <main>
-      <p class="eyebrow">Lace site</p>
-      <h1>{title}</h1>
-      <p>Edit <code>site/src/pages/index.astro</code> to design your site.</p>
-    </main>
-  </body>
-</html>
+<BaseLayout entry={home} title={home.title}>
+  <BlockRenderer entry={home} mediaUrl={mediaUrl} />
+</BaseLayout>

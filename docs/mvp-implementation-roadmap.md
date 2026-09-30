@@ -1409,6 +1409,10 @@ and before the Cloudflare deployment acceptance in Step 26.
 
 ### Session 25A — Minimal generated-project onboarding
 
+Completed on 2026-09-30 with generator template `0.3.0`; see
+[`step-25a-verification.md`](./step-25a-verification.md) for the verified local
+consumer journey and remaining 25B/25C release boundaries.
+
 1. Provide one documented local sequence for generation, dependency installation,
    environment setup, migrations, configuration sync, first-admin setup, login,
    publication, and Astro build. Use the generated project's commands and
