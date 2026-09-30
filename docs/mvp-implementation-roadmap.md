@@ -1436,6 +1436,12 @@ consumer journey and remaining 25B/25C release boundaries.
 
 ### Session 25B — Coherent alpha packages and runtime artifacts
 
+Completed on 2026-09-30 with package/image version `0.1.0-alpha.1`, template
+`0.4.0` and local amd64/arm64 runtime verification. See
+[`step-25b-verification.md`](./step-25b-verification.md) and
+[`alpha-release.md`](./alpha-release.md) for evidence and owner-operated release
+preparation/publication. Registry publication and 25C acceptance remain separate.
+
 1. Confirm npm package-name ownership and container registry coordinates. Define
    the publishable runtime dependency graph and keep internal/test-only packages
    private. Choose explicit compatible prerelease package, generator/template,

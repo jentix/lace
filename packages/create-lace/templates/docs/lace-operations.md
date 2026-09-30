@@ -4,12 +4,12 @@ Run the generated project with packaged API/admin runtimes and an editable Astro
 
 ## Prerequisites and generation
 
-Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. The current development template uses `0.0.0` runtime package placeholders; public alpha versions and registry coordinates are prepared in Step 25B. Do not assume these placeholders are published. Repository acceptance uses locally packed artifacts; consumer releases must install matching published packages without workspace links or manual substitutions.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This template selects Lace `0.1.0-alpha.1`, ownership template `0.4.0`, and matching `ghcr.io/lacecms/api:0.1.0-alpha.1` / `ghcr.io/lacecms/builder:0.1.0-alpha.1` images. The npm alpha channel is `next`; use the exact version below for reproducible generation. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for publication rather than patch dependency references.
 
-With a published compatible generator, generate and install (replace the version placeholder):
+After the owner publishes the complete compatible alpha set, generate and install:
 
 ```bash
-pnpm create lace@<generator-version> my-site
+pnpm create lace@0.1.0-alpha.1 my-site
 cd my-site
 pnpm install
 cp .env.example .env

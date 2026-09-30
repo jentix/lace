@@ -1755,14 +1755,20 @@ The implementation plan uses these resolved defaults:
 - no-op cache by default and optional KV only after the uncached path is correct;
 - a first-party fixed-command VPS builder rather than an arbitrary command or
   external CI dependency;
-- provisional public package scope `@lacecms/*` and generator package
-  `create-lace`.
+- owner-confirmed public npm organization/scope `@lacecms/*` and generator
+  name `create-lace` (unscoped availability must be rechecked before publication);
+- GHCR organization `lacecms`, with `ghcr.io/lacecms/api` and
+  `ghcr.io/lacecms/builder`;
+- experimental package/image version `0.1.0-alpha.1`, npm channel `next`, and
+  independent ownership template version `0.4.0`; see
+  [`alpha-release.md`](./alpha-release.md) for preparation and owner publication.
 
 The following choices are release and operations work, not blockers for the
 first local vertical slices:
 
-- confirming ownership/availability of the provisional npm names;
-- selecting the final container registry and signing/provenance process;
+- rechecking availability/publishing rights for the unscoped generator name
+  immediately before first publication;
+- selecting the signing/provenance process for published artifacts;
 - defining hosted release channels and update metadata for `create-lace`;
 - selecting the reference Cloudflare static-hosting project and CI provider used
   by deployment documentation.

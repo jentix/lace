@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0-alpha.1",
+  "generatorVersion": "0.1.0-alpha.1",
+  "templateVersion": "0.4.0",
+  "channel": "next",
+  "sourceRepository": "https://github.com/jentix/lace",
+  "images": {
+    "api": "ghcr.io/lacecms/api",
+    "builder": "ghcr.io/lacecms/builder"
+  },
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "packages": [
+    "application",
+    "auth",
+    "cli",
+    "config",
+    "content",
+    "contracts",
+    "db",
+    "domain",
+    "platform-cloudflare",
+    "platform-node",
+    "sdk",
+    "server",
+    "create-lace"
+  ]
+}

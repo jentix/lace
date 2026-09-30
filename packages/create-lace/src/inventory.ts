@@ -7,7 +7,7 @@ export interface TemplateFile {
   readonly interpolateName?: true;
 }
 
-export const TEMPLATE_VERSION = "0.3.0";
+export const TEMPLATE_VERSION = "0.4.0";
 
 /** Every bundled template must appear here with an explicit ownership decision. */
 export const TEMPLATE_FILES: readonly TemplateFile[] = [

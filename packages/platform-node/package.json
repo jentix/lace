@@ -1,7 +1,12 @@
 {
   "name": "@lacecms/platform-node",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jentix/lace.git",
+    "directory": "packages/platform-node"
+  },
   "files": [
     "dist"
   ],
@@ -16,6 +21,10 @@
       "types": "./dist/test-actors.d.ts",
       "import": "./dist/test-actors.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -33,6 +42,8 @@
     "@lacecms/db": "workspace:*",
     "@lacecms/domain": "workspace:*",
     "@lacecms/server": "workspace:*",
+    "@types/better-sqlite3": "catalog:",
+    "@types/node": "catalog:",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
     "sharp": "catalog:",
@@ -40,11 +51,12 @@
   },
   "devDependencies": {
     "@lacecms/test-utils": "workspace:*",
-    "@types/better-sqlite3": "catalog:",
-    "@types/node": "catalog:",
     "better-auth": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.12.0 <25"
   }
 }
