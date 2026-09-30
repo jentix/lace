@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "acceptance:release": "node scripts/generated-project-acceptance.mjs release",
     "acceptance:generated": "node scripts/generated-project-acceptance.mjs all",
     "acceptance:start": "node scripts/dev-stack.mjs acceptance:start",
     "acceptance:stop": "node scripts/dev-stack.mjs acceptance:stop",

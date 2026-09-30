@@ -1461,6 +1461,12 @@ preparation/publication. Registry publication and 25C acceptance remain separate
 
 ### Session 25C — Pre-publication consumer and security checks
 
+Completed on 2026-09-30 against the exact clean `0.1.0-alpha.1` artifact set,
+template `0.4.0`, with the full local arm64 consumer/security/recovery journey
+and independent amd64/arm64 preparation smokes. See
+[`step-25c-verification.md`](./step-25c-verification.md) and its artifact receipt.
+Alpha publication and Step 26 remain separate explicit release boundaries.
+
 1. Extend the existing generated-project acceptance to install the exact packed
    alpha dependency graph and use its matching built images in an isolated
    consumer. Allow test-only artifact resolution without changing the delivered

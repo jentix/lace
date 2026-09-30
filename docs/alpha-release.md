@@ -50,7 +50,27 @@ pnpm release:prepare --preview --output .release-artifacts/full-preview
 
 `--preview` is always publication-ineligible, even if the working tree happens to be clean. Package-only and platform-subset runs are explicitly incomplete. Output destinations are exclusive: never merge runs or overwrite a prepared directory. On failure, `status.json` reports failure and no complete inventory is advertised. Correct the cause and retry in a new destination. Each snapshot is isolated, and local image tags include its fingerprint to avoid overlapping preparations replacing one another's tags. Do not publish a working-tree preview; repeat full preparation from the final reviewed commit.
 
-Run 25C against the exact clean prepared inventory before publication, keeping generated templates unchanged and using only test-local artifact resolution. Preserve the relevant existing Node/D1/Worker checks. Full authorization, persistence/restart, failed-build/retry and secret-exclusion journeys are 25C; a real Cloudflare account deployment and stable acceptance remain Step 26.
+Run 25C against the exact clean prepared inventory before publication:
+
+```sh
+pnpm acceptance:release --artifacts .release-artifacts/alpha-1
+pnpm --filter @lacecms/platform-node test
+pnpm --filter @lacecms/platform-cloudflare test
+pnpm --dir apps/api test
+pnpm --filter create-lace test
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm spec:validate
+```
+
+`acceptance:release` requires a complete publication-eligible inventory and verifies all archive checksums. It runs the extracted generator and installs exactly those tarballs in a temporary project, then loads the saved images and checks immutable IDs, platform and provenance labels. The full journey uses the host's corresponding Linux platform (arm64 or amd64). Both-platform preparation smoke results remain in the inventory; one consumer run does not claim two-platform end-to-end coverage.
+
+Only the temporary installation substitutes relative tarball references/overrides. The delivered templates and archives stay unchanged, and source-workspace resolution is rejected. The runner checks setup/login, all five blocks, media upload/reuse, external media URLs, roles, anonymous/build-token denial, later-draft isolation, a served Compose release, terminal failed build, explicit retry, and database/object/static persistence after service recreation. Failed-build testing temporarily supplies a random invalid build token and accelerates only the disposable outbox's retry availability; production retry count and policy stay unchanged. No renderer or deployment patch is needed.
+
+Shipping scans cover generated files, extracted packages, selected image configurations/exported filesystems, host/static-volume releases and captured tool/service diagnostics using the run's exact credential bytes and complete private-key blocks in text files. Intentional bootstrap output, local operator `.env`, installed dependencies and persistent auth database are excluded from shipping scans. Errors redact credential values. The final receipt reports source fingerprint, versions, package checksums and selected image IDs; retain it alongside the inventory. Temporary containers, volumes and consumer files are removed on success/failure; `LACE_ACCEPTANCE_KEEP_TEMP=1` is a diagnostic option that retains sensitive local operator state and must not be used for shared release evidence.
+
+See [step-25c-verification.md](./step-25c-verification.md) for the tested set and results. Node/D1/Worker checks remain local regression coverage. The first alpha remains experimental: complete browser-role/session coverage, a vulnerability/license audit, fault-injection/backup drills, full Cloudflare consumer onboarding and a real Cloudflare deployment remain Step 26 or subsequent work. No acceptance command publishes artifacts.
 
 ## Owner-operated npm publication
 

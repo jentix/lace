@@ -14,6 +14,14 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertSecretFree,
+  assertImageFileList,
+  checkImageIdentity,
+  loadConsumerArtifacts,
+  scanFile,
+  scanTree,
+} from "./consumer-security.mjs";
 
 const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const timeoutMs = 5 * 60_000;
@@ -21,6 +29,7 @@ const secretValues = new Set();
 const temporaryPaths = [];
 let composeProject;
 let composeCwd;
+const capturedDiagnostics = [];
 if (process.env.LACE_ACCEPTANCE_SECRET_SENTINEL) {
   secretValues.add(process.env.LACE_ACCEPTANCE_SECRET_SENTINEL);
 }
@@ -65,6 +74,7 @@ async function run(stage, command, args, options = {}) {
       `${stage}: ${command} failed (${outcome.error?.message ?? outcome.signal ?? outcome.code})\n${sanitize(errorOutput || output).slice(-4000)}`,
     );
   }
+  if (!options.intentionalReveal) capturedDiagnostics.push(output, errorOutput);
   return output;
 }
 
@@ -167,20 +177,25 @@ async function freePort() {
   return address.port;
 }
 
-async function prepareCompose(project, parent) {
+async function prepareCompose(project, parent, releaseArtifacts) {
   composeCwd = project;
   composeProject = `lace23c${randomUUID().replaceAll("-", "").slice(0, 10)}`;
   const apiPort = await freePort();
   const httpPort = await freePort();
-  const apiImage = process.env.LACE_ACCEPTANCE_API_IMAGE ?? `${composeProject}-api:local`;
+  const apiImage =
+    releaseArtifacts?.images.api.imageId ??
+    process.env.LACE_ACCEPTANCE_API_IMAGE ??
+    `${composeProject}-api:local`;
   const builderImage =
-    process.env.LACE_ACCEPTANCE_BUILDER_IMAGE ?? `${composeProject}-builder:local`;
-  if (!process.env.LACE_ACCEPTANCE_API_IMAGE) {
+    releaseArtifacts?.images.builder.imageId ??
+    process.env.LACE_ACCEPTANCE_BUILDER_IMAGE ??
+    `${composeProject}-builder:local`;
+  if (!releaseArtifacts && !process.env.LACE_ACCEPTANCE_API_IMAGE) {
     await run("image-api", "docker", ["build", "-f", "apps/api/Dockerfile", "-t", apiImage, "."], {
       timeoutMs: 20 * 60_000,
     });
   }
-  if (!process.env.LACE_ACCEPTANCE_BUILDER_IMAGE) {
+  if (!releaseArtifacts && !process.env.LACE_ACCEPTANCE_BUILDER_IMAGE) {
     await run(
       "image-builder",
       "docker",
@@ -221,7 +236,7 @@ async function prepareCompose(project, parent) {
   await compose("image-minio", ["build", "minio"], {
     timeoutMs: 30 * 60_000,
   });
-  return { apiPort, httpPort, parent, project, values };
+  return { apiPort, httpPort, parent, project, values, releaseArtifacts };
 }
 
 async function compose(stage, args, options = {}) {
@@ -267,6 +282,7 @@ async function nodeJourney(context) {
     await run("cli-bootstrap", "pnpm", ["auth:bootstrap", "--json"], {
       cwd: project,
       env,
+      intentionalReveal: true,
     }),
   );
   const token = bootstrap.data?.token;
@@ -409,7 +425,7 @@ async function nodeJourney(context) {
   console.info(
     "Generated Node journey: migrate, sync, bootstrap, login, edit, publish, Astro build passed",
   );
-  return { base, cookie, png };
+  return { base, cookie, png, entryId, mediaId, blocks, buildToken, token, password, email };
 }
 
 async function verifyRenderedMedia(html, base, bytes) {
@@ -673,9 +689,339 @@ async function installPackedConsumer(project, tarballs) {
   }
 }
 
+async function expectDenied(base, path, options = {}, statuses = [401, 403]) {
+  const response = await fetch(new URL(path, base), {
+    ...options,
+    headers: {
+      ...(options.json ? { "content-type": "application/json" } : {}),
+      ...options.headers,
+    },
+    ...(options.json ? { body: JSON.stringify(options.json) } : {}),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!statuses.includes(response.status))
+    throw new Error(`Authorization boundary failed: ${path}: ${response.status}`);
+}
+
+async function securityJourney(context, session) {
+  const { base, cookie, entryId, buildToken, token, email, password } = session;
+  const exportPath = "/api/v1/public/build-export";
+  const auth = { authorization: `Bearer ${buildToken}` };
+  const before = (await request(base, exportPath, { headers: auth })).body;
+  for (const headers of [{}, auth]) {
+    for (const path of [
+      "/api/v1/admin/content-models",
+      `/api/v1/admin/entries/${entryId}`,
+      "/api/v1/admin/users",
+      "/api/v1/admin/site-builds",
+    ])
+      await expectDenied(base, path, { headers });
+    await expectDenied(base, `/api/v1/admin/entries/${entryId}/publish`, {
+      method: "POST",
+      headers,
+      json: { expectedRevision: 2 },
+    });
+  }
+  await expectDenied(base, exportPath);
+  await expectDenied(base, exportPath, { headers: { cookie } });
+  await expectDenied(
+    base,
+    "/api/v1/setup/admin",
+    {
+      method: "POST",
+      json: { token, email, password },
+    },
+    [404],
+  );
+  for (const role of ["editor", "viewer"]) {
+    const roleEmail = `${role}@lace.test`;
+    const rolePassword = randomBytes(24).toString("hex");
+    secretValues.add(rolePassword);
+    await request(base, "/api/v1/admin/users", {
+      method: "POST",
+      headers: { cookie },
+      json: { email: roleEmail, password: rolePassword, role },
+    });
+    const login = await request(base, "/api/auth/sign-in/email", {
+      method: "POST",
+      headers: { origin: base.slice(0, -1) },
+      json: { email: roleEmail, password: rolePassword },
+    });
+    const roleCookie = login.response.headers.getSetCookie()[0]?.split(";")[0];
+    if (!roleCookie) throw new Error(`${role} login: session missing`);
+    secretValues.add(roleCookie);
+    await expectDenied(
+      base,
+      `/api/v1/admin/entries/${entryId}/publish`,
+      {
+        method: "POST",
+        headers: { cookie: roleCookie },
+        json: { expectedRevision: 2 },
+      },
+      [403],
+    );
+    await expectDenied(base, "/api/v1/admin/users", { headers: { cookie: roleCookie } }, [403]);
+    await expectDenied(
+      base,
+      "/api/v1/admin/builds",
+      {
+        method: "POST",
+        headers: { cookie: roleCookie },
+        json: {},
+      },
+      [403],
+    );
+  }
+  const listing = await request(base, "/api/v1/admin/api-tokens", { headers: { cookie } });
+  assertSecretFree(JSON.stringify(listing.body), [buildToken], "token listing");
+  await request(base, `/api/v1/admin/entries/${entryId}/draft`, {
+    method: "PUT",
+    headers: { cookie },
+    json: {
+      expectedRevision: 2,
+      blocks: session.blocks.map((block) =>
+        block.type === "hero"
+          ? { ...block, data: { ...block.data, heading: "Unpublished draft hero" } }
+          : block,
+      ),
+      fields: { summary: "Private draft" },
+      slug: "acceptance",
+      title: "Unpublished consumer draft",
+    },
+  });
+  const after = (await request(base, exportPath, { headers: auth })).body;
+  if (JSON.stringify(before) !== JSON.stringify(after))
+    throw new Error("Denied publication or later draft changed published export");
+  await run("draft-isolation-build", "pnpm", ["build"], {
+    cwd: context.project,
+    env: {
+      LACE_API_BASE_URL: base,
+      LACE_PUBLIC_BASE_URL: base,
+      LACE_BUILD_TOKEN: buildToken,
+      ASTRO_TELEMETRY_DISABLED: "1",
+    },
+  });
+  const html = await readFile(
+    join(context.project, "site/dist/blog/acceptance/index.html"),
+    "utf8",
+  );
+  if (!html.includes("Published acceptance title") || html.includes("Unpublished consumer draft"))
+    throw new Error("Unpublished draft altered generated HTML");
+  console.info(
+    "Roles, anonymous access, scoped build credentials and later-draft isolation passed",
+  );
+}
+
+async function writeEnvironment(context) {
+  await writeFile(
+    join(context.project, ".env"),
+    `${Object.entries(context.values)
+      .map(([name, value]) => `${name}=${value}`)
+      .join("\n")}\n`,
+  );
+}
+
+async function waitBuild(session, predicate, accelerate = false) {
+  const deadline = Date.now() + 12 * 60_000;
+  while (Date.now() < deadline) {
+    if (accelerate) {
+      // Only this disposable project's retry schedule changes; content and attempt policy do not.
+      await compose("advance-test-retry", [
+        "exec",
+        "-T",
+        "api",
+        "node",
+        "--input-type=module",
+        "-e",
+        "const {openNodeDatabase}=await import('@lacecms/platform-node');const db=openNodeDatabase('/data/lace.sqlite');db.connection.prepare(\"update outbox_events set available_at=0 where type='site.build.requested' and processed_at is null and attempts > 0\").run();db.connection.close();",
+      ]);
+    }
+    const history = await request(session.base, "/api/v1/admin/site-builds", {
+      headers: { cookie: session.cookie },
+    });
+    const match = history.body.items.find(predicate);
+    if (match) return match;
+    await new Promise((resolve) => setTimeout(resolve, accelerate ? 2000 : 1000));
+  }
+  throw new Error("Timed out waiting for durable consumer build state");
+}
+
+async function recoveryJourney(context, session) {
+  const first = await waitBuild(session, (build) => build.status === "succeeded");
+  const url = `http://127.0.0.1:${context.httpPort}/blog/acceptance/`;
+  const previous = await (await fetch(url)).text();
+  await compose("pause-dispatcher", ["stop", "dispatcher"]);
+  const invalidToken = randomBytes(32).toString("hex");
+  secretValues.add(invalidToken);
+  context.values.LACE_BUILD_TOKEN = invalidToken;
+  await writeEnvironment(context);
+  await compose("invalid-builder-credential", [
+    "up",
+    "--detach",
+    "--wait",
+    "--force-recreate",
+    "builder",
+  ]);
+  // Publish the already verified later draft as a new state for the failed/retried release.
+  await request(session.base, `/api/v1/admin/entries/${session.entryId}/publish`, {
+    method: "POST",
+    headers: { cookie: session.cookie },
+    json: { expectedRevision: 3 },
+  });
+  await compose("resume-dispatcher", ["start", "dispatcher"]);
+  const failed = await waitBuild(
+    session,
+    (build) => build.id !== first.id && build.status === "failed",
+    true,
+  );
+  const oldResponse = await fetch(url);
+  if (!oldResponse.ok || (await oldResponse.text()) !== previous)
+    throw new Error("Failed build replaced previous served release");
+  context.values.LACE_BUILD_TOKEN = session.buildToken;
+  await writeEnvironment(context);
+  await compose("restore-builder-credential", [
+    "up",
+    "--detach",
+    "--wait",
+    "--force-recreate",
+    "builder",
+  ]);
+  await request(session.base, `/api/v1/admin/builds/${failed.id}/retry`, {
+    method: "POST",
+    headers: { cookie: session.cookie },
+    json: {},
+  });
+  const retried = await waitBuild(
+    session,
+    (build) => build.id !== first.id && build.status === "succeeded",
+  );
+  const recovered = await fetch(url);
+  if (!recovered.ok || !(await recovered.text()).includes("Unpublished consumer draft"))
+    throw new Error("Retried release is not served");
+  context.buildEvidence = {
+    first: first.id,
+    failed: failed.id,
+    retried: retried.id,
+    firstVersion: first.targetVersion,
+    recoveredVersion: retried.targetVersion,
+  };
+  console.info(
+    "Compose successful release, terminal failure, old-release preservation and explicit retry passed",
+  );
+}
+
+async function persistenceJourney(context, session) {
+  const headers = { cookie: session.cookie };
+  const draftPath = `/api/v1/admin/entries/${session.entryId}`;
+  const draft = (await request(session.base, draftPath, { headers })).body;
+  const exported = (
+    await request(session.base, "/api/v1/public/build-export", {
+      headers: { authorization: `Bearer ${session.buildToken}` },
+    })
+  ).body;
+  await compose("persist-stop", ["down", "--remove-orphans"]);
+  await compose("persist-recreate", ["up", "--detach", "--wait"], { timeoutMs: 10 * 60_000 });
+  if (
+    JSON.stringify(draft) !==
+    JSON.stringify((await request(session.base, draftPath, { headers })).body)
+  )
+    throw new Error("Database draft did not persist across recreation");
+  const next = (
+    await request(session.base, "/api/v1/public/build-export", {
+      headers: { authorization: `Bearer ${session.buildToken}` },
+    })
+  ).body;
+  if (JSON.stringify(next) !== JSON.stringify(exported))
+    throw new Error("Published database state did not persist");
+  const media = await fetch(new URL(`/api/v1/public/media/${session.mediaId}`, session.base));
+  if (!media.ok || !Buffer.from(await media.arrayBuffer()).equals(session.png))
+    throw new Error("Uploaded object bytes did not persist");
+  const served = await fetch(`http://127.0.0.1:${context.httpPort}/blog/acceptance/`);
+  if (!served.ok || !(await served.text()).includes("Unpublished consumer draft"))
+    throw new Error("Static release did not persist");
+  console.info(
+    "Recreated services retained drafts, published export, object bytes and static release",
+  );
+}
+
+async function inspectShipping(context) {
+  const { project, parent, releaseArtifacts, shipping } = context;
+  const substituted = new Set(["package.json", "site/package.json", "pnpm-workspace.yaml"]);
+  for (const file of shipping.tree) {
+    await scanFile(join(project, file), secretValues, `generated ${file}`);
+    if (!substituted.has(file)) {
+      const bytes = await readFile(join(project, file));
+      if (file === ".lace/manifest.json") {
+        if (bytes.toString("utf8") !== shipping.manifest)
+          throw new Error("Consumer installation changed ownership metadata");
+      } else if (createHash("sha256").update(bytes).digest("hex") !== shipping.digests[file]) {
+        throw new Error(`Undocumented consumer patch: ${file}`);
+      }
+    }
+  }
+  for (const root of releaseArtifacts.extracted)
+    await scanTree(root, secretValues, "packed package");
+  await scanTree(join(project, "site/dist"), secretValues, "static output");
+  const output = join(parent, "served-output");
+  await mkdir(output);
+  await compose("inspect-served-static", ["cp", "builder:/output/.", output]);
+  await scanTree(output, secretValues, "served static releases");
+  for (const record of Object.values(releaseArtifacts.images)) {
+    const metadata = await run("scan-image-config", "docker", ["image", "inspect", record.imageId]);
+    assertSecretFree(metadata, secretValues, `${record.kind} image configuration`);
+    await run("scan-image-private-keys", "docker", [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "0:0",
+      "--entrypoint",
+      "node",
+      record.imageId,
+      "--input-type=module",
+      "-e",
+      String.raw`
+      import { readdir, readFile } from 'node:fs/promises';
+      async function inspect(path) {
+        for (const entry of await readdir(path, {withFileTypes:true})) {
+          const child = path + '/' + entry.name;
+          if (entry.isDirectory()) await inspect(child);
+          else if (entry.isFile()) {
+            const bytes = await readFile(child);
+            if (['.npmrc','npmrc'].includes(entry.name) && /(?:_auth(?:Token)?|_password|username|password)\s*=/iu.test(bytes.toString('utf8')))
+              throw new Error('Registry authentication directive found in image');
+            if (!bytes.includes(0) && /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]{64,}-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(bytes.toString('utf8')))
+              throw new Error('Private key material found in image text file');
+          }
+        }
+      }
+      for (const root of ['/opt','/usr','/etc','/root']) await inspect(root);
+    `,
+    ]);
+    const id = (await run("image-scan-create", "docker", ["create", record.imageId])).trim();
+    try {
+      const archive = join(parent, `${record.kind}-filesystem.tar`);
+      await run("image-scan-export", "docker", ["export", "--output", archive, id]);
+      await scanFile(archive, secretValues, `${record.kind} image filesystem`);
+      const listing = await run("image-scan-files", "tar", ["-tf", archive]);
+      assertImageFileList(listing, record.kind);
+    } finally {
+      await run("image-scan-remove", "docker", ["rm", id]);
+    }
+  }
+  const logs = await compose("scan-service-diagnostics", ["logs", "--no-color"]);
+  assertSecretFree(logs, secretValues, "service diagnostics");
+  for (const output of capturedDiagnostics)
+    assertSecretFree(output, secretValues, "captured diagnostics");
+  console.info(
+    "Generated files, packages, images, static releases and diagnostics passed secret exclusion",
+  );
+}
+
 async function main() {
   const phase = process.argv[2] ?? "all";
-  if (!["packages", "node", "all", "snapshots", "self-test"].includes(phase)) {
+  if (!["release", "packages", "node", "all", "snapshots", "self-test"].includes(phase)) {
     throw new Error(`Unknown acceptance phase: ${phase}`);
   }
   const parent = await mkdtemp(join(tmpdir(), "lace-generated-acceptance-"));
@@ -690,6 +1036,63 @@ async function main() {
   if (phase === "snapshots") {
     await run("build-generator", "pnpm", ["--filter", "create-lace", "build"]);
     await verifySnapshots(parent, process.argv.includes("--update"));
+    return;
+  }
+  if (phase === "release") {
+    const args = process.argv.slice(3);
+    if (args.length !== 2 || args[0] !== "--artifacts")
+      throw new Error("release acceptance requires --artifacts <prepared-directory>");
+    const platform = `linux/${process.arch === "arm64" ? "arm64" : "amd64"}`;
+    const artifacts = await loadConsumerArtifacts(
+      resolve(args[1]),
+      join(parent, "extracted"),
+      platform,
+    );
+    for (const record of Object.values(artifacts.images)) {
+      await run("load-release-image", "docker", [
+        "image",
+        "load",
+        "--input",
+        join(resolve(args[1]), record.file),
+      ]);
+      const metadata = JSON.parse(
+        await run("inspect-release-image", "docker", ["image", "inspect", record.imageId]),
+      )[0];
+      checkImageIdentity(metadata, record, artifacts.inventory);
+    }
+    const project = join(parent, "consumer", "acceptance-site");
+    await mkdir(dirname(project), { recursive: true });
+    await run("packed-generate", "node", [artifacts.generator, "create", project]);
+    const shipping = await captureSnapshot(project);
+    if (
+      JSON.parse(shipping.manifest).templateVersion !== artifacts.inventory.release.templateVersion
+    )
+      throw new Error("Consumer template version mismatch");
+    await installPackedConsumer(project, artifacts.tarballs);
+    const context = await prepareCompose(project, parent, artifacts);
+    context.shipping = shipping;
+    const session = await nodeJourney(context);
+    await securityJourney(context, session);
+    await productionSmoke(context, session);
+    await recoveryJourney(context, session);
+    await persistenceJourney(context, session);
+    await inspectShipping(context);
+    console.info(
+      JSON.stringify(
+        {
+          result: "passed",
+          version: artifacts.inventory.release.version,
+          templateVersion: artifacts.inventory.release.templateVersion,
+          platform,
+          source: artifacts.inventory.source,
+          builds: context.buildEvidence,
+          packages: artifacts.inventory.packages,
+          images: Object.values(artifacts.images),
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
   const tarballDirectory = join(parent, "tarballs");
