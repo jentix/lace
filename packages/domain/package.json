@@ -1,7 +1,12 @@
 {
   "name": "@lacecms/domain",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jentix/lace.git",
+    "directory": "packages/domain"
+  },
   "files": [
     "dist"
   ],
@@ -12,6 +17,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -27,5 +36,8 @@
     "oxlint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.12.0 <25"
   }
 }

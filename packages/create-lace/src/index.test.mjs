@@ -72,6 +72,27 @@ test("optional Cloudflare files are managed only when selected", async () => {
   expect(await listFiles(project.path)).toContain(".github/workflows/cloudflare.yml");
 });
 
+test("alpha generation selects exact compatible packages and overridable images", async () => {
+  const parent = await root();
+  const project = await generateProject({ target: join(parent, "alpha-site") });
+  for (const file of ["package.json", "site/package.json"]) {
+    const manifest = JSON.parse(await readFile(join(project.path, file), "utf8"));
+    for (const [name, version] of Object.entries(manifest.dependencies)) {
+      if (name.startsWith("@lacecms/")) expect(version).toBe("0.1.0-alpha.1");
+    }
+  }
+  const environment = await readFile(join(project.path, ".env.example"), "utf8");
+  expect(environment).toContain("LACE_API_IMAGE=ghcr.io/lacecms/api:0.1.0-alpha.1");
+  expect(environment).toContain("LACE_BUILDER_IMAGE=ghcr.io/lacecms/builder:0.1.0-alpha.1");
+  expect(TEMPLATE_VERSION).toBe("0.4.0");
+  const compose = await readFile(join(project.path, "docker-compose.yml"), "utf8");
+  expect(compose).toContain("image: ${LACE_API_IMAGE:");
+  expect(compose).toContain("image: ${LACE_BUILDER_IMAGE:");
+  expect(await readFile(join(project.path, "docs/lace-operations.md"), "utf8")).toContain(
+    "pnpm create lace@0.1.0-alpha.1",
+  );
+});
+
 test("arbitrary directory names produce safe package names", async () => {
   const parent = await root();
   const project = await generateProject({ target: join(parent, "2026 My Site") });

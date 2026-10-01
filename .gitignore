@@ -11,3 +11,4 @@ coverage/
 dev-data/
 .lace-acceptance/
 **/test-results/
+.release-artifacts/

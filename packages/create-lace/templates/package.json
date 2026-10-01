@@ -10,14 +10,14 @@
     "prod:stop": "docker compose down",
     "build": "pnpm --dir site build",
     "typecheck": "pnpm --dir site typecheck",
-    "db:migrate": "lace db migrate",
-    "content:sync": "lace content sync",
-    "auth:bootstrap": "lace auth bootstrap"
+    "db:migrate": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js db migrate",
+    "content:sync": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js content sync",
+    "auth:bootstrap": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js auth bootstrap"
   },
   "dependencies": {
-    "@lacecms/cli": "0.0.0",
-    "@lacecms/config": "0.0.0",
-    "@lacecms/content": "0.0.0"
+    "@lacecms/cli": "0.1.0-alpha.1",
+    "@lacecms/config": "0.1.0-alpha.1",
+    "@lacecms/content": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "wrangler": "4.129.0"

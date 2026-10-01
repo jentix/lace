@@ -285,7 +285,7 @@ const url = String(work.fields.projectUrl ?? "");
 
 ### Если нужны контентные блоки
 
-Генерируемый starter сейчас не содержит block renderer. Готовый пример есть в engine repository: `apps/site/src/components/`, `apps/site/src/lib/rendering.ts`, `rich-text.ts`, `site-data.ts` и `layouts/BaseLayout.astro`. Можно перенести render-компоненты и связанные helpers в свой `site/`, адаптировав слой загрузки к `home`, `contacts`, `works`. Не переноси fixture-loader без изменения: по умолчанию reference site использует fixture, а его live-loader знает конкретные модели home/about/posts/notes.
+Начиная с шаблона `0.3.0` (25A), generated starter содержит пользовательские рендереры всех пяти встроенных блоков в `site/src/components/`, safe rich-text helpers, styling hooks и live-loader `site/src/lib/site-data.ts`. Главная и блог читают один published export на сборку. Для своих contacts/works адаптируй слой загрузки и добавь Astro routes; копировать рендереры из engine больше не нужно.
 
 Компонент `BlockRenderer` получает объект с `id`, `modelKey`, `path`, `title`, `blocks` и `mediaUrl`. На странице преобразуй DTO в эту форму. Tiptap document нужно выводить через проверенный rich-text renderer, а не через `set:html` с необработанным JSON. Custom block требует твоего Astro-renderer; админка даст generic-форму по metadata, но не напишет шаблон отображения.
 
@@ -317,12 +317,12 @@ LACE_MINIO_ROOT_SECRET=REPLACE_WITH_YOUR_RANDOM_SECRET
 LACE_MINIO_BUCKET=lace-media
 LACE_MINIO_REGION=us-east-1
 LACE_BUILDER_SECRET=REPLACE_WITH_YOUR_RANDOM_SECRET
-LACE_BUILD_TOKEN=temporary-until-admin-setup
+LACE_BUILD_TOKEN=
 LACE_API_PORT=3000
 LACE_HTTP_PORT=8080
 ```
 
-Для auth/builder secrets сгенерируй разные длинные случайные значения, например `openssl rand -hex 32`; builder secret должен быть минимум 32 символа. Заглушка build token позволяет пройти Compose environment validation, но настоящие сборки требуют токена из Settings.
+Для auth/builder secrets сгенерируй разные длинные случайные значения, например `openssl rand -hex 32`; builder secret должен быть минимум 32 символа. До завершения setup оставь build token пустым: API subset стартует без него. Полный builder требует настоящего токена из Settings.
 
 ```sh
 set -a
@@ -362,7 +362,7 @@ rm setup-admin.json
 3. В коллекции «Работы» создай несколько записей: title, slug, summary, description, order, projectUrl.
 4. Загрузи картинки в Media и выбери cover каждой работы.
 5. Сохрани и **опубликуй** страницы и работы от имени admin. Editor сохраняет draft, но не публикует.
-6. В Settings создай build token, скопируй единожды показанное значение в `.env` вместо заглушки.
+6. В Settings создай build token, скопируй единожды показанное значение в `.env`.
 
 Перед локальной сборкой заново экспортируй обновлённый `.env`:
 
@@ -389,7 +389,7 @@ LACE_API_BASE_URL=https://portfolio.example.com/
 LACE_MEDIA_BASE_URL=https://portfolio.example.com/
 ```
 
-**Для media есть важная правка текущего шаблона:** в `docker-compose.yml` у `builder.environment` значение `LACE_PUBLIC_BASE_URL` сейчас равно `http://api:3000/`. Замени его на `${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}`. `LACE_API_BASE_URL: http://api:3000/` оставь внутренним адресом сборки. Иначе renderer может записать недоступный посетителю Docker hostname в `img src`. `.env` не копируется builder в scratch, поэтому его browser-facing origin нужно передавать именно через environment Compose.
+В шаблоне `0.3.0` Compose уже передаёт builder browser-facing `LACE_PUBLIC_BASE_URL` из `.env`; `LACE_API_BASE_URL: http://api:3000/` остаётся внутренним адресом export. Ручная правка нового шаблона не нужна. `.env` не копируется builder в scratch; media origin передаётся через Compose environment. Для старого проекта проверь это разделение перед сборкой.
 
 Стандартный web-конфиг проксирует `/api`, `/admin`, `/health`, а статику читает из `/output/current`. Builder и MinIO не нужно публиковать наружу. Снаружи достаточно HTTPS reverse proxy; API-порт 3000 ограничь loopback или firewall. TLS-конфигурацию, DNS и сертификаты генератор пока не создаёт.
 
@@ -529,7 +529,7 @@ pnpm exec wrangler pages deploy site/dist --project-name portfolio-site
 - GitHub secret `CLOUDFLARE_API_TOKEN`;
 - **добавления build environment** к `pnpm build`: CMS base URLs и секрет `LACE_BUILD_TOKEN`.
 
-В текущем workflow этих build inputs нет. Одной загрузки Pages deployment token недостаточно, а manual `workflow_dispatch` сам по себе не запускается при Publish в CMS.
+Шаблон `0.3.0` передаёт `LACE_API_BASE_URL` и `LACE_PUBLIC_BASE_URL` из GitHub vars, `LACE_BUILD_TOKEN` — из secrets. Настрой эти значения: одного Pages deployment token недостаточно. Manual `workflow_dispatch` сам по себе не запускается при Publish в CMS.
 
 ### Автоматизация через Pages Git integration + Deploy Hook
 
@@ -562,12 +562,11 @@ HTML статический, но картинки в данном пример�
 
 1. **Release artifacts:** опубликованных engine packages, согласованных версий API/builder images и распространяемого admin bundle. Tarballs и собственные images обходят это для разработчика, но это ещё не установка «из коробки».
 2. **Полного Cloudflare consumer template:** generator даёт Pages, а Worker entry/config, admin assets, local Worker command, ресурсы и orchestration пока приходится собирать вручную.
-3. **Полного стартового сайта:** generated routes не рендерят blocks, не создают контакты/работы автоматически. Reference renderer существует, но не включён в starter.
-4. **Setup UI:** API bootstrap реализован, browser wizard первого admin отсутствует; generated operations guide ошибочно отправляет завершать setup в admin.
-5. **Связанного Pages build workflow:** generated workflow ручной и не передаёт CMS build environment; автоматический rebuild требует дополнить deployment wiring.
-6. **Правильного browser-facing media origin в builder template:** current `http://api:3000/` нужно заменить для реального сайта с media rendering.
-7. **Миграций заполненных моделей:** sync не преобразует существующие snapshots при добавлении/изменении полей или блоков. Повышение version само по себе этого не решает.
-8. **Подготовки альфа-релиза, шага 25, и финального release gate, шага 26:** сначала нужно упростить локальную установку и проверить release-артефакты; затем завершить общую проверку обеих сред и browser journeys, security/resilience pass, полный operations runbook и backup/restore drill. Уже существующие локальные tests/acceptance не равны завершённой release-проверке на реальном аккаунте/VPS.
+3. **Routes для личного сайта:** пять встроенных блоков уже рендерятся в generated Home/Posts; contacts/works остаются пользовательским кодом.
+4. **Setup UI:** browser wizard пока отсутствует. Generated operations guide теперь документирует рабочий setup API request, login и токены.
+5. **Автоматического Pages rebuild:** build environment уже включён в manual workflow; автоматический запуск по Publish требует отдельного deployment wiring.
+6. **Миграций заполненных моделей:** sync не преобразует существующие snapshots при структурных изменениях. Повышение version само по себе этого не решает.
+7. **Подготовки и проверки альфа-артефактов (25B/25C), финального release gate (26):** 25A закрывает минимальный локальный onboarding, рендеринг и media origins. Публикация пакетов, реальный Cloudflare/VPS, полная security/resilience и backup/restore проверка остаются отдельными этапами.
 
 Контактная форма, отправка email, визуальный draft preview, локализация и scheduled publication не следуют из этого сценария. Для contacts страница с email/ссылками уже достаточна; submit-форме потребуется отдельный backend/service.
 

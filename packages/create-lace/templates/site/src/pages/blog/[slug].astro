@@ -1,26 +1,17 @@
 ---
-import { createLaceClient } from "@lacecms/sdk";
-import "../../styles/global.css";
+import BlockRenderer from "../../components/BlockRenderer.astro";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getSiteData } from "../../lib/site-data.js";
 
 export async function getStaticPaths() {
-  const apiBaseUrl = import.meta.env.LACE_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000/";
-  const client = createLaceClient({ baseUrl: apiBaseUrl });
-  const posts = await client.getAllCollection("posts");
-  return posts.flatMap((post) => {
-    const slug = post.entry.published?.slug;
-    return slug ? [{ params: { slug }, props: { post } }] : [];
-  });
+  const { posts } = await getSiteData();
+  return posts.map((entry) => ({ params: { slug: entry.slug }, props: { entry } }));
 }
 
-const { post } = Astro.props;
-const title = post.entry.published?.title ?? "Post";
+const { entry } = Astro.props;
+const { mediaUrl } = await getSiteData();
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-  </head>
-  <body><main><a href="/">Home</a><h1>{title}</h1></main></body>
-</html>
+<BaseLayout entry={entry} title={entry.title}>
+  <BlockRenderer entry={entry} mediaUrl={mediaUrl} />
+</BaseLayout>

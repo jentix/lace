@@ -1,22 +1,120 @@
 # Operating this Lace project
 
-Edit `lace.config.ts` and `site/` here. The API, admin application, and builder run from versioned images or packages; their source is not part of this project.
+Run the generated project with packaged API/admin runtimes and an editable Astro site. You own `lace.config.ts` and `site/`; the engine checkout is unnecessary.
 
-## Node development
+## Prerequisites and generation
 
-1. Run `pnpm install` with released `@lacecms/*` packages. Have Docker Compose, network access to the pinned MinIO source and Go modules, and enough disk space to build its image once. Copy `.env.example` to `.env`, choose your own long secrets, and set compatible `LACE_API_IMAGE` and `LACE_BUILDER_IMAGE` tags. Before the first administrator exists, set `LACE_BUILD_TOKEN` to a temporary nonempty value; replace it with an actual build token after setup.
-2. Export the local operator settings with `set -a; . ./.env; set +a`. Run `pnpm db:migrate`, `pnpm content:sync`, and `pnpm auth:bootstrap` from this directory. Capture the one-time setup token privately.
-3. Run `pnpm dev:api`. The API and MinIO start in Docker and use this project's `lace.config.ts` and `.lace/data/lace.sqlite`. Complete first-admin setup through `/admin/` on the API origin.
-4. In another terminal, run `pnpm dev` for the editable Astro site. Publish the home page before building static output with `pnpm build`.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This template selects Lace `0.1.0-alpha.1`, ownership template `0.4.0`, and matching `ghcr.io/lacecms/api:0.1.0-alpha.1` / `ghcr.io/lacecms/builder:0.1.0-alpha.1` images. The npm alpha channel is `next`; use the exact version below for reproducible generation. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for publication rather than patch dependency references.
 
-The CLI and API use the same project-local SQLite database. The `.lace/data/` directory and `.env` are ignored by Git. Stop local services with `pnpm dev:stop`; this keeps persistent content.
+After the owner publishes the complete compatible alpha set, generate and install:
 
-## Compose production
+```bash
+pnpm create lace@0.1.0-alpha.1 my-site
+cd my-site
+pnpm install
+cp .env.example .env
+```
 
-Create a build token in Admin Settings and place its one-time value in `LACE_BUILD_TOKEN` in `.env`. Run `pnpm prod:start` to start the API, MinIO, builder, dispatcher, and web proxy. Compose builds MinIO from the pinned source release in `deploy/minio.Dockerfile`; no MinIO registry image is required. Compose runs the checked-in migrations as an explicit one-shot service before API readiness and prepares the static-output volume ownership before builder and web start. The API is exposed at `LACE_API_PORT` (default 3000), and the web proxy at `LACE_HTTP_PORT` (default 8080). The builder reads the generated project as a read-only source mount and publishes static releases to its own volume.
+MinIO is built once from the pinned source in `deploy/minio.Dockerfile`, requiring network access to its source and Go modules and sufficient disk space. Set `LACE_API_IMAGE` and `LACE_BUILDER_IMAGE` in `.env` to compatible image tags. Choose your own `LACE_AUTH_SECRET` (at least 32 characters), `LACE_MINIO_ROOT_ACCESS_KEY`, `LACE_MINIO_ROOT_SECRET` and `LACE_BUILDER_SECRET`. Generate fresh random secrets with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`; never commit `.env` or use default credentials.
 
-Run `pnpm prod:stop` to stop services without deleting content. To reset test-only deployments, use `docker compose down --volumes` and remove `.lace/data/` only after backing up anything needed.
+Keep `LACE_BUILD_TOKEN` empty until setup finishes. Local API startup does not need it; starting the full builder requires a real read-only build token. Keep these settings aligned:
+
+| Setting                | Local host value           | Purpose                                                |
+| ---------------------- | -------------------------- | ------------------------------------------------------ |
+| `LACE_DATABASE_PATH`   | `./.lace/data/lace.sqlite` | CLI database shared with API `/data/lace.sqlite` mount |
+| `LACE_API_PORT`        | `3000`                     | Host API/admin port                                    |
+| `LACE_PUBLIC_BASE_URL` | `http://127.0.0.1:3000/`   | Browser API/admin origin and public media URLs         |
+| `LACE_API_BASE_URL`    | `http://127.0.0.1:3000/`   | Host Astro authenticated export transport              |
+| `LACE_HTTP_PORT`       | `8080`                     | Full Compose static-site/web port                      |
+
+If you change the API port, change both host URLs. Log in using the exact `LACE_PUBLIC_BASE_URL` origin; `localhost` and `127.0.0.1` differ. Compose overrides the builder export transport to `http://api:3000/`, while media retains the browser-facing URL. Intentional public base-path prefixes are preserved; your reverse proxy must route them.
+
+## Migrate, sync and create the first administrator
+
+Run from the generated root. Operator scripts load `.env` without sourcing it as shell code:
+
+```bash
+pnpm db:migrate
+pnpm content:sync
+pnpm auth:bootstrap
+pnpm dev:api
+```
+
+Migrations are explicit and repeatable; the API does not apply them on startup. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
+
+The initial alpha has no browser setup wizard. Create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). This Bash snippet prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
+
+```bash
+bash <<'SH'
+read -r -s -p 'Setup token: ' LACE_SETUP_TOKEN < /dev/tty
+printf '\n' > /dev/tty
+read -r -p 'Admin email: ' LACE_SETUP_EMAIL < /dev/tty
+read -r -s -p 'Admin password (at least 12 characters): ' LACE_SETUP_PASSWORD < /dev/tty
+printf '\n' > /dev/tty
+export LACE_SETUP_TOKEN LACE_SETUP_EMAIL LACE_SETUP_PASSWORD
+node --env-file=.env --input-type=module <<'JS'
+const response = await fetch(new URL('api/v1/setup/admin', process.env.LACE_PUBLIC_BASE_URL), {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    token: process.env.LACE_SETUP_TOKEN,
+    email: process.env.LACE_SETUP_EMAIL,
+    password: process.env.LACE_SETUP_PASSWORD,
+  }),
+});
+if (!response.ok) {
+  console.error(`Setup failed (HTTP ${response.status}). Check API readiness, unused token/expiry and password length.`);
+  process.exitCode = 1;
+} else {
+  console.log('Administrator created. Sign in at the configured API origin /admin/.');
+}
+JS
+SH
+```
+
+Successful setup consumes the setup token. It is not a password or build token. Open `http://127.0.0.1:3000/admin/` (or your configured API origin) and sign in with that email/password. In Settings create a read-only build token and copy its one-time value to `LACE_BUILD_TOKEN` in `.env`. It authorizes only published exports, not editing or draft access. Replace expired/revoked build tokens through Settings; never put credentials in `VITE_*`, `LACE_PUBLIC_*`, HTML or source control.
+
+## Publish and build the editable site
+
+In Admin open Home, set its title, add blocks, save and publish as the admin. Upload images through Media and select them in image/hero blocks. Both Home and Posts support `hero`, `richText`, `image`, `quote` and `cta`. For a blog page create a Posts entry, set a valid slug/title, save and publish. Editors can save drafts; publication requires an admin.
+
+```bash
+pnpm dev
+# Stop and restart Astro after publication or token/env changes.
+pnpm build
+pnpm typecheck
+```
+
+`dev` serves editable Astro at its printed URL, normally `http://localhost:4321/`. Each build reads one authenticated published export and derives `/` and `/blog/:slug` routes from it. Publish Home before building. Later draft edits do not change built content. Missing/rejected credentials, unavailable API, unpublished Home and unsupported blocks fail with corrective diagnostics. Run a fresh build after publication; development caches a successful export until restart.
+
+## Full Compose build and persistence
+
+Once the real build token is configured, run `pnpm prod:start`. It starts API/admin, MinIO, explicit migration, dispatcher, fixed-command builder and web proxy. The builder reads generated source read-only and publishes successful static releases atomically. Visit `http://127.0.0.1:8080/` after a successful build. Publication queues a build; Settings also offers an explicit build request. If earlier publications were already built, request a fresh build in Settings. Failed builds retain the last successful release; inspect build history and request retry after correcting the cause. Rendered images use the host API URL, not `http://api:3000/`.
+
+`pnpm dev:stop` and `pnpm prod:stop` retain SQLite in `.lace/data/` and MinIO/static-output volumes. Restart with the corresponding start command. Use `docker compose down --volumes` and remove `.lace/data/` only for disposable test deployments after backing up valuable content.
+
+## Configuration, routes, renderers and styling
+
+`lace.config.ts` defines models. `pnpm content:sync --check` reports pending/incompatible changes without writing (pending changes exit with code 2). Normal sync applies valid plans atomically and refuses incompatible changes without partial application. Changes to kind, fields, routes or allowed blocks on populated models can be blocked even with a version increment. This alpha has no general content migration tool; plan a deliberate migration instead of deleting production data. Restart API services after config changes to reload the mounted configuration.
+
+Adding a model does not create an Astro route. Add the route in `site/src/pages/` and derive entries in `site/src/lib/site-data.ts` using the same export. Custom blocks need a component and registration in `BlockRenderer.astro` and `lib/rendering.ts`; unknown blocks fail with model, entry and block identifiers. Keep safe URL and structural rich-text validation. These source files belong to you and upgrades never silently overwrite them.
+
+Style in `site/src/styles/global.css`. Stable hooks are `data-lace-model`, `data-lace-entry`, `data-lace-block`, `data-lace-block-key` and `data-lace-part`; tags and incidental classes are not the selector contract:
+
+```css
+[data-lace-block="hero"] {
+  padding-block: 2rem;
+}
+[data-lace-model="home"] [data-lace-block="hero"] [data-lace-part="heading"] {
+  color: #174f43;
+}
+[data-lace-entry="your-entry-id"] [data-lace-block-key="your-block-key"] {
+  max-width: 48rem;
+}
+```
+
+Block keys are unique within an entry, so scope instance selectors by entry. Built-in parts: hero `eyebrow`, `heading`, `body`, `media`, `action`; richText `content`; image `media`, `caption`; quote `text`, `attribution`; cta `heading`, `body`, `action`. Optional parts are absent when their content is absent.
 
 ## Optional Cloudflare Pages
 
-Projects generated with `--cloudflare` include `wrangler.jsonc` and a manual Pages deployment workflow. After building the site, run `pnpm exec wrangler pages dev site/dist` for a local Pages preview. The workflow needs Pages project/account settings and a deploy token in its CI environment. The CMS Worker is a separate versioned deployment; this Pages template does not contain editable Worker source.
+`--cloudflare` adds Pages config and a manual workflow. After a build against your configured API, run `pnpm exec wrangler pages dev site/dist` for local Pages preview. Workflow installation needs compatible published packages; provide API/public URLs and build credentials in CI, never generated files. The CMS Worker is a separate versioned deployment. Complete Cloudflare consumer onboarding, real deployment, artifact preparation and the stable-MVP gate remain separate work.
