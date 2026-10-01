@@ -19,7 +19,7 @@ const inventory = {
   release: {
     version: "0.1.0-alpha.1",
     platforms: ["linux/arm64"],
-    sourceRepository: "https://github.com/jentix/lace",
+    sourceRepository: "https://github.com/lacecms/lace",
   },
   images: ["api", "builder"].map((kind) => ({
     kind,

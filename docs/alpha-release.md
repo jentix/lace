@@ -107,9 +107,25 @@ After reviewing that output and completing 25C, execute the same owner-operated 
 
 Published npm versions are immutable. If a run stops midway, compare existing versions' registry integrity with the saved artifacts, record already-published items and resume only the missing ones. A different archive requires a new prerelease version and a new prepared/verified set. Do not overwrite versions or announce a partially published set.
 
+## Repository transfer and prepared artifacts
+
+The current source repository is `https://github.com/lacecms/lace`. Package repository metadata, the release definition and both OCI source labels use this address. npm names, GHCR image coordinates, versions and the `next` channel are unchanged by the transfer.
+
+Previously prepared archives and images retain the old repository address. Keep their inventories, checksums and acceptance evidence unchanged; editing an inventory or retagging an image does not update the embedded package metadata or OCI source label. The recorded Step 25C results describe that historical artifact set.
+
+Before publishing artifacts with the new address, commit and review the metadata changes, prepare a new complete set in a fresh directory, verify it and rerun exact-artifact acceptance:
+
+```sh
+pnpm release:prepare --output .release-artifacts/alpha-1-lacecms
+pnpm release:verify --output .release-artifacts/alpha-1-lacecms
+pnpm acceptance:release --artifacts .release-artifacts/alpha-1-lacecms
+```
+
+Publish only that new verified set and retain its inventory and acceptance receipt. If this version has already been published with different artifacts, choose a new prerelease version through the release workflow instead of replacing it.
+
 ## Owner-operated GHCR publication
 
-Use your GitHub account with publishing rights in organization `lacecms`. For manual Docker authentication, GHCR accepts a personal access token (classic) with `write:packages`; authenticate locally with `docker login ghcr.io` and keep the token outside the repository. The source label remains `https://github.com/jentix/lace`; publishing into the organization does not require a repository transfer. A future GitHub Actions workflow would need separately granted organization/package permissions.
+Use your GitHub account with publishing rights in organization `lacecms`. For manual Docker authentication, GHCR accepts a personal access token (classic) with `write:packages`; authenticate locally with `docker login ghcr.io` and keep the token outside the repository. The source label is `https://github.com/lacecms/lace`, matching the repository transferred to organization `lacecms`. A future GitHub Actions workflow would need separately granted organization/package permissions.
 
 Load the exact saved archives, retag their recorded image IDs to the platform coordinates, and push those tags. Example for the API amd64 artifact (replace the ID with the inventory's actual `imageId`):
 

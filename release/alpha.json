@@ -4,7 +4,7 @@
   "generatorVersion": "0.1.0-alpha.1",
   "templateVersion": "0.4.0",
   "channel": "next",
-  "sourceRepository": "https://github.com/jentix/lace",
+  "sourceRepository": "https://github.com/lacecms/lace",
   "images": {
     "api": "ghcr.io/lacecms/api",
     "builder": "ghcr.io/lacecms/builder"

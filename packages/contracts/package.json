@@ -4,7 +4,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jentix/lace.git",
+    "url": "git+https://github.com/lacecms/lace.git",
     "directory": "packages/contracts"
   },
   "files": [
