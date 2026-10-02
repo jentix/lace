@@ -311,6 +311,9 @@ catalogs:
     react-hook-form:
       specifier: 7.70.0
       version: 7.70.0
+    semver:
+      specifier: 7.8.5
+      version: 7.8.5
     sharp:
       specifier: ^0.35.4
       version: 0.35.4
@@ -712,6 +715,9 @@ importers:
       miniflare:
         specifier: 'catalog:'
         version: 5.20260903.0-alpha
+      semver:
+        specifier: 'catalog:'
+        version: 7.8.5
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

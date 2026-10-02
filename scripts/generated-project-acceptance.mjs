@@ -12,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -772,12 +773,157 @@ async function environmentPreparation(project) {
     throw new Error("env-prepare: normal operation left staging files");
   for (const diagnostic of capturedDiagnostics.slice(diagnosticStart))
     assertSecretFree(diagnostic, secretValues, "environment preparation output");
+  await packedDoctor(project, false);
   await run("prepared-db-migrate", "pnpm", ["db:migrate", "--json"], { cwd: project });
   await run("prepared-db-migrate-repeat", "pnpm", ["db:migrate", "--json"], { cwd: project });
+  await packedDoctor(project, true);
   if ((await readFile(join(project, ".env"), "utf8")) !== bytes)
     throw new Error("env-prepare: migrations changed environment");
   console.info(
     "Packed consumer environment preparation, secrecy, preservation and migrations passed",
+  );
+}
+
+async function doctorSnapshot(project, prefix = "") {
+  const snapshot = {};
+  for (const entry of await readdir(join(project, prefix), { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === "acceptance-packages") continue;
+    const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) Object.assign(snapshot, await doctorSnapshot(project, name));
+    else if (entry.isFile())
+      snapshot[name] = createHash("sha256")
+        .update(await readFile(join(project, name)))
+        .digest("hex");
+  }
+  return snapshot;
+}
+
+async function packedDoctor(project, migrated) {
+  // Controlled daemon/version fixtures are external to the installation. They
+  // never start services, and prove installed CLI behavior without Docker.
+  const fixture = await mkdtemp(join(tmpdir(), "lace-doctor-tools-"));
+  temporaryPaths.push(fixture);
+  await writeFile(
+    join(fixture, "docker"),
+    '#!/bin/sh\ncase "$1" in\ncompose) echo 2.40.0 ;;\ninfo) echo 28.0.0 ;;\n*) exit 17 ;;\nesac\n',
+    { mode: 0o755 },
+  );
+  const invoke = async (label, stage, env = {}) => {
+    const before = await doctorSnapshot(project);
+    const output = JSON.parse(
+      await run(
+        `doctor-${label}`,
+        "node",
+        [
+          "--input-type=module",
+          "-e",
+          `
+      import {spawnSync} from 'node:child_process';
+      const result = spawnSync(process.execPath, ['node_modules/@lacecms/cli/dist/bin.js', 'doctor', '--target', 'node', '--mode', 'compose', '--stage', process.argv[1], '--json'], {encoding:'utf8'});
+      console.info(JSON.stringify({status:result.status,stdout:result.stdout,stderr:result.stderr}));
+    `,
+          stage,
+        ],
+        { cwd: project, env: { ...env, PATH: `${fixture}:${process.env.PATH}` } },
+      ),
+    );
+    const report = JSON.parse(output.stdout);
+    if (
+      output.stderr !== "" ||
+      output.stdout.trim().split("\n").length !== 1 ||
+      report.operation !== "doctor"
+    )
+      throw new Error("doctor: invalid packaged JSON contract");
+    if (JSON.stringify(await doctorSnapshot(project)) !== JSON.stringify(before))
+      throw new Error("doctor: installation files changed");
+    assertSecretFree(output.stdout, secretValues, "doctor output");
+    return { status: output.status, report };
+  };
+  const offlineUrl = `http://127.0.0.1:${await freePort()}/`;
+  if (!migrated) {
+    const initial = await invoke("initial", "setup", {
+      LACE_API_BASE_URL: offlineUrl,
+      LACE_BUILD_TOKEN: "",
+    });
+    if (
+      initial.status !== 0 ||
+      !initial.report.data.checks.some(
+        (check) => check.id === "migrations" && check.status === "expected",
+      )
+    )
+      throw new Error("doctor: initial setup was not classified as expected");
+    const missing = await invoke("missing-settings", "setup", {
+      LACE_API_BASE_URL: offlineUrl,
+      LACE_AUTH_SECRET: "",
+    });
+    if (missing.status !== 4) throw new Error("doctor: missing settings exit was not 4");
+    return;
+  }
+  const wal = await invoke("offline-wal", "ready", { LACE_API_BASE_URL: offlineUrl });
+  if (
+    wal.status !== 6 ||
+    !wal.report.data.checks.some(
+      (check) => check.id === "migrations" && check.code === "DATABASE_UNAVAILABLE",
+    )
+  )
+    throw new Error("doctor: WAL safety failure was not reported");
+  // Explicit fixture preparation, outside doctor: inspect an offline rollback
+  // journal ledger without modifying any published artifact or live service.
+  await run(
+    "doctor-fixture-checkpoint",
+    "node",
+    [
+      "--disable-warning=ExperimentalWarning",
+      "--env-file=.env",
+      "--input-type=module",
+      "-e",
+      `
+    import {DatabaseSync} from 'node:sqlite';
+    const database = new DatabaseSync(process.env.LACE_DATABASE_PATH);
+    database.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;');
+    database.close();
+  `,
+    ],
+    { cwd: project },
+  );
+  const server = createHttpServer((request, response) => {
+    response.writeHead(request.url === "/health/ready" ? 200 : 404, {
+      "content-type": "application/json",
+    });
+    response.end(JSON.stringify({ status: "ready" }));
+  });
+  await new Promise((done, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", done);
+  });
+  const token = randomBytes(32).toString("hex");
+  secretValues.add(token);
+  try {
+    const ready = await invoke("ready", "ready", {
+      LACE_API_BASE_URL: `http://127.0.0.1:${server.address().port}/`,
+      LACE_BUILD_TOKEN: token,
+    });
+    if (ready.status !== 0 || ready.report.data.checks.some((check) => check.status === "fail"))
+      throw new Error("doctor: ready packed installation failed");
+    const packagePath = join(project, "package.json");
+    const original = await readFile(packagePath, "utf8");
+    try {
+      const metadata = JSON.parse(original);
+      metadata.engines.node = ">=99";
+      await writeFile(packagePath, `${JSON.stringify(metadata, null, 2)}\n`);
+      if (
+        (await invoke("consumer-engines", "setup", { LACE_API_BASE_URL: offlineUrl })).status !== 4
+      )
+        throw new Error("doctor: packed CLI ignored consumer engines");
+    } finally {
+      await writeFile(packagePath, original);
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
+  }
+  console.info(
+    "Packed consumer doctor verified setup/ready, offline WAL, missing settings, consumer engines, secrecy and unchanged installation bytes",
   );
 }
 
