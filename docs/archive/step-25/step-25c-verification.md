@@ -40,6 +40,6 @@ The pinned Better Auth/SQLite peer-range warning remains an experimental compati
 
 ## Remaining release boundaries
 
-See [alpha-release.md](./alpha-release.md) for preparation, acceptance and explicit owner-operated publication. Recheck unscoped `create-lace` availability/permissions immediately before publication, and use exact tested archives/images rather than rebuilding during push. This first alpha is suitable for subsequent independent personal testing; it does not declare a stable MVP.
+See [alpha-release.md](../../alpha-release.md) for preparation, acceptance and explicit owner-operated publication. Recheck unscoped `create-lace` availability/permissions immediately before publication, and use exact tested archives/images rather than rebuilding during push. This first alpha is suitable for subsequent independent personal testing; it does not declare a stable MVP.
 
 Step 26 still covers full browser-role/session/conflict flows, vulnerability/license review, broader failure injection, maximum D1 budgets, backup/restore drills and complete operational traceability. Full Cloudflare consumer onboarding follows local feedback; a real Cloudflare account deployment is still unverified. A remote VPS was not required or claimed by these local Compose checks.

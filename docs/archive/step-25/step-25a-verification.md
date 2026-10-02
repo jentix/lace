@@ -23,7 +23,7 @@ These are local verification artifacts, not published release coordinates. MinIO
 - Generated Cloudflare Pages bundle/local preview and existing Worker smoke passed. Node and D1 repository/security contract suites passed.
 - Root `pnpm typecheck`, `pnpm lint` (Oxlint and boundary checks), `pnpm format:check` and strict OpenSpec change/spec validation passed.
 
-See the generated [operations guide](../packages/create-lace/templates/docs/lace-operations.md) for the complete consumer sequence and the accepted `generated-project-onboarding` capability for the behavior contract.
+See the generated [operations guide](../../../packages/create-lace/templates/docs/lace-operations.md) for the complete consumer sequence and the accepted `generated-project-onboarding` capability for the behavior contract.
 
 ## Remaining boundaries
 

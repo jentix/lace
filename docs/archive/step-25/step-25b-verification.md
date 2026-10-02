@@ -28,6 +28,6 @@ The baseline Better Auth/SQLite peer-range warning remains unchanged; runtime/na
 
 ## Publication boundary
 
-See [alpha-release.md](./alpha-release.md) for a repeatable clean-source preparation and owner-operated publication procedure. A dirty preview cannot be published. After the final reviewed commit, run `pnpm release:prepare --output .release-artifacts/alpha-1` and verify its inventory; clean preparation must pass before using those exact artifacts in 25C.
+See [alpha-release.md](../../alpha-release.md) for a repeatable clean-source preparation and owner-operated publication procedure. A dirty preview cannot be published. After the final reviewed commit, run `pnpm release:prepare --output .release-artifacts/alpha-1` and verify its inventory; clean preparation must pass before using those exact artifacts in 25C.
 
 25C still verifies the exact artifact consumer journey, essential authorization, secret exclusion, service restart persistence and failed-build/retry behavior. Step 26 retains stable-MVP certification, real Cloudflare deployment and resilience/backup checks. The unscoped `create-lace` name must be rechecked immediately before owner publication.

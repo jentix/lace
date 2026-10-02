@@ -1409,9 +1409,9 @@ and before the Cloudflare deployment acceptance in Step 26.
 
 ### Session 25A — Minimal generated-project onboarding
 
-Completed on 2026-09-30 with generator template `0.3.0`; see
-[`step-25a-verification.md`](./step-25a-verification.md) for the verified local
-consumer journey and remaining 25B/25C release boundaries.
+Completed on 2026-09-30 with generator template `0.3.0` and a verified local
+consumer journey. Artifact preparation and release acceptance remain separate
+25B/25C boundaries.
 
 1. Provide one documented local sequence for generation, dependency installation,
    environment setup, migrations, configuration sync, first-admin setup, login,
@@ -1438,8 +1438,7 @@ consumer journey and remaining 25B/25C release boundaries.
 
 Completed on 2026-09-30 with package/image version `0.1.0-alpha.1`, template
 `0.4.0` and local amd64/arm64 runtime verification. See
-[`step-25b-verification.md`](./step-25b-verification.md) and
-[`alpha-release.md`](./alpha-release.md) for evidence and owner-operated release
+[`alpha-release.md`](./alpha-release.md) for owner-operated release
 preparation/publication. Registry publication and 25C acceptance remain separate.
 
 1. Confirm npm package-name ownership and container registry coordinates. Define
@@ -1463,8 +1462,7 @@ preparation/publication. Registry publication and 25C acceptance remain separate
 
 Completed on 2026-09-30 against the exact clean `0.1.0-alpha.1` artifact set,
 template `0.4.0`, with the full local arm64 consumer/security/recovery journey
-and independent amd64/arm64 preparation smokes. See
-[`step-25c-verification.md`](./step-25c-verification.md) and its artifact receipt.
+and independent amd64/arm64 preparation smokes.
 Alpha publication and Step 26 remain separate explicit release boundaries.
 
 1. Extend the existing generated-project acceptance to install the exact packed
