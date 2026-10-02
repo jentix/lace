@@ -387,6 +387,11 @@ async function smokePackages(snapshot, output, model, records) {
     ],
     { cwd: consumer, capture: true },
   );
+  await copyFile(
+    join(snapshot, "scripts/migration-consumer-smoke.mjs"),
+    join(consumer, "migration-smoke.mjs"),
+  );
+  await run(process.execPath, ["migration-smoke.mjs"], { cwd: consumer });
   await writeFile(
     join(consumer, "imports.ts"),
     records.map((item, i) => `import * as p${i} from '${item.name}'; void p${i};`).join("\n"),

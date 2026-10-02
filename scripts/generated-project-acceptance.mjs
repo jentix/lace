@@ -8,6 +8,7 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -226,7 +227,6 @@ async function prepareCompose(project, parent, releaseArtifacts) {
   ]) {
     secretValues.add(values[key]);
   }
-  await mkdir(join(project, ".lace", "data"), { recursive: true });
   await writeFile(
     join(project, ".env"),
     `${Object.entries(values)
@@ -268,6 +268,13 @@ async function nodeJourney(context) {
   const { project, apiPort } = context;
   const databasePath = join(project, ".lace", "data", "lace.sqlite");
   const env = { LACE_DATABASE_PATH: databasePath };
+  const dataDirectory = join(project, ".lace", "data");
+  try {
+    await stat(dataDirectory);
+    throw new Error("cli-db-migrate: database parent was created before fresh migration");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   for (const command of [
     ["db", "migrate"],
     ["content", "sync"],
@@ -277,6 +284,8 @@ async function nodeJourney(context) {
       env,
     });
     if (!JSON.parse(output).ok) throw new Error(`cli-${command.join("-")}: unsuccessful result`);
+    if (command[0] === "db" && !(await stat(dataDirectory)).isDirectory())
+      throw new Error("cli-db-migrate: migration did not create the database parent");
   }
   const bootstrap = JSON.parse(
     await run("cli-bootstrap", "pnpm", ["auth:bootstrap", "--json"], {

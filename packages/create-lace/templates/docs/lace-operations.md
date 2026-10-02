@@ -40,7 +40,7 @@ pnpm auth:bootstrap
 pnpm dev:api
 ```
 
-Migrations are explicit and repeatable; the API does not apply them on startup. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
+Migrations are explicit and repeatable; the API does not apply them on startup. With packages built after the fresh SQLite migration fix (26A), `pnpm db:migrate` creates missing parent directories for `LACE_DATABASE_PATH`, including `.lace/data`, and preserves existing database contents. No manual directory creation is needed with those rebuilt packages. The originally published `0.1.0-alpha.1` packages predate this fix; until a release includes it, those packages still require `mkdir -p .lace/data` before their first migration. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
 
 The initial alpha has no browser setup wizard. Create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). This Bash snippet prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
 
