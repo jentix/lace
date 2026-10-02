@@ -19,7 +19,7 @@ export const EXIT = Object.freeze({
   OPERATION: 6,
 } as const);
 export type Target = "node" | "cloudflare-local" | "cloudflare-remote";
-export type Command = "db migrate" | "content sync" | "auth bootstrap";
+export type Command = "db migrate" | "content sync" | "auth bootstrap" | "env prepare";
 
 export interface CliOptions {
   readonly check: boolean;
@@ -41,7 +41,7 @@ export class CliError extends Error {
 }
 
 export const usage =
-  "Usage: lace <db migrate|content sync [--check]|auth bootstrap> [--target node|cloudflare-local|cloudflare-remote] [--json]";
+  "Usage: lace <db migrate|content sync [--check]|auth bootstrap> [--target node|cloudflare-local|cloudflare-remote] [--json]\n       lace env prepare [--json]";
 
 export function parseArguments(argv: readonly string[]): CliOptions {
   const words: string[] = [];
@@ -71,7 +71,8 @@ export function parseArguments(argv: readonly string[]): CliOptions {
   }
   const command = words.join(" ");
   if (
-    !["db migrate", "content sync", "auth bootstrap"].includes(command) ||
+    !["db migrate", "content sync", "auth bootstrap", "env prepare"].includes(command) ||
+    (command === "env prepare" && targetSeen) ||
     (check && command !== "content sync")
   )
     throw new CliError("USAGE", usage, EXIT.USAGE);

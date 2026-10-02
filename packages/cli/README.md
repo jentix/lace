@@ -106,3 +106,11 @@ pnpm exec lace content sync --target node
 ```
 
 Use `--target cloudflare-local` or explicitly `--target cloudflare-remote` with its required settings for Cloudflare. Migration/config synchronization order follows the reviewed release and deployment plan; upgrade does not run either command. Filesystem rollback **does not undo database migrations**, uploaded objects or content. Restore database/object backups separately if the release requires data rollback.
+
+## Local environment preparation
+
+From a generated project root, run `pnpm env:prepare` (or `lace env prepare [--json]`) after installing packages and before loading `.env`. This command needs no database settings, target selection or running services. It creates `.env` from a regular `.env.example`, generates auth/MinIO/builder credentials, preserves other settings and leaves `LACE_BUILD_TOKEN` empty for later issuance in Settings. Secrets are never printed. POSIX permissions are `0600`; verify owner-only ACLs on Windows.
+
+An existing `.env` is never overwritten, even by concurrent preparation. Retain it and review settings privately; preparation does not rotate credentials. Templates require exactly one single-line assignment for each of the four generated credential names and `LACE_BUILD_TOKEN`. Errors provide sanitized operation/reason/nextAction guidance. JSON is one object: success `ENV_PREPARED` (exit 0), usage `USAGE` (3), template `CONFIG` (4), filesystem/existing destination `OPERATION_FAILED` (6).
+
+Publication requires same-filesystem hard links. Normal failures remove private staging; forcible termination may leave ignored `.lace-env-*` directories, which may be removed after confirming no preparation process is running. `.env` remains absent or complete. This flow requires source/packed packages containing Step 26C; it does not alter previously published alpha artifacts.

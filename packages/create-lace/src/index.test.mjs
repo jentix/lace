@@ -62,6 +62,12 @@ test("generates deterministic owned source and hashed managed files", async () =
   expect(await readFile(join(left.path, ".env.example"), "utf8")).not.toMatch(
     /LACE_AUTH_SECRET=\S/u,
   );
+  const scripts = JSON.parse(await readFile(join(left.path, "package.json"), "utf8")).scripts;
+  expect(scripts["env:prepare"]).toBe("node node_modules/@lacecms/cli/dist/bin.js env prepare");
+  expect(await readFile(join(left.path, ".gitignore"), "utf8")).toContain(".lace-env-*/");
+  const guide = await readFile(join(left.path, "docs/lace-operations.md"), "utf8");
+  expect(guide.indexOf("pnpm env:prepare")).toBeLessThan(guide.indexOf("pnpm db:migrate"));
+  expect(guide).not.toContain("cp .env.example .env");
 });
 
 test("optional Cloudflare files are managed only when selected", async () => {

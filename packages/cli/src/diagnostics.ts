@@ -11,6 +11,9 @@ export type DiagnosticKind =
   | "d1-unavailable"
   | "d1-response"
   | "wrangler"
+  | "env-exists"
+  | "env-template"
+  | "env-filesystem"
   | "project-config";
 export interface Diagnostic {
   readonly operation: Operation;
@@ -25,7 +28,10 @@ export function identifyOperation(argv: readonly string[]): Operation {
     (word, index) => !word.startsWith("--") && argv[index - 1] !== "--target",
   );
   const command = words.slice(0, 2).join(" ");
-  return command === "db migrate" || command === "content sync" || command === "auth bootstrap"
+  return command === "db migrate" ||
+    command === "content sync" ||
+    command === "auth bootstrap" ||
+    command === "env prepare"
     ? command
     : "cli";
 }
@@ -64,6 +70,18 @@ export function failureDiagnostic(
   kind?: DiagnosticKind,
 ): Diagnostic {
   const catalog: Record<string, readonly [string, string]> = {
+    "env-exists": [
+      "The .env destination already exists; preparation refuses to overwrite it.",
+      "Keep the existing .env and review its settings privately. Preparation does not rotate credentials; do not delete an active installation's configuration to rerun it.",
+    ],
+    "env-template": [
+      "The local .env.example is missing or is not a valid regular template.",
+      "Restore a regular non-symlink .env.example with one single-line NAME=value assignment for LACE_AUTH_SECRET, LACE_MINIO_ROOT_ACCESS_KEY, LACE_MINIO_ROOT_SECRET, LACE_BUILDER_SECRET and LACE_BUILD_TOKEN, then retry lace env prepare.",
+    ],
+    "env-filesystem": [
+      "Local environment preparation could not read, stage or publish its protected file.",
+      "Check project directory permissions and support for local hard links, then retry lace env prepare. Preserve any existing .env; remove private .lace-env-* remnants only after confirming no preparation is running.",
+    ],
     permission: [
       "Filesystem access was denied or the database is read-only.",
       "Check permissions for the selected database/project and parent directories; grant the command's user the required access and retry.",

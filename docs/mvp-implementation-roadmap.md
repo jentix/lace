@@ -1576,6 +1576,18 @@ unchanged. Environment preparation remains session 26C.
 
 ### Session 26C — Environment preparation
 
+Completed on 2026-10-02. `lace env prepare [--json]` and generated
+`pnpm env:prepare` work before `.env` exists. Preparation preserves template
+settings, generates independent auth/MinIO/builder credentials, leaves the
+build token empty, and publishes a complete owner-only file without overwriting
+existing or concurrently created destinations. Sanitized recovery diagnostics,
+write/publication failures, real process races and protected staging after
+termination are covered. An isolated consumer installed from 12 packed Lace
+packages passed preparation, repeat preservation and both migrations. CLI and
+generator tests, root typecheck, Oxlint, Oxfmt and strict OpenSpec validation
+passed. Existing alpha coordinates are unchanged; the next artifact refresh
+remains Step 32B.
+
 1. Add an explicit local preparation command; settle its name and generated
    script in the proposal. It must work before `.env` exists.
 2. Copy `.env.example` settings and generate cryptographically random

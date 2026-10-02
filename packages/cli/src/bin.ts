@@ -25,6 +25,22 @@ async function main(): Promise<number> {
     }
     const options = parseArguments(argv);
     target = options.target;
+    if (options.command === "env prepare") {
+      const { prepareEnvironment } = await import("./environment.js");
+      await prepareEnvironment();
+      console.info(
+        presentResult(
+          {
+            ok: true,
+            code: "ENV_PREPARED",
+            message:
+              "Created protected .env. Review local settings; leave LACE_BUILD_TOKEN empty until Admin Settings issues it.",
+          },
+          options.json,
+        ),
+      );
+      return EXIT.OK;
+    }
     const environment = loadEnvironment(options.target, process.env);
     // Runtime adapters are unnecessary for upgrade, help and invalid settings.
     const { runCommand } = await import("./commands.js");
