@@ -2,9 +2,11 @@
 
 Run the generated project with packaged API/admin runtimes and an editable Astro site. You own `lace.config.ts` and `site/`; the engine checkout is unnecessary.
 
+Start with the generated root `README.md` for the concise quickstart. README is user-owned, without a manifest hash; upgrades preserve its edits. If `init .` encounters an allowed existing README, it preserves every byte and prints this guide's path. Follow this guide directly or manually copy relevant Lace instructions into your existing README. In a `cms/` installation these paths and commands are relative to `cms/`, not its parent application. This guide is managed with hash/conflict review.
+
 ## Prerequisites and generation
 
-Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.5.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for publication rather than patch dependency references.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.6.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
 
 After the owner publishes the complete compatible alpha set, generate and install:
 
@@ -67,7 +69,16 @@ pnpm dev:api
 
 Migrations are explicit and repeatable; the API does not apply them on startup. With packages built after the fresh SQLite migration fix (26A), `pnpm db:migrate` creates missing parent directories for `LACE_DATABASE_PATH`, including `.lace/data`, and preserves existing database contents. No manual directory creation is needed with those rebuilt packages. The originally published `0.1.0-alpha.1` packages predate this fix; until a release includes it, those packages still require `mkdir -p .lace/data` before their first migration. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
 
-The initial alpha has no browser setup wizard. Create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). This Bash snippet prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
+The initial alpha has no browser setup wizard. Create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). For a concise placeholder-only request, replace `<PUBLIC_API_BASE_URL>` with the configured `LACE_PUBLIC_BASE_URL`, keeping any path prefix and trailing slash. Use the one-time token just issued by `pnpm auth:bootstrap` and a password of at least 12 characters:
+
+```bash
+curl --fail-with-body --silent --show-error --request POST \
+  '<PUBLIC_API_BASE_URL>api/v1/setup/admin' \
+  --header 'Content-Type: application/json' \
+  --data '{"token":"<SETUP_TOKEN>","email":"<ADMIN_EMAIL>","password":"<PASSWORD_AT_LEAST_12_CHARACTERS>"}'
+```
+
+Real credentials substituted inline are exposed in shell history and process arguments. Prefer this private-input Bash snippet: it prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
 
 ```bash
 bash <<'SH'

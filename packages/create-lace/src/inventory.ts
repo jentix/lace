@@ -7,10 +7,11 @@ export interface TemplateFile {
   readonly interpolateName?: true;
 }
 
-export const TEMPLATE_VERSION = "0.5.0";
+export const TEMPLATE_VERSION = "0.6.0";
 
 /** Every bundled template must appear here with an explicit ownership decision. */
 export const TEMPLATE_FILES: readonly TemplateFile[] = [
+  { path: "README.md", owner: "user" },
   { path: ".env.example", owner: "managed" },
   { path: ".gitignore", owner: "managed" },
   { path: ".github/workflows/cloudflare.yml", owner: "managed", cloudflare: true },
