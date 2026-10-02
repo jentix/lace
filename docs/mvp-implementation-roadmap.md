@@ -144,6 +144,12 @@ foundation
   -> Cloudflare runtime
   -> generator + upgrade
   -> local onboarding + alpha artifact verification
+  -> feedback-driven local setup + diagnostics + quickstart
+  -> browser setup + admin introduction
+  -> explicit build site + verified publication modes
+  -> renderer distribution decision
+  -> complete Cloudflare consumer onboarding
+  -> feedback regression + next alpha verification
   -> cross-runtime/security/release gate
 ```
 
@@ -177,12 +183,41 @@ foundation
 | 23 | CLI generator and operational commands | L | 23A, 23B, 23C |
 | 24 | Upgrade safety | M | 24A, 24B |
 | 25 | Local onboarding and alpha release preparation | L | 25A, 25B, 25C |
-| 26 | MVP release gate | L | 26A, 26B, 26C |
+| 26 | Reliable local setup and CLI diagnostics | L | 26A, 26B, 26C |
+| 27 | Environment checks and generated-project quickstart | M | 27A, 27B |
+| 28 | First-admin setup and guided admin introduction | M | 28A, 28B |
+| 29 | Explicit build site and publication-mode guidance | M | 29A, 29B |
+| 30 | Renderer distribution decision | S | 30A |
+| 31 | Complete generated Cloudflare consumer onboarding | M | 31A, 31B |
+| 32 | Feedback regression acceptance and next alpha preparation | M | 32A, 32B |
+| 33 | MVP release gate | L | 33A, 33B, 33C |
 
-The roadmap is therefore **68 recommended session units**. Small neighboring
+The roadmap is therefore **82 recommended session units**. Small neighboring
 units can be combined after the foundation stabilizes, but units that introduce
 a database migration, a runtime adapter, or a security boundary should remain
 separate.
+
+### Post-alpha continuation and scope
+
+Steps 0–25 are the completed baseline for this continuation. The owner's
+published-alpha trial in an independent Astro project is recorded in
+[`onboarding-feedback.md`](./onboarding-feedback.md). Steps 26–32 address that
+feedback and the remaining Cloudflare consumer-installation gap before the
+former Step 26 release gate, now Step 33. Existing archived change names and
+historical session references retain their original meaning.
+
+The feedback is input to future proposals, not an accepted capability spec.
+New command names, DTOs, persistence choices, and deployment configuration must
+be settled in each just-in-time OpenSpec proposal. This roadmap revision does
+not pre-create changes or mark proposed behavior implemented. Keep the existing
+architecture invariants: operator-issued one-time setup token, one installation
+per site, Astro public output, fixed-command builds, and protected user source.
+
+The component-installation idea (§7) receives a bounded decision in Step 30;
+implementation requires a separate scope decision. In-place CMS installation
+into a nonempty project (§11) stays post-MVP. Selecting an external site's build
+source in Step 29 is operator configuration alongside a separately generated
+CMS directory, not a relaxation of the generator's empty-target contract.
 
 ## 6. Detailed implementation steps
 
@@ -1403,9 +1438,9 @@ The artifacts are verified before their first publication.
 This step prepares an experimental release such as `0.1.0-alpha.1` with the npm
 `next` tag; it does not declare the MVP stable. Actual registry publication, the
 owner's subsequent test repository, and a real Cloudflare deployment follow
-separately. The full release gate remains Step 26. Preserve existing Node/D1 and
+separately. The full release gate remains Step 33. Preserve existing Node/D1 and
 Worker checks; complete Cloudflare consumer onboarding after local user feedback
-and before the Cloudflare deployment acceptance in Step 26.
+and before the Cloudflare deployment acceptance in Step 33.
 
 ### Session 25A — Minimal generated-project onboarding
 
@@ -1463,7 +1498,7 @@ preparation/publication. Registry publication and 25C acceptance remain separate
 Completed on 2026-09-30 against the exact clean `0.1.0-alpha.1` artifact set,
 template `0.4.0`, with the full local arm64 consumer/security/recovery journey
 and independent amd64/arm64 preparation smokes.
-Alpha publication and Step 26 remain separate explicit release boundaries.
+Alpha publication and Step 33 remain separate explicit release boundaries.
 
 1. Extend the existing generated-project acceptance to install the exact packed
    alpha dependency graph and use its matching built images in an isolated
@@ -1486,7 +1521,7 @@ Alpha publication and Step 26 remain separate explicit release boundaries.
    prepared artifacts, plus required root quality and strict OpenSpec checks.
    Inspect package/image contents and record the exact tested versions and
    results. Resolve blocking failures before alpha publication; document the
-   experimental limits and the remaining Step 26 checks explicitly.
+   experimental limits and the remaining Step 33 checks explicitly.
 
 ### Acceptance
 
@@ -1503,12 +1538,341 @@ Alpha publication and Step 26 remain separate explicit release boundaries.
 
 **Session boundary:** L; use 25A, 25B, and 25C as separate OpenSpec changes.
 
-## Step 26 — MVP release gate
+## Step 26 — Reliable local setup and CLI diagnostics
+
+**Outcome:** a fresh generated project can prepare its environment and migrate
+its database without manual directory creation, and operator failures explain
+how to recover.
+
+**Basis:** onboarding feedback §1, §2, and §8. Depends on completed Steps 23–25.
+
+### Session 26A — Fresh SQLite migration
+
+1. Create missing parent directories recursively before opening a file-backed
+   SQLite database for explicit migration. Preserve existing directories/data;
+   do not create directories for `:memory:` or add automatic API migrations.
+2. Cover a fresh nested path, repeated migration, existing data, and directory
+   creation failure through both the packaged CLI and runtime migration entry.
+3. Replace the documented `mkdir -p` workaround with the verified normal flow.
+
+### Session 26B — Actionable operational errors
+
+1. Review migration, sync, bootstrap, and upgrade failures. Map known failures
+   to a sanitized operation, concrete reason, and applicable recovery step;
+   retain a safe fallback for unknown failures.
+2. Preserve existing process exit codes, symbolic codes, and one-object JSON
+   output. Define any additive diagnostic fields in the proposal; do not dump
+   environment values, arbitrary subprocess output, passwords, or tokens.
+3. Verify permission errors, missing/outdated schema, invalid target/config,
+   blocked sync, completed bootstrap, and upgrade conflicts in human and JSON
+   modes. Successful bootstrap retains its single intentional token reveal.
+
+### Session 26C — Environment preparation
+
+1. Add an explicit local preparation command; settle its name and generated
+   script in the proposal. It must work before `.env` exists.
+2. Copy `.env.example` settings and generate cryptographically random
+   `LACE_AUTH_SECRET`, `LACE_MINIO_ROOT_ACCESS_KEY`, `LACE_MINIO_ROOT_SECRET`,
+   and `LACE_BUILDER_SECRET`. Leave `LACE_BUILD_TOKEN` empty until Settings
+   issues it; use credential formats accepted by the corresponding services.
+3. Refuse to overwrite an existing `.env`, including concurrent creation;
+   protect the resulting file, print no secrets, and verify preservation of
+   non-secret template settings and absence of partially written output.
+4. Document preparation in the generated operations guide and test it with
+   packed packages, without a source-workspace dependency.
+
+### Acceptance
+
+- First `pnpm db:migrate` succeeds for the generated nested database path.
+- Existing `.env` and database contents survive repeat commands unchanged.
+- A failed command identifies the operation, known cause, and next action;
+  automation retains parseable output and stable exit behavior.
+
+**Session boundary:** L; use 26A, 26B, and 26C.
+
+## Step 27 — Environment checks and generated-project quickstart
+
+**Outcome:** consumers can find the setup sequence in their project's README
+and diagnose prerequisites without changing their installation.
+
+**Basis:** onboarding feedback §3, §4, and §9. Depends on Step 26.
+
+### Session 27A — Read-only environment doctor
+
+1. Add a diagnostic command (working name `lace doctor`; finalize syntax in
+   the proposal) with explicit target and installation-stage selection.
+2. Check the project's declared Node/pnpm compatibility, required settings,
+   migration state, and API readiness. Check Compose/daemon availability only
+   for modes that use Docker; use the selected Cloudflare prerequisites for
+   Cloudflare targets and never fall back to a remote target.
+3. Distinguish a failed prerequisite from an expected not-yet-started API or
+   not-yet-created build token. Report each check with a safe explanation and
+   recovery action, deterministic JSON, and documented exit semantics.
+4. Make checks bounded and read-only: no migrations, sync, bootstrap, secret
+   creation, service startup, or configuration writes. Test offline services,
+   missing prerequisites, initial setup, and a ready installation.
+
+### Session 27B — README and concise setup example
+
+1. Generate a root `README.md` with prerequisites, installation, environment
+   preparation, migrate/sync, start/stop, first admin, publication, and SDK/Astro
+   integration. Explain `lace.config.ts`, models, routes, renderers, layouts,
+   and the link to `docs/lace-operations.md`; a CMS in `cms/` gets this README
+   in `cms/`.
+2. Add a short placeholder-only `curl` example for `POST /api/v1/setup/admin`
+   with `token`, `email`, and `password`, alongside the existing private-input
+   script. Explain bootstrap, the 12-character password minimum, the configured
+   public API origin, and shell-history exposure from inline credentials.
+3. Define README ownership and manifest/snapshot updates. Preserve an existing
+   allowed README byte-for-byte during `init .`; give an explicit way to access
+   or incorporate Lace instructions instead of silently replacing user text.
+4. Keep the quickstart consistent with delivered commands. Reconcile its setup,
+   site-selection, and Cloudflare sections as Steps 28–31 land; verify a fresh
+   generation and an init target with an existing README.
+
+### Acceptance
+
+- A consumer starts from the generated README without undisclosed setup steps.
+- Doctor distinguishes initial setup from a broken running installation and
+  leaves files, credentials, database, and services unchanged.
+- Existing README content is preserved and Lace instructions remain reachable.
+
+**Session boundary:** M; use 27A and 27B.
+
+## Step 28 — First-admin setup and guided admin introduction
+
+**Outcome:** an unconfigured installation explains how to create its first
+administrator, and authenticated users can learn their available workflows.
+
+**Basis:** onboarding feedback §5 and §6. Depends on Steps 26–27 and reuses
+Step 8 security services and the Steps 16–20 admin design/layer conventions.
+
+### Session 28A — Browser setup with the existing one-time token
+
+1. Define a minimal setup-state contract for Node and Worker and an accessible
+   pre-authentication setup screen. While setup is incomplete, the admin entry
+   presents email, password, and bootstrap-token fields plus instructions for
+   obtaining the token. Do not expose users, credentials, or protected state.
+2. Submit through the existing guarded setup-admin protocol; preserve token
+   expiry, email claim/resume, rate limits, password validation, and final token
+   consumption. A setup-state read never grants the right to create an admin.
+3. After completion, show normal sign-in or a verified authenticated transition.
+   Close the setup form to later visitors; concurrent/stale clients must handle
+   the existing completed-setup `404` without reopening registration.
+4. Cover fresh setup, expired/invalid token, interruption/retry, concurrent
+   completion, completed setup, and keyboard/axe/narrow-screen behavior on both
+   runtime contracts. Update the quickstart while retaining the API alternative.
+
+### Session 28B — Permission-aware introductory tour
+
+1. Offer a tour on first authenticated use, derived from current navigation and
+   permissions: Pages/Collections and draft/publication, Media, Builds, and
+   Users/Settings only where available. Explain build-token creation only to
+   users who can perform it; avoid instructions for unavailable actions.
+2. Provide forward/back, skip/close, and an accessible replay entry. Decide and
+   document the persistence scope for completion/dismissal in the proposal,
+   including installation/user separation and behavior when storage is absent.
+3. Respect keyboard focus, reduced motion, narrow layouts, loading/empty models,
+   and role changes. Do not require tour completion for ordinary editorial work.
+4. Test admin/editor/viewer paths and returning users; keep the tour text aligned
+   with the verified publication modes from Step 29.
+
+### Acceptance
+
+- A first admin can complete setup in the browser with an operator-issued token.
+- Completed setup remains closed; the UI does not weaken server authorization.
+- The tour shows only usable routes/actions, can be dismissed and replayed,
+  and passes the admin accessibility checks.
+
+**Session boundary:** M; use 28A and 28B as separate security and UI changes.
+
+## Step 29 — Explicit build site and publication-mode guidance
+
+**Outcome:** the operator knows which Astro project a publication will rebuild
+and when its content becomes visible in each supported mode.
+
+**Basis:** onboarding feedback §10 and §12. Depends on Steps 26–28 and preserves
+Step 21's fixed-command, single-site, and atomic-release contracts.
+
+### Session 29A — Operator-selected Astro source
+
+1. Define deployment-time selection of the site source, installation/workspace
+   root, lockfile, and static output. Support the generated `site/` default and
+   a separately configured existing Astro site alongside a CMS subdirectory.
+   Resolve container mount accessibility explicitly; host paths must not be
+   assumed to exist inside the builder.
+2. Keep one selected site per installation and the image-defined build command.
+   The trigger still accepts only build ID/version; no HTTP request may choose
+   paths, commands, arguments, or environment values. Validate configured paths
+   and retain source filtering, frozen installs, version checks, and safe output.
+3. Show a safe site identity in Builds and applicable settings/docs, without
+   exposing internal filesystem paths or secrets. Define DTO/spec deltas and
+   any required persistence at proposal time rather than adding a second site.
+4. Test generated and external-site layouts, workspace and standalone lockfiles,
+   inaccessible/invalid mounts, success, failure/retry, and preservation of the
+   current release. Prove that the selected real site, rather than the unused
+   generated example, is built and served.
+
+### Session 29B — Verify and explain publication visibility
+
+1. Reproduce publication in generated Astro dev, the independent existing-site
+   dev integration, manual static build, and Compose automatic build. Record
+   actual refresh/cache behavior before proposing changes; feedback does not
+   establish a requirement to restart Astro after every publication.
+2. Explain draft save, CMS publication, dev visibility, static build, and deployed
+   output separately in README/operations and applicable admin guidance. Show
+   the selected site and existing pending/running/succeeded/failed build state
+   where known; do not claim dev or manual deployment success from CMS state.
+3. If a stale-data defect is reproduced, scope its correction and regression
+   coverage in the active proposal. Preserve one consistent published export
+   per static build, draft isolation, and server-only build credentials.
+4. Test the documented next action for each mode and update the relevant local
+   development/onboarding specs where historical refresh guidance differs.
+
+### Acceptance
+
+- An operator can build the intended external Astro site with explicit config
+  while preserving the fixed HTTP trigger and user-owned source.
+- Publication guidance matches observed behavior; automatic dev updates do not
+  gain an unnecessary mandatory restart.
+- Failed builds keep the previous successful static release available.
+
+**Session boundary:** M; use 29A and 29B.
+
+## Step 30 — Renderer distribution decision
+
+**Outcome:** the optional component-installation idea has a reviewable decision
+and a documented integration path, without promising an unapproved installer.
+
+**Basis:** onboarding feedback §7; §11 remains deferred. Depends on Step 29.
+This is a bounded investigation/documentation unit. It does not require a new
+component command or support for additional public-site frameworks to ship MVP.
+
+### Session 30A — Compare source installation and packaged renderers
+
+1. Inventory the current built-in Astro renderers, rich-text helpers, SDK loader,
+   dependencies, block registration, styling hooks, and routing assumptions.
+   Document a complete manual connection to an existing Astro site.
+2. Compare copying a starter set, selective source installation, and packaged
+   renderers against editable source, dependency closure, configurable paths,
+   compatibility, repeated addition, and updates without overwriting edits.
+3. Describe how framework selection and renderer implementations could be
+   separated for future Astro/React/Vue/Svelte variants without committing to
+   implementing all variants now. Keep Astro as the supported MVP site runtime.
+4. Record the recommendation, tradeoffs, and unresolved choices. If an installer
+   is selected for implementation, obtain a separate scope decision and add a
+   just-in-time roadmap/OpenSpec unit; update architecture first if it changes
+   the supported onboarding or ownership invariants. Do not expand `init .` to
+   nonempty projects as part of this investigation.
+
+### Acceptance
+
+- The decision identifies a usable renderer/helper/loader set and how user edits
+  survive future upgrades; the documented Astro connection is verified.
+- Optional tooling and deferred in-place CMS integration are clearly separated
+  from the release requirements.
+
+**Session boundary:** S; use 30A as one planning/documentation change.
+
+## Step 31 — Complete generated Cloudflare consumer onboarding
+
+**Outcome:** the second supported runtime has a consumer installation path for
+CMS Worker, D1/R2, admin, and the separate Astro deployment, beyond Pages-only
+starter configuration.
+
+**Basis:** the explicit Step 25 deferral and the current `--cloudflare` template,
+which configures Pages but does not deliver full CMS Worker onboarding. Depends
+on Steps 26–29 and the accepted Step 22 runtime; renderer tooling is not required.
+
+### Session 31A — Packaged Worker deployment and configuration
+
+1. Define the generated consumer's versioned Worker entry/artifacts, statically
+   imported project config, D1/R2 bindings, optional no-op/KV policy, admin assets,
+   compatibility flags, and scheduled recovery without engine-source checkout.
+2. Separate Worker CMS and Astro hosting configuration. Document local state,
+   explicit local/remote migration and sync/bootstrap targets, secret provisioning,
+   same-origin admin/API, and published build export/media origins.
+3. Update template ownership, version, snapshots, and upgrade instructions. Keep
+   remote account/resource provisioning and production mutations explicit; do
+   not embed credentials or claim that Pages config deploys the CMS.
+4. Verify a packed generated consumer bundles and starts its own Worker with
+   persistent local D1/R2, admin assets, and project configuration.
+
+### Session 31B — Cloudflare consumer journey and deployment handoff
+
+1. Run setup through the new browser flow, login, content/media editing,
+   publication, scheduled dispatch to a controlled deploy hook, and Astro build
+   against that generated Worker's published export; prove draft isolation and
+   secret exclusion without importing the source-workspace composition root.
+2. Verify restart persistence, local doctor diagnostics, expired bootstrap,
+   unavailable hook, and documented recovery. Preserve the distinction between
+   a provider accepting a deploy hook and a confirmed successful static deploy.
+3. Provide a concrete real-account deployment guide and prerequisites for the
+   final release gate, including required account permissions, resource IDs,
+   deployment secrets, and static-hosting/provider integration. Local tests do
+   not count as real Cloudflare deployment acceptance.
+
+### Acceptance
+
+- A generated Cloudflare consumer operates its CMS and builds its Astro site
+  from versioned artifacts without the Lace engine checkout.
+- Local Node and Worker share setup/security/content contracts; the real-account
+  deployment verification remains explicit in Step 33.
+
+**Session boundary:** M; use 31A and 31B.
+
+## Step 32 — Feedback regression acceptance and next alpha preparation
+
+**Outcome:** the onboarding improvements are proven together in independent
+consumers and delivered in a coherent, upgrade-safe next alpha artifact set.
+
+**Basis:** completed Step 25 acceptance and feedback §1–§10 and §12, with §7
+covered by the Step 30 decision only. Depends on Steps 26–31.
+
+### Session 32A — Independent consumer regressions
+
+1. Extend the existing generated-project acceptance, reusing its artifact
+   isolation and secret scanning. Cover fresh Node setup from README, env prep,
+   migration without manual mkdir, doctor, browser bootstrap, tour, publication,
+   media, and dev/manual/automatic site visibility.
+2. Add a separate existing-Astro consumer with CMS in a subdirectory and explicit
+   build-site selection. Follow the documented renderer integration; verify all
+   five blocks, safe rich text, styling hooks, public media, and user-owned edits.
+3. Include the generated Cloudflare CMS journey from Step 31. Exercise expected
+   setup-stage diagnostics, failure/retry, restart persistence, and upgrade from
+   alpha template `0.4.0`, including changed managed files and preserved README.
+4. Map every feedback item to a test/document or explicit decision/deferral.
+   Keep §11 deferred and do not count unresolved defects as acceptance success.
+
+### Session 32B — Coherent artifact refresh and verification
+
+1. Select an unused next alpha package/image version and a new template version
+   from one reviewed revision; refresh package, generator, admin, Worker, and
+   builder delivery plus upgrade instructions. Do not alter published
+   `0.1.0-alpha.1` artifacts or assert an unverified registry version is free.
+2. Prepare the matching artifact inventory and run consumer regressions against
+   that exact set, including supported API/builder image platforms and generated
+   Worker packaging. Verify archive/image contents and secret exclusion.
+3. Reconcile README, operations, compatibility, alpha-release docs, and feedback
+   statuses with actual completed behavior. Record evidence and remaining real
+   deployment/security checks; registry publication is a separate explicit act.
+
+### Acceptance
+
+- Fresh generated and independently integrated Astro consumers complete their
+  documented flows using the exact compatible candidate artifacts.
+- Upgrades preserve user source and detect modified managed infrastructure.
+- The next alpha is ready for publication; stable MVP status still depends on
+  Step 33, and remote publication/deployment is not a side effect of testing.
+
+**Session boundary:** M; use 32A and 32B.
+
+## Step 33 — MVP release gate
 
 **Outcome:** both supported deployments satisfy the product flow, security
 requirements, and operational recovery promises.
 
-### Session 26A — Cross-runtime and browser suite
+### Session 33A — Cross-runtime and browser suite
 
 1. Run repository contracts against Node SQLite and local D1.
 2. Run API contracts against Node and Worker composition roots using the same
@@ -1518,7 +1882,7 @@ requirements, and operational recovery promises.
 4. Build the Astro fixture from both runtime exports and compare canonical output
    data, routes, and media references.
 
-### Session 26B — Security and resilience pass
+### Session 33B — Security and resilience pass
 
 1. Review auth/session configuration, CSRF/origin behavior, permission checks,
    rate limits, upload parsing, URL/rich-text sanitization, token hashing, secret
@@ -1529,7 +1893,14 @@ requirements, and operational recovery promises.
 4. Audit dependency vulnerabilities and licenses; document accepted risks rather
    than silently suppressing them.
 
-### Session 26C — Operations and release documentation
+### Session 33C — Operations and release documentation
+
+The generated Cloudflare onboarding from Step 31 and the exact candidate
+artifacts from Step 32 are prerequisites. Verify real VPS and Cloudflare
+installations, including the separate public-site deployment and publish/build
+path, and record the tested versions and provider outcomes. Local simulation
+alone does not satisfy deployment acceptance; missing account access is an
+explicit blocker rather than a passed check.
 
 1. Write local development, generated-project, VPS deployment, Cloudflare
    deployment, backup/restore, migration, key rotation, build recovery, and
@@ -1557,7 +1928,7 @@ From a clean machine/project template:
    successful static release throughout.
 9. Run an upgrade dry-run and prove user-owned site source is untouched.
 
-**Session boundary:** L; use 26A, 26B, and 26C. Do not combine the security pass
+**Session boundary:** L; use 33A, 33B, and 33C. Do not combine the security pass
 with the release-documentation session.
 
 ## 7. Recommended first delivery slices
@@ -1594,7 +1965,19 @@ best checkpoints for demonstrating useful progress are:
     acceptance on the supported runtimes.
 15. **After step 25:** verified alpha artifacts are ready for publication and
     independent local consumer testing; stable-MVP acceptance remains open.
-16. **After step 26:** the MVP is release-ready.
+16. **After step 27:** a consumer can prepare and diagnose a fresh installation
+    from its generated README.
+17. **After step 28:** browser bootstrap and a permission-aware tour complete
+    the first-login experience.
+18. **After step 29:** the intended Astro site is built and publication guidance
+    matches verified dev/manual/automatic behavior.
+19. **After step 30:** renderer distribution has a documented decision; optional
+    installer implementation remains separately scoped.
+20. **After step 31:** complete generated Cloudflare CMS onboarding passes local
+    consumer acceptance and has a real-deployment handoff.
+21. **After step 32:** the feedback improvements pass together against the next
+    compatible alpha artifact set, ready for explicit publication.
+22. **After step 33:** the MVP is release-ready.
 
 Steps 0–3 should be implemented in order. After step 5, SDK fixture work and
 some admin visual-foundation work may proceed in parallel, but persistence,
