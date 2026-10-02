@@ -224,6 +224,14 @@ pnpm build
 pnpm spec:validate
 ```
 
+`pnpm test` runs at most two Turborepo tasks at once and passes
+`--maxWorkers=2` to each package's Vitest runner. This bounds nested parallelism
+when Node subprocess, browser DOM and local Worker tests share a CI host.
+The Worker suites retain their serial file policy. Tests that invoke several
+CLI processes have explicit integration deadlines; ordinary unit tests keep
+Vitest's default timeout. The human and JSON sync/bootstrap cases run separately
+with fresh databases so neither mode consumes the other's deadline.
+
 ## Troubleshooting
 
 - `Missing .env`: run `pnpm dev:env`; it refuses to overwrite existing local
