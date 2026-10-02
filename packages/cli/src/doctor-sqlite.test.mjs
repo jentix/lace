@@ -38,20 +38,26 @@ async function snapshot(root) {
 const inspect = (root, path = "db.sqlite") =>
   nodeMigrations(doctorIO, root, { LACE_DATABASE_PATH: path }, AbortSignal.timeout(5000));
 
-test("real SQLite current, outdated and absent inspection creates no state", async () => {
-  const root = await directory();
-  expect((await inspect(root, "missing/never-created.sqlite")).kind).toBe("unfinished");
-  expect(await readdir(root)).toEqual([]);
-  for (const current of [true, false]) {
-    const db = database(join(root, "db.sqlite"), current);
-    db.close();
-    const before = await snapshot(root);
-    const result = await inspect(root);
-    expect(result.kind).toBe(current ? "pass" : "unfinished");
-    expect(await snapshot(root)).toEqual(before);
-    await rm(join(root, "db.sqlite"));
-  }
-});
+// These cases run several separately bounded child processes; their total CI
+// budget must exceed the five-second deadline of an individual doctor probe.
+test(
+  "real SQLite current, outdated and absent inspection creates no state",
+  { timeout: 20_000 },
+  async () => {
+    const root = await directory();
+    expect((await inspect(root, "missing/never-created.sqlite")).kind).toBe("unfinished");
+    expect(await readdir(root)).toEqual([]);
+    for (const current of [true, false]) {
+      const db = database(join(root, "db.sqlite"), current);
+      db.close();
+      const before = await snapshot(root);
+      const result = await inspect(root);
+      expect(result.kind).toBe(current ? "pass" : "unfinished");
+      expect(await snapshot(root)).toEqual(before);
+      await rm(join(root, "db.sqlite"));
+    }
+  },
+);
 
 test("concurrent complete doctors preserve a populated installation", async () => {
   const root = await directory();
@@ -92,29 +98,33 @@ test("concurrent complete doctors preserve a populated installation", async () =
   expect(await snapshot(root)).toEqual(before);
 });
 
-test("missing ledger, corrupt, denied, symlink and wrong file type have safe diagnostics", async () => {
-  const root = await directory();
-  const path = join(root, "db.sqlite");
-  const db = new DatabaseSync(path);
-  db.close();
-  expect((await inspect(root)).kind).toBe("unfinished");
-  await writeFile(path, "private-error-sentinel");
-  expect((await inspect(root)).kind).toBe("operation");
-  await rm(path);
-  await symlink("missing", path);
-  expect((await inspect(root)).kind).toBe("operation");
-  await rm(path);
-  await mkdir(path);
-  expect((await inspect(root)).kind).toBe("operation");
-  await rm(path, { recursive: true });
-  database(path).close();
-  await chmod(path, 0);
-  try {
-    if (process.getuid?.() !== 0) expect((await inspect(root)).reason).toContain("denied");
-  } finally {
-    await chmod(path, 0o600);
-  }
-});
+test(
+  "missing ledger, corrupt, denied, symlink and wrong file type have safe diagnostics",
+  { timeout: 20_000 },
+  async () => {
+    const root = await directory();
+    const path = join(root, "db.sqlite");
+    const db = new DatabaseSync(path);
+    db.close();
+    expect((await inspect(root)).kind).toBe("unfinished");
+    await writeFile(path, "private-error-sentinel");
+    expect((await inspect(root)).kind).toBe("operation");
+    await rm(path);
+    await symlink("missing", path);
+    expect((await inspect(root)).kind).toBe("operation");
+    await rm(path);
+    await mkdir(path);
+    expect((await inspect(root)).kind).toBe("operation");
+    await rm(path, { recursive: true });
+    database(path).close();
+    await chmod(path, 0);
+    try {
+      if (process.getuid?.() !== 0) expect((await inspect(root)).reason).toContain("denied");
+    } finally {
+      await chmod(path, 0o600);
+    }
+  },
+);
 
 test("locked SQLite never mutates the selected database", async () => {
   const root = await directory();

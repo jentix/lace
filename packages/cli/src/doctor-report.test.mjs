@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { parseDoctorArguments, doctorReport, checkOrder } from "../dist/doctor-report.js";
 
@@ -22,11 +23,12 @@ test("invalid doctor produces sanitized JSON without loading configuration or ru
     process.execPath,
     [resolve(import.meta.dirname, "../dist/bin.js"), "doctor", "secret-sentinel", "--json"],
     {
-      cwd: "/private/tmp",
+      cwd: tmpdir(),
       encoding: "utf8",
       env: { ...process.env, LACE_DATABASE_PATH: "secret-sentinel" },
     },
   );
+  expect(result.error).toBeUndefined();
   expect(result.status).toBe(3);
   expect(result.stderr).toBe("");
   expect(JSON.parse(result.stdout)).toMatchObject({ code: "USAGE", operation: "doctor" });
