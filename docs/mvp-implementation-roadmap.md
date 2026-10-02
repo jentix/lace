@@ -1557,6 +1557,13 @@ how to recover.
 
 ### Session 26B — Actionable operational errors
 
+Completed on 2026-10-02. Operational and upgrade failures include sanitized
+`operation`, `reason` and `nextAction` fields with matching human guidance.
+Known filesystem, schema, config, sync, completed-bootstrap and D1 failures are
+classified without exposing secrets; upgrade reports and recovery state are
+preserved. Existing symbolic/exit codes and successful token output remain
+unchanged. Environment preparation remains session 26C.
+
 1. Review migration, sync, bootstrap, and upgrade failures. Map known failures
    to a sanitized operation, concrete reason, and applicable recovery step;
    retain a safe fallback for unknown failures.

@@ -1,3 +1,4 @@
+import { filesystemKind } from "./diagnostics.js";
 import type { D1Database, D1PreparedStatement, D1Result } from "@lacecms/platform-cloudflare";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { join } from "node:path";
@@ -16,7 +17,12 @@ interface ApiResult {
 
 function toResult(value: ApiResult | undefined): D1Result {
   if (value?.success !== true || (value.results !== undefined && !Array.isArray(value.results)))
-    throw new CliError("OPERATION_FAILED", "Cloudflare D1 query failed.", EXIT.OPERATION);
+    throw new CliError(
+      "OPERATION_FAILED",
+      "Cloudflare D1 query failed.",
+      EXIT.OPERATION,
+      "d1-response",
+    );
   return { meta: { changes: Number(value.meta?.changes ?? 0) }, results: value.results ?? [] };
 }
 
@@ -79,13 +85,19 @@ export class RemoteD1Database implements D1Database {
         body: JSON.stringify({ batch: queries }),
       });
     } catch {
-      throw new CliError("OPERATION_FAILED", "Cloudflare D1 is unavailable.", EXIT.OPERATION);
+      throw new CliError(
+        "OPERATION_FAILED",
+        "Cloudflare D1 is unavailable.",
+        EXIT.OPERATION,
+        "d1-unavailable",
+      );
     }
     if (!response.ok)
       throw new CliError(
         "OPERATION_FAILED",
         `Cloudflare D1 request failed (HTTP ${response.status}).`,
         EXIT.OPERATION,
+        response.status === 401 || response.status === 403 ? "d1-auth" : "d1-unavailable",
       );
     let payload: unknown;
     try {
@@ -95,21 +107,40 @@ export class RemoteD1Database implements D1Database {
         "OPERATION_FAILED",
         "Cloudflare D1 returned an invalid response.",
         EXIT.OPERATION,
+        "d1-response",
       );
     }
+    // Inspect only a missing-ledger signature; never return provider text.
+    const errors = (payload as { errors?: { message?: unknown }[] } | null)?.errors;
+    if (
+      Array.isArray(errors) &&
+      queries.every((query) => query.sql === "select name from d1_migrations") &&
+      errors.some(
+        (error) =>
+          typeof error.message === "string" &&
+          /\bno such table: (?:main\.)?d1_migrations\b/u.test(error.message),
+      )
+    )
+      throw new CliError("SCHEMA_OUTDATED", "D1 migration ledger is missing.", EXIT.SCHEMA);
     if (
       payload === null ||
       typeof payload !== "object" ||
       !("success" in payload) ||
       (payload as { success: unknown }).success !== true
     )
-      throw new CliError("OPERATION_FAILED", "Cloudflare D1 query failed.", EXIT.OPERATION);
+      throw new CliError(
+        "OPERATION_FAILED",
+        "Cloudflare D1 query failed.",
+        EXIT.OPERATION,
+        "d1-response",
+      );
     const results = (payload as { result?: ApiResult[] }).result;
     if (!Array.isArray(results) || results.length !== queries.length)
       throw new CliError(
         "OPERATION_FAILED",
         "Cloudflare D1 returned an incomplete batch.",
         EXIT.OPERATION,
+        "d1-response",
       );
     return results.map(toResult);
   }
@@ -135,12 +166,14 @@ export async function openLocalD1(input: {
   try {
     const database = (await miniflare.getD1Database("DB")) as D1Database;
     return { database, close: () => miniflare.dispose() };
-  } catch {
+  } catch (error) {
     await miniflare.dispose();
+    if (filesystemKind(error)) throw error;
     throw new CliError(
       "OPERATION_FAILED",
       "Local Cloudflare D1 state is unavailable.",
       EXIT.OPERATION,
+      "d1-unavailable",
     );
   }
 }

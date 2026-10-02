@@ -58,10 +58,10 @@ async function terminate(child) {
   child.kill("SIGKILL");
   await exited;
 }
-function cli(options, args) {
+function cli(options, args, json = true) {
   return spawnSync(
     process.execPath,
-    [bin, "upgrade", "--project", options.project, ...args, "--json"],
+    [bin, "upgrade", "--project", options.project, ...args, ...(json ? ["--json"] : [])],
     { encoding: "utf8" },
   );
 }
@@ -85,7 +85,18 @@ it.each([
       const beforeBusy = await snapshot(options.project);
       const busy = cli(options, ["--template", options.template, "--apply"]);
       expect(busy.status).toBe(6);
-      expect(JSON.parse(busy.stdout).code).toBe("UPGRADE_BUSY");
+      expect(JSON.parse(busy.stdout)).toMatchObject({
+        code: "UPGRADE_BUSY",
+        operation: "upgrade",
+        reason: expect.stringContaining("lock"),
+        nextAction: expect.stringContaining("owner"),
+      });
+      if (point === "after-file" && path === "a") {
+        const human = cli(options, ["--template", options.template, "--apply"], false);
+        expect(human.status).toBe(6);
+        expect(human.stderr).toContain("Operation: upgrade");
+        expect(human.stderr).toContain("Recovery:");
+      }
       expect(await snapshot(options.project)).toEqual(beforeBusy);
     } finally {
       await terminate(child);
@@ -94,7 +105,18 @@ it.each([
     const review = cli(options, ["--template", options.template]);
     if (point !== "before-journal") {
       expect(review.status).toBe(6);
-      expect(JSON.parse(review.stdout).code).toBe("UPGRADE_RECOVERY_PENDING");
+      expect(JSON.parse(review.stdout)).toMatchObject({
+        code: "UPGRADE_RECOVERY_PENDING",
+        operation: "upgrade",
+        nextAction: expect.stringContaining("recorded direction"),
+        recovery: { phase: "applying", path: expect.any(String) },
+      });
+      if (point === "after-file" && path === "a") {
+        const human = cli(options, ["--template", options.template], false);
+        expect(human.status).toBe(6);
+        expect(human.stdout).toContain("Operation: upgrade");
+        expect(human.stdout).toContain("Recovery:");
+      }
     } else {
       expect(review.status).toBe(0);
       expect(await snapshot(options.project, false)).toEqual(original);

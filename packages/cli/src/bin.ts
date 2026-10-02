@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { CliError, EXIT, loadEnvironment, parseArguments, presentResult, usage } from "./index.js";
+import { EXIT, loadEnvironment, parseArguments, presentResult, usage } from "./index.js";
 import { runUpgradeCommand, upgradeUsage } from "./upgrade-command.js";
-import { UpgradeError } from "./upgrade-input.js";
+import { describeFailure, failureDiagnostic, identifyOperation } from "./diagnostics.js";
+import type { Target } from "./index.js";
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
@@ -10,6 +11,8 @@ async function main(): Promise<number> {
     return EXIT.OK;
   }
   const json = argv.includes("--json");
+  const operation = identifyOperation(argv);
+  let target: Target = "node";
   try {
     if (argv[0] === "upgrade") {
       if (argv.length === 2 && (argv[1] === "--help" || argv[1] === "-h")) {
@@ -21,36 +24,30 @@ async function main(): Promise<number> {
       return result.exitCode;
     }
     const options = parseArguments(argv);
+    target = options.target;
     const environment = loadEnvironment(options.target, process.env);
     // Runtime adapters are unnecessary for upgrade, help and invalid settings.
     const { runCommand } = await import("./commands.js");
     const result = await runCommand(options, environment);
     const output = presentResult(
-      { ok: result.ok, code: result.code, message: result.message, data: result.data },
+      {
+        ok: result.ok,
+        code: result.code,
+        message: result.message,
+        data: result.data,
+        ...(result.ok ? {} : failureDiagnostic(operation, result.code, target)),
+      },
       options.json,
     );
     if (options.json || result.ok) console.info(output);
     else console.error(output);
     return result.exitCode;
   } catch (error) {
-    if (error instanceof UpgradeError) {
-      const output = presentResult({ ok: false, code: error.code, message: error.message }, json);
-      if (json) console.info(output);
-      else console.error(output);
-      return error.code === "UPGRADE_INPUT" ? EXIT.CONFIG : EXIT.OPERATION;
-    }
-    const failure =
-      error instanceof CliError
-        ? error
-        : new CliError(
-            "OPERATION_FAILED",
-            "Operation failed. Check the selected target, migration state, and configuration.",
-            EXIT.OPERATION,
-          );
-    const output = presentResult({ ok: false, code: failure.code, message: failure.message }, json);
+    const { exitCode, ...failure } = describeFailure(error, operation, target);
+    const output = presentResult(failure, json);
     if (json) console.info(output);
     else console.error(output);
-    return failure.exitCode;
+    return exitCode;
   }
 }
 

@@ -1,3 +1,4 @@
+import type { DiagnosticKind } from "./diagnostics.js";
 export const packageName = "@lacecms/cli";
 
 export { planUpgrade, presentUpgradePlan } from "./upgrade.js";
@@ -32,6 +33,7 @@ export class CliError extends Error {
     readonly code: "USAGE" | "CONFIG" | "SCHEMA_OUTDATED" | "OPERATION_FAILED" | "SYNC_PENDING",
     message: string,
     readonly exitCode: number,
+    readonly diagnosticKind?: DiagnosticKind,
   ) {
     super(message);
     this.name = "CliError";
@@ -120,8 +122,15 @@ export function presentResult(
     readonly code: string;
     readonly message: string;
     readonly data?: unknown;
+    readonly operation?: string;
+    readonly reason?: string;
+    readonly nextAction?: string;
   },
   json: boolean,
 ): string {
-  return json ? JSON.stringify(result) : result.message;
+  return json
+    ? JSON.stringify(result)
+    : result.operation === undefined
+      ? result.message
+      : `${result.message}\nOperation: ${result.operation}\nReason: ${result.reason}\nRecovery: ${result.nextAction}`;
 }

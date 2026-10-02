@@ -1,3 +1,4 @@
+import { missingLedger } from "./diagnostics.js";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,11 +35,16 @@ async function projectModels(cwd: string): Promise<readonly NormalizedContentMod
   try {
     module = await import(pathToFileURL(resolve(cwd, "lace.config.ts")).href);
   } catch {
-    throw new CliError("CONFIG", "Could not load root lace.config.ts.", EXIT.CONFIG);
+    throw new CliError(
+      "CONFIG",
+      "Could not load root lace.config.ts.",
+      EXIT.CONFIG,
+      "project-config",
+    );
   }
   const config = (module as { default?: { runtime?: { content?: unknown } } }).default;
   if (!Array.isArray(config?.runtime?.content))
-    throw new CliError("CONFIG", "Invalid root lace.config.ts.", EXIT.CONFIG);
+    throw new CliError("CONFIG", "Invalid root lace.config.ts.", EXIT.CONFIG, "project-config");
   return config.runtime.content as readonly NormalizedContentModel[];
 }
 
@@ -46,8 +52,8 @@ function assertNodeSchema(connection: Parameters<typeof listAppliedMigrations>[0
   try {
     const installed = new Set(listAppliedMigrations(connection).map((entry) => entry.createdAt));
     if (checkedInMigrations.every((item) => installed.has(item.createdAt))) return;
-  } catch {
-    /* Missing migration ledger is outdated schema. */
+  } catch (error) {
+    if (!missingLedger(error)) throw error;
   }
   throw new CliError(
     "SCHEMA_OUTDATED",
@@ -61,8 +67,8 @@ async function assertD1Schema(database: D1Database): Promise<void> {
     const rows = await database.prepare("select name from d1_migrations").all<{ name: string }>();
     const installed = new Set(rows.results.map((row) => row.name));
     if (checkedInMigrations.every((item) => installed.has(item.name))) return;
-  } catch {
-    /* Missing migration ledger is outdated schema. */
+  } catch (error) {
+    if (!missingLedger(error)) throw error;
   }
   throw new CliError(
     "SCHEMA_OUTDATED",
@@ -112,6 +118,21 @@ async function sync(
   };
 }
 
+async function bootstrapToken<T>(create: () => Promise<T>): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (error instanceof Error && error.message === "Setup already completed.")
+      throw new CliError(
+        "OPERATION_FAILED",
+        "First-administrator setup has already completed.",
+        EXIT.OPERATION,
+        "setup-complete",
+      );
+    throw error;
+  }
+}
+
 export async function runCommand(
   options: CliOptions,
   environment: CliEnvironment,
@@ -133,7 +154,8 @@ export async function runCommand(
     }
     try {
       await access(databasePath);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       throw new CliError(
         "SCHEMA_OUTDATED",
         "SQLite database is missing. Run `lace db migrate` first.",
@@ -149,9 +171,11 @@ export async function runCommand(
           new NodeContentRepository(opened.connection, () => undefined),
           options.check,
         );
-      const setup = await new NodeSecurityService(opened.connection, () =>
-        new SystemNodeClock().now(),
-      ).createSetupToken();
+      const setup = await bootstrapToken(() =>
+        new NodeSecurityService(opened.connection, () =>
+          new SystemNodeClock().now(),
+        ).createSetupToken(),
+      );
       return {
         ok: true,
         code: "BOOTSTRAP_TOKEN",
@@ -223,9 +247,9 @@ export async function runCommand(
         new D1ContentRepository(database, () => undefined),
         options.check,
       );
-    const setup = await new D1SecurityService(database, () =>
-      new SystemNodeClock().now(),
-    ).createSetupToken();
+    const setup = await bootstrapToken(() =>
+      new D1SecurityService(database, () => new SystemNodeClock().now()).createSetupToken(),
+    );
     return {
       ok: true,
       code: "BOOTSTRAP_TOKEN",
