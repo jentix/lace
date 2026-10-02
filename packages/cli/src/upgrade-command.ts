@@ -1,3 +1,4 @@
+import { diagnosticText, failureDiagnostic } from "./diagnostics.js";
 import { EXIT, CliError } from "./index.js";
 import { planUpgrade, presentUpgradePlan } from "./upgrade.js";
 import { applyUpgrade } from "./upgrade-apply.js";
@@ -60,6 +61,8 @@ export async function runUpgradeCommand(
         : await applyUpgrade({ project: options.project, template: options.template! });
     const code = `UPGRADE_${outcome.status.toUpperCase().replaceAll("-", "_")}`;
     const message = `Upgrade ${outcome.status}: ${outcome.fromVersion} -> ${outcome.toVersion}.${outcome.conflictPath === null ? "" : ` Review artifacts at ${outcome.conflictPath}; resolve working files explicitly and retry.`}${outcome.recoveryPath === null ? "" : ` Recovery metadata: ${outcome.recoveryPath}.`}`;
+    const diagnostic =
+      outcome.status === "conflicts" ? failureDiagnostic("upgrade", code) : undefined;
     const guidance = presentUpgradeInstructions(
       outcome.instructions?.templateVersion ??
         (options.action === "rollback" ? outcome.fromVersion : outcome.toVersion),
@@ -73,8 +76,9 @@ export async function runUpgradeCommand(
             message,
             data: outcome,
             guidance,
+            ...diagnostic,
           })
-        : `${message}\n${guidance}`,
+        : `${message}\n${guidance}${diagnostic ? `\n${diagnosticText(diagnostic)}` : ""}`,
       exitCode: outcome.status === "conflicts" ? EXIT.PENDING : EXIT.OK,
     };
   }
@@ -92,6 +96,7 @@ export async function runUpgradeCommand(
   const message = pending
     ? `Upgrade recovery pending (${recovery.pointer.phase}) at ${transactionPath(recovery.pointer.id)}. Repeat matching --apply or --rollback in the recorded direction. No files written.`
     : `Upgrade dry run: ${plan.changes} change(s), ${plan.conflicts} conflict(s). No files written.`;
+  const diagnostic = pending || plan.conflicts > 0 ? failureDiagnostic("upgrade", code) : undefined;
   const guidance = presentUpgradeInstructions(target.templateVersion, instructions);
   return {
     output: options.json
@@ -102,11 +107,12 @@ export async function runUpgradeCommand(
           data: plan,
           instructions,
           guidance,
+          ...diagnostic,
           recovery: pending
             ? { phase: recovery.pointer.phase, path: transactionPath(recovery.pointer.id) }
             : null,
         })
-      : `${pending ? `${message}\n` : ""}${presentUpgradePlan(plan)}\n${guidance}`,
+      : `${pending ? `${message}\n` : ""}${presentUpgradePlan(plan)}\n${guidance}${diagnostic ? `\n${diagnosticText(diagnostic)}` : ""}`,
     exitCode: pending ? EXIT.OPERATION : plan.conflicts > 0 ? EXIT.PENDING : EXIT.OK,
   };
 }

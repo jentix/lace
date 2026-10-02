@@ -1557,6 +1557,13 @@ how to recover.
 
 ### Session 26B — Actionable operational errors
 
+Completed on 2026-10-02. Operational and upgrade failures include sanitized
+`operation`, `reason` and `nextAction` fields with matching human guidance.
+Known filesystem, schema, config, sync, completed-bootstrap and D1 failures are
+classified without exposing secrets; upgrade reports and recovery state are
+preserved. Existing symbolic/exit codes and successful token output remain
+unchanged. Environment preparation remains session 26C.
+
 1. Review migration, sync, bootstrap, and upgrade failures. Map known failures
    to a sanitized operation, concrete reason, and applicable recovery step;
    retain a safe fallback for unknown failures.
@@ -1568,6 +1575,18 @@ how to recover.
    modes. Successful bootstrap retains its single intentional token reveal.
 
 ### Session 26C — Environment preparation
+
+Completed on 2026-10-02. `lace env prepare [--json]` and generated
+`pnpm env:prepare` work before `.env` exists. Preparation preserves template
+settings, generates independent auth/MinIO/builder credentials, leaves the
+build token empty, and publishes a complete owner-only file without overwriting
+existing or concurrently created destinations. Sanitized recovery diagnostics,
+write/publication failures, real process races and protected staging after
+termination are covered. An isolated consumer installed from 12 packed Lace
+packages passed preparation, repeat preservation and both migrations. CLI and
+generator tests, root typecheck, Oxlint, Oxfmt and strict OpenSpec validation
+passed. Existing alpha coordinates are unchanged; the next artifact refresh
+remains Step 32B.
 
 1. Add an explicit local preparation command; settle its name and generated
    script in the proposal. It must work before `.env` exists.

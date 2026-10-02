@@ -12,10 +12,16 @@ After the owner publishes the complete compatible alpha set, generate and instal
 pnpm create lace@0.1.0-alpha.1 my-site
 cd my-site
 pnpm install
-cp .env.example .env
+pnpm env:prepare
 ```
 
-MinIO is built once from the pinned source in `deploy/minio.Dockerfile`, requiring network access to its source and Go modules and sufficient disk space. Set `LACE_API_IMAGE` and `LACE_BUILDER_IMAGE` in `.env` to compatible image tags. Choose your own `LACE_AUTH_SECRET` (at least 32 characters), `LACE_MINIO_ROOT_ACCESS_KEY`, `LACE_MINIO_ROOT_SECRET` and `LACE_BUILDER_SECRET`. Generate fresh random secrets with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`; never commit `.env` or use default credentials.
+`pnpm env:prepare` runs the packaged `lace env prepare` before `.env` exists. It preserves the template's local settings, generates independent cryptographically random `LACE_AUTH_SECRET`, `LACE_MINIO_ROOT_ACCESS_KEY`, `LACE_MINIO_ROOT_SECRET` and `LACE_BUILDER_SECRET`, and leaves `LACE_BUILD_TOKEN` empty. It prints no credentials and publishes a complete `.env` with owner-only POSIX permissions (`0600`). On Windows, verify equivalent owner-only ACLs. Never commit `.env` or use default credentials.
+
+Preparation refuses to replace any existing `.env`, including concurrent creation. If you already have one, retain it and review its settings privately; this command does not rotate credentials. A missing, symlinked or malformed `.env.example` must be restored as a regular file with one single-line `NAME=value` assignment for each generated credential and `LACE_BUILD_TOKEN`. Filesystem failures require checking directory permissions and hard-link support. If preparation was forcibly stopped, `.env` is either absent or fully written; private ignored `.lace-env-*` staging directories can be removed after confirming no preparation is running. Retry only when `.env` is absent.
+
+This preparation flow requires packages packed from the revision that implements Step 26C (or a later compatible published release). Previously published `0.1.0-alpha.1` artifacts are not retroactively updated. The next coherent alpha artifact/version refresh is a separate release step.
+
+MinIO is built once from the pinned source in `deploy/minio.Dockerfile`, requiring network access to its source and Go modules and sufficient disk space. Review `LACE_API_IMAGE` and `LACE_BUILDER_IMAGE` in `.env` and select compatible image tags.
 
 Keep `LACE_BUILD_TOKEN` empty until setup finishes. Local API startup does not need it; starting the full builder requires a real read-only build token. Keep these settings aligned:
 
@@ -40,7 +46,7 @@ pnpm auth:bootstrap
 pnpm dev:api
 ```
 
-Migrations are explicit and repeatable; the API does not apply them on startup. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
+Migrations are explicit and repeatable; the API does not apply them on startup. With packages built after the fresh SQLite migration fix (26A), `pnpm db:migrate` creates missing parent directories for `LACE_DATABASE_PATH`, including `.lace/data`, and preserves existing database contents. No manual directory creation is needed with those rebuilt packages. The originally published `0.1.0-alpha.1` packages predate this fix; until a release includes it, those packages still require `mkdir -p .lace/data` before their first migration. Sync creates the singleton Home draft and registers Posts. Bootstrap prints a one-time setup token and expiry. Capture it privately. Bootstrap refuses after first-admin setup completes; for an expired unused token, run bootstrap again before completing setup.
 
 The initial alpha has no browser setup wizard. Create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). This Bash snippet prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
 

@@ -11,6 +11,25 @@ Deployment order:
 
 Exit codes: `0` success, `2` sync pending, `3` command usage, `4` missing or invalid configuration, `5` missing migration, and `6` failed operation. `--json` prints one result object to stdout, including one-time token data only for successful bootstrap. Other failures print sanitized diagnostics and no supplied secret value. The CLI never prompts, including in CI.
 
+Failed commands also include `operation`, `reason` and `nextAction` strings. Human output shows the same information as Operation, Reason and Recovery. Existing `ok`, `code`, `message`, reports/data and process exit codes remain available; successful responses are unchanged. Upgrade's existing `recovery` state object is preserved separately from `nextAction`.
+
+For example, a sync against an unmigrated Cloudflare-local installation returns exit `5` and one object like:
+
+```json
+{
+  "ok": false,
+  "code": "SCHEMA_OUTDATED",
+  "message": "D1 schema is outdated. Run `lace db migrate --target ...` first.",
+  "operation": "content sync",
+  "reason": "The selected database is missing or its migration ledger is outdated.",
+  "nextAction": "Run lace db migrate --target cloudflare-local with the same settings, then retry the original command."
+}
+```
+
+Denied access advises checking database/project and parent permissions; unusable paths advise correcting the configured file/directory shape; database locks advise waiting before retrying. Invalid settings name only settings, and invalid `lace.config.ts` directs you to its root export/model definitions. Missing/outdated schemas recommend explicit migration for the selected target. D1 connectivity and authorization failures use operation exit `6`, with service/credential-permission guidance rather than a false migration diagnosis. Wrangler failures never forward subprocess output. Unrecognized failures use fixed safe guidance without raw exceptions, stacks, paths or secret values.
+
+Pending sync retains exit `2`; review the plan before explicitly applying. Blocked sync retains exit `6` and its model diagnostics; restore compatible configuration or plan an explicit content migration. Completed bootstrap retains `OPERATION_FAILED`/exit `6` and directs you to sign in with the existing administrator; it cannot reveal another setup token. Recovery guidance does not execute commands or switch targets. Upgrade conflicts, locks and interrupted operations retain the reports and recovery rules below.
+
 ## Upgrade review and apply (Steps 24A–24B)
 
 `lace upgrade` defaults to a read-only plan. Prepare a pristine project with the target generator release in a separate, non-overlapping parent directory, using the same project basename and optional `--cloudflare` setting as the installed project. Its `.lace/manifest.json` and managed bytes are the target template; the installed manifest hashes represent the old template. For example, with `/work/my-site` as the installed project and a reviewed target generator release:
@@ -87,3 +106,11 @@ pnpm exec lace content sync --target node
 ```
 
 Use `--target cloudflare-local` or explicitly `--target cloudflare-remote` with its required settings for Cloudflare. Migration/config synchronization order follows the reviewed release and deployment plan; upgrade does not run either command. Filesystem rollback **does not undo database migrations**, uploaded objects or content. Restore database/object backups separately if the release requires data rollback.
+
+## Local environment preparation
+
+From a generated project root, run `pnpm env:prepare` (or `lace env prepare [--json]`) after installing packages and before loading `.env`. This command needs no database settings, target selection or running services. It creates `.env` from a regular `.env.example`, generates auth/MinIO/builder credentials, preserves other settings and leaves `LACE_BUILD_TOKEN` empty for later issuance in Settings. Secrets are never printed. POSIX permissions are `0600`; verify owner-only ACLs on Windows.
+
+An existing `.env` is never overwritten, even by concurrent preparation. Retain it and review settings privately; preparation does not rotate credentials. Templates require exactly one single-line assignment for each of the four generated credential names and `LACE_BUILD_TOKEN`. Errors provide sanitized operation/reason/nextAction guidance. JSON is one object: success `ENV_PREPARED` (exit 0), usage `USAGE` (3), template `CONFIG` (4), filesystem/existing destination `OPERATION_FAILED` (6).
+
+Publication requires same-filesystem hard links. Normal failures remove private staging; forcible termination may leave ignored `.lace-env-*` directories, which may be removed after confirming no preparation process is running. `.env` remains absent or complete. This flow requires source/packed packages containing Step 26C; it does not alter previously published alpha artifacts.

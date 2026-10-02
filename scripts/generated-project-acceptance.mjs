@@ -8,12 +8,14 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import {
   assertSecretFree,
   assertImageFileList,
@@ -226,7 +228,6 @@ async function prepareCompose(project, parent, releaseArtifacts) {
   ]) {
     secretValues.add(values[key]);
   }
-  await mkdir(join(project, ".lace", "data"), { recursive: true });
   await writeFile(
     join(project, ".env"),
     `${Object.entries(values)
@@ -268,6 +269,13 @@ async function nodeJourney(context) {
   const { project, apiPort } = context;
   const databasePath = join(project, ".lace", "data", "lace.sqlite");
   const env = { LACE_DATABASE_PATH: databasePath };
+  const dataDirectory = join(project, ".lace", "data");
+  try {
+    await stat(dataDirectory);
+    throw new Error("cli-db-migrate: database parent was created before fresh migration");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   for (const command of [
     ["db", "migrate"],
     ["content", "sync"],
@@ -277,6 +285,8 @@ async function nodeJourney(context) {
       env,
     });
     if (!JSON.parse(output).ok) throw new Error(`cli-${command.join("-")}: unsuccessful result`);
+    if (command[0] === "db" && !(await stat(dataDirectory)).isDirectory())
+      throw new Error("cli-db-migrate: migration did not create the database parent");
   }
   const bootstrap = JSON.parse(
     await run("cli-bootstrap", "pnpm", ["auth:bootstrap", "--json"], {
@@ -687,6 +697,88 @@ async function installPackedConsumer(project, tarballs) {
       throw new Error(`install: ${name} resolves outside generated project: ${resolved}`);
     }
   }
+}
+
+async function environmentPreparation(project) {
+  const diagnosticStart = capturedDiagnostics.length;
+  const example = await readFile(join(project, ".env.example"), "utf8");
+  const output = await run("env-prepare", "pnpm", ["env:prepare", "--json"], {
+    cwd: project,
+    env: { LACE_DATABASE_PATH: "", LACE_AUTH_SECRET: "ignored-process-credential" },
+  });
+  const resultLine = output.trim().split("\n").at(-1);
+  const result = JSON.parse(resultLine);
+  if (result.ok !== true || result.code !== "ENV_PREPARED")
+    throw new Error("env-prepare: unexpected success response");
+  const bytes = await readFile(join(project, ".env"), "utf8");
+  const values = parseEnv(bytes);
+  const credentials = [
+    "LACE_AUTH_SECRET",
+    "LACE_MINIO_ROOT_ACCESS_KEY",
+    "LACE_MINIO_ROOT_SECRET",
+    "LACE_BUILDER_SECRET",
+  ];
+  for (const name of credentials) {
+    const format = name === "LACE_MINIO_ROOT_ACCESS_KEY" ? /^[A-Za-z0-9]{20}$/u : /^[a-f0-9]{64}$/u;
+    if (!format.test(values[name] ?? "")) throw new Error(`env-prepare: invalid ${name} format`);
+    secretValues.add(values[name]);
+  }
+  if (new Set(credentials.map((name) => values[name])).size !== 4 || values.LACE_BUILD_TOKEN !== "")
+    throw new Error("env-prepare: credentials are not independent or build token is populated");
+  for (const [name, value] of Object.entries(parseEnv(example))) {
+    if (!credentials.includes(name) && values[name] !== value)
+      throw new Error(`env-prepare: changed template setting ${name}`);
+  }
+  const scrub = (text) =>
+    text.replace(
+      /^(LACE_(?:AUTH_SECRET|MINIO_ROOT_ACCESS_KEY|MINIO_ROOT_SECRET|BUILDER_SECRET))=.*$/gmu,
+      "$1=",
+    );
+  if (scrub(bytes) !== scrub(example))
+    throw new Error("env-prepare: unrelated template bytes changed");
+  if (process.platform !== "win32" && ((await stat(join(project, ".env"))).mode & 0o777) !== 0o600)
+    throw new Error("env-prepare: unsafe file permissions");
+  // Capture expected nonzero CLI status without making the acceptance wrapper fail.
+  const repeat = JSON.parse(
+    await run(
+      "env-prepare-repeat",
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `
+    import { spawnSync } from 'node:child_process';
+    const result = spawnSync(process.execPath, ['node_modules/@lacecms/cli/dist/bin.js', 'env', 'prepare', '--json'], { encoding: 'utf8' });
+    console.info(JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr }));
+  `,
+      ],
+      { cwd: project },
+    ),
+  );
+  const failure = JSON.parse(repeat.stdout);
+  if (
+    repeat.status !== 6 ||
+    repeat.stderr !== "" ||
+    repeat.stdout.trim().split("\n").length !== 1 ||
+    failure.code !== "OPERATION_FAILED" ||
+    failure.operation !== "env prepare" ||
+    !failure.reason ||
+    !failure.nextAction
+  )
+    throw new Error("env-prepare: repeat did not return the sanitized refusal contract");
+  if ((await readFile(join(project, ".env"), "utf8")) !== bytes)
+    throw new Error("env-prepare: repeat changed configuration");
+  if ((await readdir(project)).some((name) => name.startsWith(".lace-env-")))
+    throw new Error("env-prepare: normal operation left staging files");
+  for (const diagnostic of capturedDiagnostics.slice(diagnosticStart))
+    assertSecretFree(diagnostic, secretValues, "environment preparation output");
+  await run("prepared-db-migrate", "pnpm", ["db:migrate", "--json"], { cwd: project });
+  await run("prepared-db-migrate-repeat", "pnpm", ["db:migrate", "--json"], { cwd: project });
+  if ((await readFile(join(project, ".env"), "utf8")) !== bytes)
+    throw new Error("env-prepare: migrations changed environment");
+  console.info(
+    "Packed consumer environment preparation, secrecy, preservation and migrations passed",
+  );
 }
 
 async function expectDenied(base, path, options = {}, statuses = [401, 403]) {
@@ -1105,7 +1197,10 @@ async function main() {
   await run("generate", "node", ["packages/create-lace/dist/bin.js", "create", project]);
   await installPackedConsumer(project, tarballs);
   console.info(`Packed consumer installed: ${tarballs.size} Lace tarballs; ${basename(project)}`);
-  if (phase === "packages") return;
+  if (phase === "packages") {
+    await environmentPreparation(project);
+    return;
+  }
   const context = await prepareCompose(project, parent);
   const session = await nodeJourney(context);
   if (phase === "node") return;

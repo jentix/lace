@@ -22,11 +22,12 @@ export async function verifyD1Config(configPath: string, databaseId: string): Pr
   } catch {
     throw new CliError("CONFIG", "Invalid LACE_WRANGLER_CONFIG.", EXIT.CONFIG);
   }
-  const databases = (config as { d1_databases?: { binding?: string; database_id?: string }[] })
-    .d1_databases;
+  const databases = (
+    config as { d1_databases?: { binding?: string; database_id?: string }[] } | null
+  )?.d1_databases;
   if (
     !Array.isArray(databases) ||
-    databases.find((entry) => entry.binding === "DB")?.database_id !== databaseId
+    databases.find((entry) => entry?.binding === "DB")?.database_id !== databaseId
   )
     throw new CliError(
       "CONFIG",
@@ -76,11 +77,13 @@ export async function runMigration(input: MigrateInput): Promise<readonly string
     encoding: "utf8",
     env: { ...process.env, CI: "true", WRANGLER_SEND_METRICS: "false" },
   });
-  if (result.error || result.status !== 0)
+  if (result.error) throw result.error;
+  if (result.status !== 0)
     throw new CliError(
       "OPERATION_FAILED",
       "D1 migration failed; inspect the configured Wrangler target and retry.",
       EXIT.OPERATION,
+      "wrangler",
     );
   if (!input.d1) return [];
   const installed = await input.d1

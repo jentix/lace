@@ -3,6 +3,8 @@ export { checkedInMigrations } from "@lacecms/db";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import Database from "better-sqlite3";
 
 export const packageName = "@lacecms/platform-node";
@@ -47,6 +49,7 @@ export function listAppliedMigrations(connection: Database.Database): readonly A
 
 /** Applies checked-in forward migrations and returns their installed versions. */
 export function migrateNodeDatabase(databasePath: string): readonly AppliedMigration[] {
+  if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
   const database = openNodeDatabase(databasePath);
   try {
     migrate(database.drizzle, { migrationsFolder: migrationFolder });

@@ -10,6 +10,7 @@
     "prod:stop": "docker compose down",
     "build": "pnpm --dir site build",
     "typecheck": "pnpm --dir site typecheck",
+    "env:prepare": "node node_modules/@lacecms/cli/dist/bin.js env prepare",
     "db:migrate": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js db migrate",
     "content:sync": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js content sync",
     "auth:bootstrap": "node --env-file=.env node_modules/@lacecms/cli/dist/bin.js auth bootstrap"
