@@ -43,3 +43,30 @@ the same-origin API request and ignored server-side environment setup.
 Sensitive authentication, setup, token-management, and upload operations use
 fixed windows. A `429` includes `Retry-After`; retry only after that duration.
 Persistence records HMAC bucket identities, never raw emails or client IPs.
+
+## Optional admin introduction
+
+Every authenticated role can choose **Start tour** from the first-use welcome
+panel, or **Introduction** in the account menu to replay from the beginning.
+Back/Next move between steps; Finish records completion, while Skip, Close, or
+Escape records dismissal. The offer never blocks work or steals focus. The tour
+stays over the current route and preserves an unsaved draft. On mobile, open
+navigation to reach the account menu; the sheet closes before the tour opens.
+
+Guidance follows current navigation and role: admin/editor can edit drafts and
+upload media, viewer can inspect, and only admin receives publication, build
+request/retry, Users/Settings, and build-token creation instructions. Build tokens
+read published exports only and reveal their plaintext once in their existing
+creation dialog. The tour never creates a token. Publishing content does not
+guarantee immediate site refresh or successful deployment; Step 29 owns verified
+mode-specific instructions and must reconcile this copy when implemented.
+
+Tour status is local to the browser, installation origin and admin base path,
+user ID, and tour version. Sign-out preserves a saved record, role changes reuse
+it, and replay reflects resolved current permissions. Different users/addresses
+and tour versions are separate; clearing local storage resets the offer. There
+is no device/browser synchronization or server onboarding record. If local
+storage cannot be read/written, an in-memory record lasts for the current document
+and shell remounts, but reload may offer again. Replacing a database behind the
+same address and same user ID cannot be distinguished without clearing storage.
+No email, password, session credential, build token, or content enters tour storage.

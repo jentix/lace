@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { ChevronsUpDown, LogOut } from "lucide-react";
 import { roleLabel as labelOfRole, type AdminRole } from "../../../entities/session/index.js";
 import {
@@ -25,19 +26,24 @@ function initialsOf(name: string | undefined): string {
 export function UserMenu({
   displayName,
   onSignOut,
+  onIntroduction,
   role,
   signingOut,
 }: {
   readonly displayName?: string | undefined;
+  readonly onIntroduction?: ((opener: HTMLElement | null) => void) | undefined;
   readonly onSignOut: () => void;
   readonly role: AdminRole;
   readonly signingOut: boolean;
 }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const replayPending = useRef(false);
   const name = displayName ?? neutralName;
   const roleLabel = labelOfRole(role);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        ref={trigger}
         aria-label={`${name}, ${roleLabel}, account menu`}
         className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm transition-colors duration-(--duration-fast) hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:bg-sidebar-accent"
       >
@@ -56,6 +62,12 @@ export function UserMenu({
         <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        onCloseAutoFocus={() => {
+          if (replayPending.current) {
+            replayPending.current = false;
+            queueMicrotask(() => onIntroduction?.(trigger.current));
+          }
+        }}
         align="start"
         className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
         side="top"
@@ -67,6 +79,15 @@ export function UserMenu({
           <span className="text-xs text-muted-foreground">{roleLabel}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {onIntroduction && (
+          <DropdownMenuItem
+            onSelect={() => {
+              replayPending.current = true;
+            }}
+          >
+            Introduction
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem disabled={signingOut} onSelect={onSignOut}>
           <LogOut aria-hidden="true" />
           {signingOut ? "Signing out…" : "Log out"}

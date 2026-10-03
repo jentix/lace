@@ -262,3 +262,25 @@ Detailed Node, authentication, and migration behavior is documented in
 [docs/node-api.md](./docs/node-api.md),
 [docs/auth-operations.md](./docs/auth-operations.md), and
 [docs/database-migrations.md](./docs/database-migrations.md).
+
+### Admin introduction
+
+After sign-in, **Start tour** offers an optional introduction to your available
+workflows. **Skip**, Escape, or the close control dismisses it; work can continue
+without taking the tour. Replay it any time from the account menu's
+**Introduction** action, including through mobile navigation.
+
+Steps follow configured Pages/Collections and your current role. Editors learn
+drafts and media uploads, viewers get inspection guidance, and admins also learn
+publication, build recovery, Users, Settings, and once-shown read-only build
+tokens. Publishing a snapshot and updating the served site are separate; inspect
+build status according to your site's rendering/build setup. Step 29 will add
+verified guidance for individual publication modes.
+
+Completion and dismissal are local to this browser, installation origin/admin
+base path, user ID, and tour version. They survive reload/sign-in when browser
+storage works, but do not synchronize across devices. Clearing storage or a new
+tour version offers the introduction again. If storage is unavailable, dismissal
+lasts for the current page lifetime, including navigation; reload can offer again.
+Replacing an installation at the same address with the same user ID reuses its
+marker. Only a completion/dismissal marker is stored, never content or credentials.

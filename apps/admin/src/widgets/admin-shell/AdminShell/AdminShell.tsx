@@ -1,7 +1,17 @@
-import { Outlet } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSession, useSessionRecovery } from "../../../entities/session/index.js";
+import { IntroductoryTour, type TourHandle } from "../IntroductoryTour/index.js";
+import { tourSteps } from "../tour.js";
+import { tourStorageKey } from "../tour-storage.js";
+import { Outlet, useRouter } from "@tanstack/react-router";
+import { useRef, useState, type ReactNode } from "react";
 import { useSignOut } from "../../../features/sign-out/index.js";
-import { errorDescription, technicalDetails } from "../../../shared/api/index.js";
+import {
+  adminQueryKeys,
+  useAdminClient,
+  errorDescription,
+  technicalDetails,
+} from "../../../shared/api/index.js";
 import { ErrorState } from "../../../shared/ui/ErrorState/index.js";
 import { HeaderActionsTargetContext } from "../header-actions.js";
 import { ShellHeader } from "../ShellHeader/index.js";
@@ -12,6 +22,25 @@ import { SidebarNav } from "../SidebarNav/index.js";
  * and the route content in a raised panel under breadcrumbs.
  */
 export function AdminShell({ children }: { readonly children: ReactNode }) {
+  const session = useSession();
+  const router = useRouter();
+  const client = useAdminClient();
+  const models = useQuery({ queryFn: client.listModels, queryKey: adminQueryKeys.models });
+  useSessionRecovery(models.error);
+  const scope = {
+    origin: window.location.origin,
+    basepath: router.options.basepath ?? "/",
+    userId: session.id,
+  };
+  const tour = useRef<TourHandle>(null);
+  const onIntroduction = (opener: HTMLElement | null) => tour.current?.start(opener);
+  const fallbackFocus = () =>
+    Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-introduction-fallback="mobile"], aside [aria-label$="account menu"]',
+      ),
+    ).find((element) => element.getClientRects().length > 0) ??
+    document.getElementById("main-content");
   const signOut = useSignOut();
   const signOutProps = { onSignOut: () => signOut.mutate(), signingOut: signOut.isPending };
   const [actionsTarget, setActionsTarget] = useState<HTMLElement | null>(null);
@@ -28,10 +57,14 @@ export function AdminShell({ children }: { readonly children: ReactNode }) {
           aria-label="Admin navigation"
           className="hidden w-60 shrink-0 md:sticky md:top-0 md:block md:h-screen"
         >
-          <SidebarNav {...signOutProps} />
+          <SidebarNav {...signOutProps} onIntroduction={onIntroduction} />
         </aside>
         <div className="flex min-h-screen min-w-0 flex-1 flex-col bg-background md:m-2 md:ml-0 md:min-h-[calc(100vh-1rem)] md:rounded-xl md:border md:border-border md:shadow-xs">
-          <ShellHeader actionsRef={setActionsTarget} {...signOutProps} />
+          <ShellHeader
+            actionsRef={setActionsTarget}
+            {...signOutProps}
+            onIntroduction={onIntroduction}
+          />
           <main className="min-w-0 flex-1 p-4 outline-none md:p-6" id="main-content" tabIndex={-1}>
             {signOut.error === null ? undefined : (
               <div className="mb-4">
@@ -41,6 +74,13 @@ export function AdminShell({ children }: { readonly children: ReactNode }) {
                 />
               </div>
             )}
+            <IntroductoryTour
+              key={tourStorageKey(scope)}
+              scope={scope}
+              steps={tourSteps(session.role, models.isError ? undefined : models.data?.items)}
+              ref={tour}
+              fallbackFocus={fallbackFocus}
+            />
             {children}
           </main>
         </div>
