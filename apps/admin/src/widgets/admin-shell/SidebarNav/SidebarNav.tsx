@@ -14,9 +14,11 @@ const itemClass =
 /** Brand, grouped role-aware navigation, and the user menu; rendered in the aside and the sheet. */
 export function SidebarNav({
   onNavigate,
+  onIntroduction,
   onSignOut,
   signingOut,
 }: {
+  readonly onIntroduction?: ((opener: HTMLElement | null) => void) | undefined;
   readonly onNavigate?: (() => void) | undefined;
   readonly onSignOut: () => void;
   readonly signingOut: boolean;
@@ -79,6 +81,7 @@ export function SidebarNav({
         ))}
       </nav>
       <UserMenu
+        onIntroduction={onIntroduction}
         displayName={session.displayName}
         onSignOut={onSignOut}
         role={session.role}

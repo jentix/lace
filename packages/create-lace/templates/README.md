@@ -37,7 +37,9 @@ Migrate explicitly before startup; the API does not migrate automatically. Match
 
 ## Create the first administrator
 
-The current flow uses `POST /api/v1/setup/admin` with exactly `token`, `email` and `password` (12–1024 characters). The following is a placeholder-only request: replace `<PUBLIC_API_BASE_URL>` with your configured `LACE_PUBLIC_BASE_URL`, including any path prefix and its trailing slash; use the token just issued by bootstrap and a password of at least 12 characters.
+With API/admin artifacts built after Step 28A or a later compatible release, open `/admin/` at the configured `LACE_PUBLIC_BASE_URL` origin. While installation setup is incomplete, enter your email, a password of 12–1024 characters, and the operator-issued bootstrap token, create the administrator, then sign in normally. After an interruption, retry with the same token and email; completed setup stays closed. The originally published `0.1.0-alpha.1` artifacts predate browser setup.
+
+The API alternative uses `POST /api/v1/setup/admin` with exactly `token`, `email` and `password` (12–1024 characters). The following is a placeholder-only request: replace `<PUBLIC_API_BASE_URL>` with your configured `LACE_PUBLIC_BASE_URL`, including any path prefix and its trailing slash; use the token just issued by bootstrap and a password of at least 12 characters.
 
 ```bash
 curl --fail-with-body --silent --show-error --request POST \
@@ -46,7 +48,7 @@ curl --fail-with-body --silent --show-error --request POST \
   --data '{"token":"<SETUP_TOKEN>","email":"<ADMIN_EMAIL>","password":"<PASSWORD_AT_LEAST_12_CHARACTERS>"}'
 ```
 
-Replacing inline placeholders with real credentials exposes them in shell history and process arguments. Prefer the [private-input setup script](docs/lace-operations.md#migrate-sync-and-create-the-first-administrator), which reads the configured `LACE_PUBLIC_BASE_URL` and prompts without putting credentials in shell history. A browser setup wizard is not delivered yet.
+Replacing inline placeholders with real credentials exposes them in shell history and process arguments. Prefer the [private-input setup script](docs/lace-operations.md#migrate-sync-and-create-the-first-administrator), which reads the configured `LACE_PUBLIC_BASE_URL` and prompts without putting credentials in shell history.
 
 If an unused token expires, run `pnpm auth:bootstrap` again while setup is incomplete. Successful setup consumes the token and closes the endpoint (later requests return 404); bootstrap then refuses another token. Sign in with the existing administrator instead. A setup token is neither a password nor a build token.
 
@@ -93,4 +95,4 @@ README, `lace.config.ts` and `site/**` are user-owned and upgrades preserve edit
 
 ## Optional Cloudflare
 
-`--cloudflare` adds Pages config and a manual workflow for the static site. After building, `pnpm exec wrangler pages dev site/dist` previews Pages locally. It does not deliver or deploy the CMS Worker. Complete generated D1/R2/Worker onboarding remains Step 31 work; configure any independent Worker explicitly and keep remote mutations intentional. See [Cloudflare scope](docs/lace-operations.md#optional-cloudflare-pages). Setup, site-selection and publication guidance will be reconciled as Steps 28–31 land.
+`--cloudflare` adds Pages config and a manual workflow for the static site. After building, `pnpm exec wrangler pages dev site/dist` previews Pages locally. It does not deliver or deploy the CMS Worker. Complete generated D1/R2/Worker onboarding remains Step 31 work; configure any independent Worker explicitly and keep remote mutations intentional. See [Cloudflare scope](docs/lace-operations.md#optional-cloudflare-pages). Site-selection and publication guidance will be reconciled as Steps 29–31 land.

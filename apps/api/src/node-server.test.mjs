@@ -385,3 +385,36 @@ test("forwards frontend development upgrades and closes connections on gateway s
     );
   }
 });
+
+test("anonymous browser setup state survives bootstrap and stale clients stay closed", async () => {
+  const value = await fixture({ actors: anonymousActorResolver });
+  try {
+    for (let i = 0; i < 8; i += 1) {
+      const state = await json(value.server, "/api/v1/setup/state");
+      expect(state.response.status).toBe(200);
+      expect(state.response.headers.get("cache-control")).toBe("no-store");
+      expect(state.body).toEqual({ setupComplete: false });
+    }
+    const setup = await value.runtime.security.createSetupToken();
+    const init = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "browser@lace.test",
+        password: "correct horse battery staple",
+        token: setup.token,
+      }),
+    };
+    expect((await json(value.server, "/api/v1/setup/admin", init)).response.status).toBe(201);
+    const stale = await Promise.all([
+      json(value.server, "/api/v1/setup/admin", init),
+      json(value.server, "/api/v1/setup/admin", init),
+    ]);
+    expect(stale.map((result) => result.response.status)).toEqual([404, 404]);
+    expect((await json(value.server, "/api/v1/setup/state")).body).toEqual({ setupComplete: true });
+    expect(await value.runtime.security.listUsers()).toHaveLength(1);
+    expect((await json(value.server, "/api/v1/admin/users")).response.status).toBe(403);
+  } finally {
+    await value.close();
+  }
+});

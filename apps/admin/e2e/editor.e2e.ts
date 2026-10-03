@@ -352,9 +352,7 @@ test("limits publication to admins and preserves public output after a later dra
   await admin.close();
 });
 
-test("admin routes distinguish empty, failure, and planned Builds states at a narrow width", async ({
-  browser,
-}) => {
+test("admin routes distinguish empty and failure states at a narrow width", async ({ browser }) => {
   const empty = await browser.newPage({ viewport: { width: 375, height: 740 } });
   let releaseModels: (() => void) | undefined;
   const modelsGate = new Promise<void>((resolve) => {
@@ -370,6 +368,7 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
     }
     if (path === "/api/v1/admin/media") return json(route, { items: [] });
     if (path === "/api/v1/admin/users") return json(route, { items: [] });
+    if (path === "/api/v1/admin/site-builds") return json(route, { items: [] });
     if (path === "/api/v1/admin/settings/status")
       return json(route, { configuredModels: 0, ready: true });
     if (path === "/api/v1/admin/api-tokens") return json(route, { items: [] });
@@ -399,9 +398,7 @@ test("admin routes distinguish empty, failure, and planned Builds states at a na
   await expect(empty.getByRole("main").getByText("Page not found")).toBeVisible();
   await expect(empty.getByRole("link", { name: "Go to Content" })).toBeVisible();
   await empty.goto("/admin/builds");
-  await expect(
-    empty.getByText("Build status will be connected to remote state in a later session."),
-  ).toBeVisible();
+  await expect(empty.getByText("No builds yet")).toBeVisible();
   expect(await empty.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   await empty.close();
 

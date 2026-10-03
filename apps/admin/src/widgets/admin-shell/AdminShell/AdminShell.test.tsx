@@ -56,3 +56,72 @@ test("a failed logout reports the error and keeps the route rendered", async () 
   expect(await screen.findByText(/Auth down/)).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Content", level: 1 })).toBeInTheDocument();
 });
+
+test.each(["admin", "editor", "viewer"] as const)(
+  "%s can skip the invitation and replay from the account menu",
+  async (role) => {
+    const user = userEvent.setup();
+    renderRoute("/content", createStaticSessionSource({ id: `tour-${role}`, role }));
+    await screen.findByRole("heading", { name: "Content", level: 1 });
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    const aside = screen.getByRole("complementary", { name: "Admin navigation" });
+    within(aside)
+      .getByRole("button", { name: /account menu/ })
+      .focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("menuitem", { name: "Introduction" }));
+    expect(await screen.findByRole("dialog", { name: /Content, Step 1/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  },
+);
+
+test("tour preserves an unsaved draft and search state without mutation calls", async () => {
+  const user = userEvent.setup();
+  const saveDraft = vi.fn();
+  const publishEntry = vi.fn();
+  const router = renderRoute(
+    "/content/posts/entry-1?from=tour",
+    createStaticSessionSource({ id: "draft-tour", role: "editor" }),
+    client({ saveDraft, publishEntry }),
+  );
+  const title = await screen.findByRole("textbox", { name: "Title" });
+  await user.clear(title);
+  await user.type(title, "Unsaved tour draft");
+  const before = router.state.location.href;
+  const aside = screen.getByRole("complementary", { name: "Admin navigation" });
+  within(aside)
+    .getByRole("button", { name: /account menu/ })
+    .focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Introduction" }));
+  await screen.findByRole("dialog", { name: /Content/ });
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.keyboard("{Escape}");
+  expect(title).toHaveValue("Unsaved tour draft");
+  expect(router.state.location.href).toBe(before);
+  expect(saveDraft).not.toHaveBeenCalled();
+  expect(publishEntry).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+test("model loading, failure and empty navigation do not block the common tour", async () => {
+  const user = userEvent.setup();
+  let rejectModels: (reason: Error) => void = () => undefined;
+  const pending = new Promise<never>((_resolve, reject) => {
+    rejectModels = reject;
+  });
+  renderRoute(
+    "/content",
+    createStaticSessionSource({ id: "pending-tour", role: "viewer" }),
+    client({ listModels: () => pending }),
+  );
+  await screen.findByRole("heading", { name: "Content", level: 1 });
+  await user.click(screen.getByRole("button", { name: "Start tour" }));
+  expect(screen.getByRole("dialog", { name: /Content, Step 1 of 3/ })).toBeInTheDocument();
+  rejectModels(new AdminClientError({ message: "Unavailable" }));
+  await screen.findByRole("dialog", { name: /Content, Step 1 of 3/ });
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByRole("dialog", { name: /Media/ })).toBeInTheDocument();
+});

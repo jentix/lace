@@ -7,11 +7,11 @@ Defines the minimal local consumer onboarding and published-content rendering de
 ## Requirements
 
 ### Requirement: Local onboarding documents the supported complete sequence
-Generated projects SHALL document generation, dependency installation, environment configuration, explicit migrations and content sync, one-time bootstrap, first-admin creation, login, build-token creation, publication, editable Astro development, static build and Compose operation using packaged runtimes without engine source. First-admin instructions SHALL use the supported setup API request with its exact endpoint and required fields until a browser setup flow exists. Documentation SHALL distinguish setup tokens, build tokens and passwords, supply no usable credentials, and describe preservation of content when stopping services.
+Generated projects SHALL document generation, dependency installation, environment configuration, explicit migrations and content sync, one-time bootstrap, first-admin creation, login, build-token creation, publication, editable Astro development, static build and Compose operation using packaged runtimes without engine source. First-admin instructions SHALL direct consumers to obtain an operator-issued one-time token with the supported bootstrap command, open `/admin/`, and complete the browser setup form before ordinary sign-in. They SHALL retain a placeholder-only API alternative with the exact `POST /api/v1/setup/admin` endpoint and `token`, `email`, and `password` fields, explain the one-hour token expiry and 12-character password minimum, and cover expired-token reissue, interrupted retries with the same token/email, and completed setup remaining closed. Documentation SHALL distinguish setup tokens, build tokens and passwords, supply no usable credentials, and describe preservation of content when stopping services.
 
 #### Scenario: Fresh consumer follows local instructions
 - **WHEN** a consumer has compatible packages/images and follows the generated operations guide
-- **THEN** they can create the first administrator through POST /api/v1/setup/admin with token, email and password, sign in at /admin/, publish content and build the site without an engine checkout or undocumented request
+- **THEN** they can create the first administrator through the browser with token, email and password (or the documented setup API alternative), then sign in at /admin/, publish content and build the site without an engine checkout or undocumented request
 
 #### Scenario: Setup is complete or token expired
 - **WHEN** a consumer attempts bootstrap after setup completion or uses an expired setup token
@@ -71,7 +71,7 @@ The generated root README SHALL describe compatible Node/pnpm, Docker Compose an
 
 #### Scenario: Later roadmap capabilities are absent
 - **WHEN** a consumer reads the Cloudflare, setup or builder sections
-- **THEN** the guide describes the existing API setup and generated-site/Pages support without promising browser setup, external-site selection or a generated CMS Worker deployment
+- **THEN** the guide describes the existing API setup and generated-site/Pages support with browser setup for compatible Step 28A or later API/admin artifacts and the retained API alternative, without promising external-site selection or a generated CMS Worker deployment
 
 ### Requirement: Concise setup example uses placeholders and the configured public origin
 

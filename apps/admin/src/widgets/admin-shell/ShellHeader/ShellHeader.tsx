@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatches } from "@tanstack/react-router";
 import { ChevronRight, PanelLeft } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { adminQueryKeys, useAdminClient } from "../../../shared/api/index.js";
 import { Button } from "../../../shared/ui/Button/index.js";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "../../../shared/ui/Sheet/index.js";
@@ -14,19 +14,25 @@ import { SidebarNav } from "../SidebarNav/index.js";
  */
 export function ShellHeader({
   actionsRef,
+  onIntroduction,
   onSignOut,
   signingOut,
 }: {
+  readonly onIntroduction?: ((opener: HTMLElement | null) => void) | undefined;
   readonly actionsRef?: (element: HTMLElement | null) => void;
   readonly onSignOut: () => void;
   readonly signingOut: boolean;
 }) {
+  const navTrigger = useRef<HTMLButtonElement>(null);
+  const replayPending = useRef(false);
   const [navOpen, setNavOpen] = useState(false);
   return (
     <header className="sticky top-0 z-30 flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border bg-background px-4 py-1.5 md:rounded-t-xl md:px-6">
       <Sheet onOpenChange={setNavOpen} open={navOpen}>
         <SheetTrigger asChild>
           <Button
+            ref={navTrigger}
+            data-introduction-fallback="mobile"
             aria-label="Open navigation"
             className="-ml-2 md:hidden"
             size="icon"
@@ -35,9 +41,26 @@ export function ShellHeader({
             <PanelLeft aria-hidden="true" />
           </Button>
         </SheetTrigger>
-        <SheetContent className="w-72 bg-sidebar p-0" side="left">
+        <SheetContent
+          className="w-72 bg-sidebar p-0"
+          side="left"
+          onCloseAutoFocus={() => {
+            if (replayPending.current) {
+              replayPending.current = false;
+              queueMicrotask(() => onIntroduction?.(navTrigger.current));
+            }
+          }}
+        >
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <SidebarNav
+            onIntroduction={
+              onIntroduction === undefined
+                ? undefined
+                : () => {
+                    replayPending.current = true;
+                    setNavOpen(false);
+                  }
+            }
             onNavigate={() => setNavOpen(false)}
             onSignOut={onSignOut}
             signingOut={signingOut}

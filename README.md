@@ -57,9 +57,12 @@ With the stack running, mint one expiring setup credential:
 pnpm dev:bootstrap
 ```
 
-The command prints the plaintext token once and stores only its hash. Use it to
-complete the first administrator through the setup endpoint, then sign in at
-the Admin URL:
+The command prints the plaintext token once and stores only its hash. Open
+`http://127.0.0.1:3000/admin/` (or your configured API origin). While setup is
+incomplete, the browser asks for your email, a password of 12–1024 characters,
+and that bootstrap token. Create the administrator, then sign in normally.
+
+Alternatively, use the existing setup API with placeholders replaced privately:
 
 ```sh
 curl --fail-with-body http://127.0.0.1:3000/api/v1/setup/admin \
@@ -67,8 +70,11 @@ curl --fail-with-body http://127.0.0.1:3000/api/v1/setup/admin \
   --data '{"email":"admin@example.test","password":"choose-a-long-password","token":"PASTE_THE_ONCE_SHOWN_TOKEN"}'
 ```
 
-The token expires after one hour. The setup endpoint closes permanently after
-the first administrator is created. The local stack applies migrations only;
+The token expires after one hour; ask the operator to mint a new one if it
+expired before completion. After an interrupted request, retry with the same
+token and email. The browser rechecks state after an ambiguous response and
+shows sign-in when setup is already complete. The setup endpoint closes
+permanently after completion. The local stack applies migrations only;
 configuration synchronization remains a deliberate operator operation.
 
 ### Show published content on the local site
@@ -256,3 +262,25 @@ Detailed Node, authentication, and migration behavior is documented in
 [docs/node-api.md](./docs/node-api.md),
 [docs/auth-operations.md](./docs/auth-operations.md), and
 [docs/database-migrations.md](./docs/database-migrations.md).
+
+### Admin introduction
+
+After sign-in, **Start tour** offers an optional introduction to your available
+workflows. **Skip**, Escape, or the close control dismisses it; work can continue
+without taking the tour. Replay it any time from the account menu's
+**Introduction** action, including through mobile navigation.
+
+Steps follow configured Pages/Collections and your current role. Editors learn
+drafts and media uploads, viewers get inspection guidance, and admins also learn
+publication, build recovery, Users, Settings, and once-shown read-only build
+tokens. Publishing a snapshot and updating the served site are separate; inspect
+build status according to your site's rendering/build setup. Step 29 will add
+verified guidance for individual publication modes.
+
+Completion and dismissal are local to this browser, installation origin/admin
+base path, user ID, and tour version. They survive reload/sign-in when browser
+storage works, but do not synchronize across devices. Clearing storage or a new
+tour version offers the introduction again. If storage is unavailable, dismissal
+lasts for the current page lifetime, including navigation; reload can offer again.
+Replacing an installation at the same address with the same user ID reuses its
+marker. Only a completion/dismissal marker is stored, never content or credentials.

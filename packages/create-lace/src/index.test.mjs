@@ -68,6 +68,14 @@ test("generates deterministic owned source and hashed managed files", async () =
   const guide = await readFile(join(left.path, "docs/lace-operations.md"), "utf8");
   expect(guide.indexOf("pnpm env:prepare")).toBeLessThan(guide.indexOf("pnpm db:migrate"));
   expect(guide).not.toContain("cp .env.example .env");
+  expect(guide).toContain("open `/admin/`");
+  expect(guide).toContain("same token and email");
+  expect(guide).toContain("12–1024 characters");
+  expect(guide).toContain("token expires after one hour");
+  expect(guide).toContain("Completed setup remains closed");
+  expect(guide).toContain("POST /api/v1/setup/admin");
+  expect(guide).toContain("originally published `0.1.0-alpha.1`");
+  expect(guide).not.toContain("has no browser setup wizard");
 });
 
 test("optional Cloudflare files are managed only when selected", async () => {

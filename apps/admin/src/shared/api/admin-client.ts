@@ -1,4 +1,7 @@
 import {
+  setupStateSchema,
+  setupAdminRequestSchema,
+  type SetupStateDto,
   adminSettingsStatusSchema,
   buildTokenCreatedSchema,
   buildTokenListSchema,
@@ -101,6 +104,8 @@ export class AdminClientError extends Error {
 }
 
 export interface AdminClient {
+  loadSetupState(): Promise<SetupStateDto>;
+  setupAdmin(input: { email: string; password: string; token: string }): Promise<void>;
   listBuilds(): Promise<SiteBuildListDto>;
   getBuild(buildId: string): Promise<SiteBuildRecordDto>;
   requestBuild(): Promise<BuildQueueReceiptDto>;
@@ -319,6 +324,34 @@ export function createAdminClient(injected?: Fetcher, uploader?: MediaUploader):
       ? xhrUploader
       : fetchUploader(fetcher));
   return Object.freeze({
+    loadSetupState: async () =>
+      parse(setupStateSchema, await request(fetcher, "/api/v1/setup/state", { cache: "no-store" })),
+    setupAdmin: async (input: Parameters<AdminClient["setupAdmin"]>[0]) => {
+      const validated = v.safeParse(setupAdminRequestSchema, input);
+      if (!validated.success)
+        throw new AdminClientError({
+          message: "Check the email, password and bootstrap token.",
+          status: 422,
+        });
+      try {
+        parse(
+          managedUserSchema,
+          await request(fetcher, "/api/v1/setup/admin", {
+            body: JSON.stringify(validated.output),
+            headers: { "content-type": "application/json" },
+            method: "POST",
+          }),
+        );
+      } catch (error) {
+        // Never propagate provider text or validation objects that could echo submitted credentials.
+        throw new AdminClientError({
+          message: "Administrator setup could not be confirmed.",
+          ...(error instanceof AdminClientError && error.status !== undefined
+            ? { status: error.status }
+            : {}),
+        });
+      }
+    },
     listBuilds: async () =>
       parse(siteBuildListSchema, await request(fetcher, "/api/v1/admin/site-builds")),
     getBuild: async (buildId: string) =>

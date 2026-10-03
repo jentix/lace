@@ -7,6 +7,7 @@ import type { ContractSql } from "./repository-contract.js";
 export interface SecurityContractHarness {
   limiter(secret: string): SensitiveRateLimiter;
   readonly security: SecurityService;
+  reopenSecurity(): Promise<SecurityService>;
   setNow(value: number): void;
   readonly sql: ContractSql;
 }
@@ -42,6 +43,30 @@ function outcome(result: PromiseSettledResult<unknown>): string {
 
 /** Security behavior every runtime's durable security adapter must implement identically. */
 export const securityContractCases: readonly SecurityContractCase[] = Object.freeze([
+  {
+    name: "setup state reads only the durable completion marker without writes",
+    async run(runtime, expect) {
+      const harness = await runtime.open();
+      await harness.sql.run("delete from installation_state");
+      expect(await harness.security.isSetupComplete()).toBe(false);
+      expect(await harness.sql.get("select count(*) as count from installation_state")).toEqual({
+        count: 0,
+      });
+      expect(await harness.sql.get("select count(*) as count from setup_tokens")).toEqual({
+        count: 0,
+      });
+      const token = await harness.security.createSetupToken();
+      expect(await harness.security.isSetupComplete()).toBe(false);
+      await harness.security.bootstrap({ email: "admin@lace.test", password, token: token.token });
+      expect(await harness.security.isSetupComplete()).toBe(true);
+      expect(await (await harness.reopenSecurity()).isSetupComplete()).toBe(true);
+      await harness.sql.run(
+        "update installation_state set setup_completed_at = null, setup_admin_user_id = null",
+      );
+      expect(await harness.security.isSetupComplete()).toBe(false);
+      expect(await harness.sql.get("select count(*) as count from user")).toEqual({ count: 1 });
+    },
+  },
   {
     name: "setup credential completes bootstrap once and is stored only as a digest",
     async run(runtime, expect) {

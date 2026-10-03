@@ -31,6 +31,11 @@ export function LoginPage() {
             </p>
           </div>
         </div>
+        {search.setupComplete ? (
+          <p role="status" className="text-sm">
+            Setup is complete. Sign in with your administrator account.
+          </p>
+        ) : undefined}
         <SignInForm redirectTo={search.redirect ?? "/content"} />
       </section>
     </main>

@@ -191,6 +191,7 @@ async function mockAdmin(page: Page, options: { role?: Role; signedIn?: boolean 
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+    if (path === "/api/v1/setup/state") return json(route, { setupComplete: true });
     if (path === "/api/auth/get-session")
       return json(
         route,
