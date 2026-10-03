@@ -78,6 +78,78 @@ test("optional Cloudflare files are managed only when selected", async () => {
   expect(await listFiles(project.path)).toContain(".github/workflows/cloudflare.yml");
 });
 
+test.each([false, true])("fresh cms README is user-owned (cloudflare=%s)", async (cloudflare) => {
+  const parent = await root();
+  const output = [];
+  const errors = [];
+  expect(
+    await runCli(
+      ["create", "cms", ...(cloudflare ? ["--cloudflare"] : [])],
+      parent,
+      { write: (value) => output.push(value) },
+      { write: (value) => errors.push(value) },
+    ),
+  ).toBe(0);
+  const manifest = JSON.parse(await readFile(join(parent, "cms/.lace/manifest.json"), "utf8"));
+  expect(manifest.files["README.md"]).toEqual({ owner: "user" });
+  expect(await readFile(join(parent, "cms/README.md"), "utf8")).toContain("pnpm env:prepare");
+  expect(output.join("")).toContain("follow README.md");
+  expect(output.join("")).toContain("docs/lace-operations.md");
+  expect(errors).toEqual([]);
+  expect(await readdir(parent)).toEqual(["cms"]);
+});
+
+test.each([false, true])(
+  "init keeps arbitrary README bytes with an explicit fallback (cloudflare=%s)",
+  async (cloudflare) => {
+    const parent = await root();
+    const target = join(parent, "cms");
+    await mkdir(target);
+    const original = Buffer.from([0xff, 0x00, 0x23, 0x0d, 0x0a, 0x80]);
+    await writeFile(join(target, "README.md"), original);
+    const output = [];
+    expect(
+      await runCli(
+        ["init", ".", ...(cloudflare ? ["--cloudflare"] : [])],
+        target,
+        { write: (value) => output.push(value) },
+        { write: () => {} },
+      ),
+    ).toBe(0);
+    expect(await readFile(join(target, "README.md"))).toEqual(original);
+    const manifest = JSON.parse(await readFile(join(target, ".lace/manifest.json"), "utf8"));
+    expect(manifest.files["README.md"]).toEqual({ owner: "user" });
+    expect(output.join("")).toContain("Preserved existing README.md");
+    expect(output.join("")).toContain("docs/lace-operations.md");
+    expect(output.join("")).toContain("manually copy");
+    expect(await readFile(join(target, "docs/lace-operations.md"), "utf8")).toContain(
+      "POST /api/v1/setup/admin",
+    );
+  },
+);
+
+test.each(["beforePublish", "afterBackup"])(
+  "failed generation preserves README at %s",
+  async (hook) => {
+    const parent = await root();
+    const target = join(parent, "cms");
+    await mkdir(target);
+    const original = Buffer.from("# Existing\r\nKeep unchanged");
+    await writeFile(join(target, "README.md"), original);
+    await expect(
+      generateProject({
+        target,
+        [hook]: async () => {
+          throw new Error("injected failure");
+        },
+      }),
+    ).rejects.toThrow("injected failure");
+    expect(await readFile(join(target, "README.md"))).toEqual(original);
+    expect(await readdir(target)).toEqual(["README.md"]);
+    expect(await readdir(parent)).toEqual(["cms"]);
+  },
+);
+
 test("alpha generation selects exact compatible packages and overridable images", async () => {
   const parent = await root();
   const project = await generateProject({ target: join(parent, "alpha-site") });
@@ -90,7 +162,7 @@ test("alpha generation selects exact compatible packages and overridable images"
   const environment = await readFile(join(project.path, ".env.example"), "utf8");
   expect(environment).toContain("LACE_API_IMAGE=ghcr.io/lacecms/api:0.1.0-alpha.1");
   expect(environment).toContain("LACE_BUILDER_IMAGE=ghcr.io/lacecms/builder:0.1.0-alpha.1");
-  expect(TEMPLATE_VERSION).toBe("0.4.0");
+  expect(TEMPLATE_VERSION).toBe("0.6.0");
   const compose = await readFile(join(project.path, "docker-compose.yml"), "utf8");
   expect(compose).toContain("image: ${LACE_API_IMAGE:");
   expect(compose).toContain("image: ${LACE_BUILDER_IMAGE:");

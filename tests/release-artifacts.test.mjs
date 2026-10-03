@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 import {
   claimOutput,
@@ -10,7 +10,7 @@ import {
   safeSourcePath,
   snapshotSource,
 } from "../scripts/release-artifacts.mjs";
-import { readJson } from "../scripts/release-model.mjs";
+import { readJson, readReleaseModel } from "../scripts/release-model.mjs";
 import { prepareRelease } from "../scripts/release.mjs";
 
 test("clean snapshots are stable, dirty inputs require an explicit preview", async () => {
@@ -58,9 +58,41 @@ test("injected preparation failure leaves no inventory or success", async () => 
   const parent = await mkdtemp(join(tmpdir(), "lace-release-failure-"));
   const output = join(parent, "failed");
   try {
+    // Test post-validation recovery against a coherent source fixture. The
+    // working tree's template can advance independently of a published alpha.
+    const root = join(parent, "source");
+    const model = await readReleaseModel(new URL("..", import.meta.url).pathname);
+    const fixtureFile = async (path, contents) => {
+      const file = join(root, path);
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, contents);
+    };
+    await fixtureFile(
+      "release/alpha.json",
+      JSON.stringify({ ...model.definition, templateVersion: model.templateVersion }),
+    );
+    await fixtureFile("package.json", JSON.stringify(model.rootManifest));
+    for (const { directory, manifest } of Object.values(model.manifests))
+      await fixtureFile(`${directory}/package.json`, JSON.stringify(manifest));
+    for (const [index, path] of ["package.json", "site/package.json"].entries())
+      await fixtureFile(
+        `packages/create-lace/templates/${path}`,
+        JSON.stringify(model.templates[index]),
+      );
+    await fixtureFile(
+      "packages/create-lace/src/inventory.ts",
+      `export const TEMPLATE_VERSION = "${model.templateVersion}";\n`,
+    );
+    await fixtureFile("packages/create-lace/templates/.env.example", model.environment);
+    const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+    git("init");
+    git("config", "user.name", "Release test");
+    git("config", "user.email", "release@lace.test");
+    git("add", ".");
+    git("commit", "-m", "coherent fixture");
     await expect(
       prepareRelease(
-        { root: new URL("..", import.meta.url).pathname, output, phase: "packages", preview: true },
+        { root, output, phase: "packages", preview: true },
         {
           packages: async () => {
             throw new Error("injected pack failure");
