@@ -460,6 +460,8 @@ export interface IssuedBuildToken extends BuildTokenMetadata {
 
 /** Security lifecycle boundary implemented by each runtime's durable adapter. */
 export interface SecurityService {
+  /** Read-only durable completion marker; never infers completion from users. */
+  isSetupComplete(): Promise<boolean>;
   bootstrap(input: {
     readonly email: string;
     readonly password: string;

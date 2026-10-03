@@ -8,6 +8,8 @@ import {
   type RouterHistory,
   type SearchSchemaInput,
 } from "@tanstack/react-router";
+import { readSetupState } from "../../entities/setup/index.js";
+import { SetupPage, SetupStateError } from "../../pages/setup/index.js";
 import type { AdminSessionSource } from "../../entities/session/index.js";
 import { BuildsPage } from "../../pages/builds/index.js";
 import { ContentPage } from "../../pages/content/index.js";
@@ -45,6 +47,24 @@ const loginRoute = createRoute({
   component: LoginPage,
   getParentRoute: () => rootRoute,
   path: "/login",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { redirect?: string | undefined; setupComplete?: boolean | undefined } => ({
+    setupComplete:
+      search.setupComplete === true || search.setupComplete === "true" ? true : undefined,
+    redirect: typeof search.redirect === "string" ? safeReturnPath(search.redirect) : undefined,
+  }),
+});
+const setupRoute = createRoute({
+  beforeLoad: async ({ context, search }) => {
+    if ((await context.sessionSource.get()) !== null) throw redirect({ to: "/content" });
+    if ((await readSetupState(context.client)).setupComplete)
+      throw redirect({ to: "/login", search: { redirect: search.redirect } });
+  },
+  component: SetupPage,
+  errorComponent: SetupStateError,
+  getParentRoute: () => rootRoute,
+  path: "/setup",
   validateSearch: (search: Record<string, unknown>) => ({
     redirect: typeof search.redirect === "string" ? safeReturnPath(search.redirect) : undefined,
   }),
@@ -52,13 +72,16 @@ const loginRoute = createRoute({
 const protectedRoute = createRoute({
   beforeLoad: async ({ context, location }) => {
     const session = await context.sessionSource.get();
-    if (session === null)
+    if (session === null) {
+      const state = await readSetupState(context.client);
       throw redirect({
         search: { redirect: safeReturnPath(`${location.pathname}${location.searchStr}`) },
-        to: "/login",
+        to: state.setupComplete ? "/login" : "/setup",
       });
+    }
     return { session };
   },
+  errorComponent: SetupStateError,
   component: AdminShellLayout,
   getParentRoute: () => rootRoute,
   id: "_protected",
@@ -134,6 +157,7 @@ const notFoundRoute = createRoute({
 });
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  setupRoute,
   protectedRoute.addChildren([
     adminIndexRoute,
     contentRoute,

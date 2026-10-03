@@ -57,9 +57,12 @@ With the stack running, mint one expiring setup credential:
 pnpm dev:bootstrap
 ```
 
-The command prints the plaintext token once and stores only its hash. Use it to
-complete the first administrator through the setup endpoint, then sign in at
-the Admin URL:
+The command prints the plaintext token once and stores only its hash. Open
+`http://127.0.0.1:3000/admin/` (or your configured API origin). While setup is
+incomplete, the browser asks for your email, a password of 12–1024 characters,
+and that bootstrap token. Create the administrator, then sign in normally.
+
+Alternatively, use the existing setup API with placeholders replaced privately:
 
 ```sh
 curl --fail-with-body http://127.0.0.1:3000/api/v1/setup/admin \
@@ -67,8 +70,11 @@ curl --fail-with-body http://127.0.0.1:3000/api/v1/setup/admin \
   --data '{"email":"admin@example.test","password":"choose-a-long-password","token":"PASTE_THE_ONCE_SHOWN_TOKEN"}'
 ```
 
-The token expires after one hour. The setup endpoint closes permanently after
-the first administrator is created. The local stack applies migrations only;
+The token expires after one hour; ask the operator to mint a new one if it
+expired before completion. After an interrupted request, retry with the same
+token and email. The browser rechecks state after an ambiguous response and
+shows sign-in when setup is already complete. The setup endpoint closes
+permanently after completion. The local stack applies migrations only;
 configuration synchronization remains a deliberate operator operation.
 
 ### Show published content on the local site

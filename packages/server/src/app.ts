@@ -51,6 +51,7 @@ import {
   resolveExpectedRevision,
   saveDraftRequestSchema,
   setupAdminRequestSchema,
+  setupStateSchema,
   toAdminContentEntryDto,
   toBuildExportDto,
   toSiteBuildRecordDto,
@@ -566,6 +567,28 @@ export function createLaceApp(input: LaceAppInput): Hono {
       return value;
     });
   }
+
+  app.get(
+    "/api/v1/setup/state",
+    describeRoute({
+      summary: "Read installation setup completion",
+      tags: ["setup"],
+      responses: {
+        200: {
+          content: { "application/json": { schema: resolver(setupStateSchema) } },
+          description: "Minimal installation completion state",
+        },
+      },
+    }),
+    async () => {
+      return response(
+        setupStateSchema,
+        { setupComplete: await security().isSetupComplete() },
+        200,
+        { "cache-control": "no-store" },
+      );
+    },
+  );
 
   app.post(
     "/api/v1/setup/admin",

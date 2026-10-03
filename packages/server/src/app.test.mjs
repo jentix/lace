@@ -29,6 +29,7 @@ async function fixture({
   maxBodyBytes = 256,
   models,
   builds,
+  security,
 } = {}) {
   const config = await defineConfig({
     blocks: [
@@ -82,6 +83,7 @@ async function fixture({
     config,
     content,
     ...(builds === undefined ? {} : { builds }),
+    ...(security === undefined ? {} : { security }),
     environment: { engineVersion: "0.0.0-test", openApiTitle: "Lace test" },
     logger: { log: (entry) => logs.push(entry) },
     maxBodyBytes,
@@ -937,4 +939,37 @@ test("lists media with filters and bound cursors and exposes details with usage"
     status: "deleting",
     usage: [],
   });
+});
+
+test("anonymous setup state exposes only durable completion with no cache or mutation", async () => {
+  let complete = false;
+  const { app, logs } = await fixture({
+    actor: null,
+    security: { isSetupComplete: async () => complete },
+  });
+  for (const value of [false, true]) {
+    complete = value;
+    const response = await app.request("/api/v1/setup/state");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ setupComplete: value });
+  }
+  expect((await app.request("/api/v1/admin/users")).status).toBe(403);
+  expect((await app.request("/api/v1/admin/content-models")).status).toBe(403);
+  expect(logs.every((entry) => entry.actorId === undefined)).toBe(true);
+});
+
+test("setup persistence failure never reports an incomplete installation", async () => {
+  const { app } = await fixture({
+    security: {
+      isSetupComplete: async () => {
+        throw new Error("SQL private database detail");
+      },
+    },
+  });
+  const response = await app.request("/api/v1/setup/state");
+  expect(response.status).toBe(500);
+  const body = await response.text();
+  expect(body).not.toContain("SQL");
+  expect(body).not.toContain("setupComplete");
 });

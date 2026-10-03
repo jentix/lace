@@ -423,6 +423,9 @@ export const buildExportSchema = v.strictObject({
 const roleSchema = v.picklist(["admin", "editor", "viewer"]);
 const emailSchema = v.pipe(v.string(), v.email(), v.maxLength(320));
 const passwordSchema = v.pipe(v.string(), v.minLength(12), v.maxLength(1_024));
+export const setupStateSchema = v.strictObject({ setupComplete: v.boolean() });
+export type SetupStateDto = v.InferOutput<typeof setupStateSchema>;
+
 export const setupAdminRequestSchema = v.strictObject({
   email: emailSchema,
   password: passwordSchema,

@@ -19,6 +19,7 @@ const runtime = {
       params.length === 0 ? database.prepare(sql) : database.prepare(sql).bind(...params);
     return {
       limiter: (secret) => new D1FixedWindowRateLimiter(database, secret),
+      reopenSecurity: async () => new D1SecurityService(database, () => unixMilliseconds(now)),
       security: new D1SecurityService(database, () => unixMilliseconds(now)),
       setNow: (value) => {
         now = value;

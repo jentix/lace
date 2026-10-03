@@ -132,7 +132,7 @@ export class D1SecurityService implements SecurityService {
     const email = normalizedEmail(input.email);
     const tokenHash = await digest(input.token);
     const emailHash = await digest(email);
-    if (await this.setupCompleted()) throw new Error("Setup unavailable.");
+    if (await this.isSetupComplete()) throw new Error("Setup unavailable.");
     const claimed = await this.statement(
       `update setup_tokens set claimed_email_hash = coalesce(claimed_email_hash, ?1), claimed_at = coalesce(claimed_at, ?2) where token_hash = ?3 and expires_at > ?2 and consumed_at is null and (claimed_email_hash is null or claimed_email_hash = ?1) and not ${SETUP_COMPLETED_SQL}`,
       emailHash,
@@ -260,7 +260,7 @@ export class D1SecurityService implements SecurityService {
     return used.meta.changes === 1;
   }
 
-  private async setupCompleted(): Promise<boolean> {
+  public async isSetupComplete(): Promise<boolean> {
     return (
       (await this.statement(`select 1 as completed where ${SETUP_COMPLETED_SQL}`).first()) !== null
     );

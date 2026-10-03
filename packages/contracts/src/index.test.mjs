@@ -12,6 +12,7 @@ import * as v from "valibot";
 import { describe, expect, test } from "vitest";
 import {
   buildExportSchema,
+  setupStateSchema,
   blockMetadataSchema,
   classifyError,
   adminContentEntrySchema,
@@ -599,4 +600,12 @@ describe("admin entry list contracts", () => {
       expect(v.safeParse(mediaDetailSchema, invalid).success).toBe(false);
     }
   });
+});
+
+test("setup state is a strict boolean-only contract", () => {
+  expect(v.parse(setupStateSchema, { setupComplete: false })).toEqual({ setupComplete: false });
+  expect(v.safeParse(setupStateSchema, { setupComplete: "false" }).success).toBe(false);
+  expect(v.safeParse(setupStateSchema, { setupComplete: true, userId: "private" }).success).toBe(
+    false,
+  );
 });

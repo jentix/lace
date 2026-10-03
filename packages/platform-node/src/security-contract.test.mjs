@@ -30,6 +30,11 @@ const runtime = {
     let now = SECURITY_CONTRACT_EPOCH;
     return {
       limiter: (secret) => new NodeFixedWindowRateLimiter(connection, secret),
+      reopenSecurity: async () => {
+        const reopened = openNodeDatabase(databasePath);
+        cleanups.push(async () => reopened.connection.close());
+        return new NodeSecurityService(reopened.connection, () => unixMilliseconds(now));
+      },
       security: new NodeSecurityService(connection, () => unixMilliseconds(now)),
       setNow: (value) => {
         now = value;

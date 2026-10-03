@@ -3425,6 +3425,32 @@
           }
         }
       }
+    },
+    "/api/v1/setup/state": {
+      "get": {
+        "operationId": "getApiV1SetupState",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "setupComplete": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["setupComplete"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Minimal installation completion state"
+          }
+        },
+        "summary": "Read installation setup completion",
+        "tags": ["setup"]
+      }
     }
   }
 }

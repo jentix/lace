@@ -146,11 +146,26 @@ test("Worker bundle smoke: health, auth, R2 upload, publish, deploy hook, export
   expect((await call("/health/live")).body).toEqual({ status: "live" });
   expect((await call("/health/ready")).body).toEqual({ status: "ready" });
 
+  for (let i = 0; i < 8; i += 1) {
+    const state = await call("/api/v1/setup/state");
+    expect(state.body).toEqual({ setupComplete: false });
+    expect(state.response.headers.get("cache-control")).toBe("no-store");
+  }
   const setup = await call("/api/v1/setup/admin", {
     json: { email: "admin@lace.test", password, token: setupToken },
     method: "POST",
   });
   expect(setup.response.status).toBe(201);
+  expect((await call("/api/v1/setup/state")).body).toEqual({ setupComplete: true });
+  const stale = await Promise.all(
+    [1, 2].map(() =>
+      call("/api/v1/setup/admin", {
+        json: { email: "other@lace.test", password, token: setupToken },
+        method: "POST",
+      }),
+    ),
+  );
+  expect(stale.map((result) => result.response.status)).toEqual([404, 404]);
   const session = await call("/api/auth/sign-in/email", {
     headers: { origin },
     json: { email: "admin@lace.test", password },

@@ -71,6 +71,13 @@ export class NodeSecurityService implements SecurityService {
     private readonly now: () => UnixMilliseconds,
   ) {}
 
+  public async isSetupComplete(): Promise<boolean> {
+    const state = this.connection
+      .prepare("select setup_completed_at from installation_state where singleton_key = 1")
+      .get() as { setup_completed_at: number | null } | undefined;
+    return state !== undefined && state.setup_completed_at !== null;
+  }
+
   public async createSetupToken(): Promise<{
     readonly expiresAt: UnixMilliseconds;
     readonly token: OpaqueTokenSecret;

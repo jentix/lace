@@ -599,3 +599,64 @@ test("an injected uploader replaces the default transport", async () => {
   expect(progress).toHaveBeenCalledWith(1);
   expect(fetcher).not.toHaveBeenCalled();
 });
+
+test("setup transport validates state and submits the existing guarded payload", async () => {
+  const fetcher = vi.fn(async (path: string) =>
+    Response.json(
+      path.endsWith("/state")
+        ? { setupComplete: false }
+        : { id: "admin", email: "admin@lace.test", role: "admin", disabled: false },
+    ),
+  );
+  const client = createAdminClient(fetcher as typeof fetch);
+  expect(await client.loadSetupState()).toEqual({ setupComplete: false });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/setup/state",
+    expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
+  );
+  const input = {
+    email: "admin@lace.test",
+    password: "correct horse battery staple",
+    token: "A".repeat(43),
+  };
+  await client.setupAdmin(input);
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/setup/admin",
+    expect.objectContaining({
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify(input),
+    }),
+  );
+  await expect(client.setupAdmin({ ...input, password: "short" })).rejects.toMatchObject({
+    status: 422,
+  });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await expect(
+    createAdminClient(async () =>
+      Response.json({ setupComplete: false, email: "private" }),
+    ).loadSetupState(),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
+test("setup transport strips even credential-reflecting server errors", async () => {
+  const client = createAdminClient(async () =>
+    Response.json(
+      {
+        error: {
+          code: "NOT_FOUND",
+          message: "private-secret",
+          details: { password: "private-secret" },
+        },
+      },
+      { status: 404 },
+    ),
+  );
+  await expect(
+    client.setupAdmin({
+      email: "admin@lace.test",
+      password: "correct horse battery staple",
+      token: "A".repeat(43),
+    }),
+  ).rejects.toMatchObject({ status: 404, message: "Administrator setup could not be confirmed." });
+});
