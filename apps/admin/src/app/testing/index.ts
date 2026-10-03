@@ -93,6 +93,7 @@ export function stubClient(overrides: Partial<AdminClient> = {}): AdminClient {
   return {
     loadSetupState: async () => ({ setupComplete: true }),
     setupAdmin: async () => undefined,
+    loadBuildSite: async () => ({ site: null }),
     listBuilds: async () => ({ items: [] }),
     getBuild: async () => ({}) as never,
     requestBuild: async () => ({ coalesced: false, eventId: "event-1", targetVersion: 0 }),

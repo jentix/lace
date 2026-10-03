@@ -5,6 +5,7 @@ import {
   MediaUseCases,
   opaqueCursor,
   requireUsersManager,
+  requireContentReader,
   SiteBuildUseCases,
 } from "@lacecms/application";
 import type {
@@ -15,6 +16,8 @@ import type {
 } from "@lacecms/application";
 import {
   buildExportSchema,
+  buildSiteSelectionSchema,
+  type BuildSiteIdentityDto,
   buildTokenCreateRequestSchema,
   buildTokenCreatedSchema,
   buildTokenListSchema,
@@ -160,6 +163,7 @@ export interface BuiltAdminResponder {
 }
 
 export interface LaceAppInput {
+  readonly buildSite?: BuildSiteIdentityDto | null;
   readonly auth?: AuthRouteHandler;
   readonly actors: ActorResolver;
   readonly adminAssets?: BuiltAdminResponder;
@@ -613,6 +617,23 @@ export function createLaceApp(input: LaceAppInput): Hono {
     await usersActor(context);
     return response(managedUserListSchema, { items: await security().listUsers() });
   });
+  app.get(
+    "/api/v1/admin/build-site",
+    describeRoute({
+      summary: "Read current configured build site",
+      responses: {
+        200: {
+          description: "Current configuration, not deployment verification",
+          content: { "application/json": { schema: resolver(buildSiteSelectionSchema) } },
+        },
+      },
+    }),
+    async (context) => {
+      const resolvedActor = await actor(context);
+      requireContentReader(resolvedActor);
+      return response(buildSiteSelectionSchema, { site: input.buildSite ?? null });
+    },
+  );
   app.get("/api/v1/admin/settings/status", async (context) => {
     await usersActor(context);
     return response(adminSettingsStatusSchema, {

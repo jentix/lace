@@ -43,7 +43,7 @@ import { EntryEditorActions, type SaveState } from "../EntryEditorActions/index.
 import { EntryValidationSummary } from "../EntryValidationSummary/index.js";
 import {
   EntryPublicationDetails,
-  type BuildDispatchStatus,
+  type BuildDispatchResult,
 } from "../EntryPublicationDetails/index.js";
 
 const entryRoute = getRouteApi("/_protected/content/$modelKey/$entryId");
@@ -67,7 +67,7 @@ export function EntryPage() {
     { readonly idempotencyKey: string; readonly revision: number } | undefined
   >(undefined);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
-  const [latestBuild, setLatestBuild] = useState<BuildDispatchStatus | undefined>(undefined);
+  const [latestBuild, setLatestBuild] = useState<BuildDispatchResult | undefined>(undefined);
   const currentEntry = savedEntry ?? entry.data;
   const model = models.data?.items.find((item) => item.key === modelKey);
   const modelRef = useRef<ContentModelDto | undefined>(undefined);
@@ -219,7 +219,7 @@ export function EntryPage() {
       form.reset(values);
       setConflict(undefined);
       setPublishAttempt(undefined);
-      setLatestBuild(result.build.status);
+      setLatestBuild(result.build);
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.modelEntries(modelKey) });
     },
   });

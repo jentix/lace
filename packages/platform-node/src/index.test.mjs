@@ -1155,3 +1155,64 @@ test("reports orientation-applied display dimensions from the sharp inspector", 
     code: "CONTENT_INVALID_STATE",
   });
 });
+
+test("Node loads explicit current build-site identity without private paths", () => {
+  const env = {
+    ...minioEnvironment,
+    LACE_DATABASE_PATH: ":memory:",
+    LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough",
+    LACE_PUBLIC_BASE_URL: "https://lace.test/",
+  };
+  expect(parseNodeRuntimeSettings(env).buildSite).toBe(null);
+  expect(
+    parseNodeRuntimeSettings({
+      ...env,
+      LACE_BUILD_SITE_ID: "real-site",
+      LACE_BUILD_SITE_LABEL: "Real site",
+    }).buildSite,
+  ).toEqual({ id: "real-site", label: "Real site" });
+  expect(() =>
+    parseNodeRuntimeSettings({
+      ...env,
+      LACE_BUILD_SITE_ID: "real-site",
+      LACE_BUILD_SITE_LABEL: "/private/secret",
+    }),
+  ).toThrow("Invalid build site configuration: LACE_BUILD_SITE_ID, LACE_BUILD_SITE_LABEL.");
+});
+
+test.each([null, { id: "real-site", label: "Real site" }])(
+  "Node composition serves current identity %j",
+  async (site) => {
+    const directory = await mkdtemp(join(tmpdir(), "lace-node-build-site-"));
+    const databasePath = join(directory, "lace.sqlite");
+    try {
+      migrateNodeDatabase(databasePath);
+      const settings = parseNodeRuntimeSettings({
+        ...minioEnvironment,
+        LACE_DATABASE_PATH: databasePath,
+        LACE_AUTH_SECRET: "test-auth-secret-that-is-long-enough",
+        LACE_PUBLIC_BASE_URL: "https://lace.test/",
+        ...(site ? { LACE_BUILD_SITE_ID: site.id, LACE_BUILD_SITE_LABEL: site.label } : {}),
+      });
+      const config = await defineConfig({
+        content: [definePage({ key: "home", path: "/", version: 1 })],
+      });
+      const runtime = createNodeRuntime({
+        config,
+        settings,
+        actors: {
+          resolve: async () => ({ id: actorId("reader"), role: "viewer" }),
+        },
+      });
+      try {
+        const response = await runtime.app.request("https://lace.test/api/v1/admin/build-site");
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ site });
+      } finally {
+        runtime.close();
+      }
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  },
+);

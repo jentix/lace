@@ -585,6 +585,21 @@ export const siteBuildRecordSchema = v.strictObject({
 export const siteBuildListSchema = v.strictObject({
   items: v.pipe(v.array(siteBuildRecordSchema), v.maxLength(100)),
 });
+/** Operator-authored current configuration; never a filesystem path or historical attribution. */
+export const buildSiteIdentitySchema = v.strictObject({
+  id: v.pipe(v.string(), v.minLength(1), v.maxLength(64), v.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)),
+  label: v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(80),
+    v.regex(/^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$/u),
+  ),
+});
+export const buildSiteSelectionSchema = v.strictObject({
+  site: v.nullable(buildSiteIdentitySchema),
+});
+export type BuildSiteIdentityDto = v.InferOutput<typeof buildSiteIdentitySchema>;
+export type BuildSiteSelectionDto = v.InferOutput<typeof buildSiteSelectionSchema>;
 export type SiteBuildRecordDto = v.InferOutput<typeof siteBuildRecordSchema>;
 export type SiteBuildListDto = v.InferOutput<typeof siteBuildListSchema>;
 

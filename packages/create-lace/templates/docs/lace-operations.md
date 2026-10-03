@@ -6,7 +6,7 @@ Start with the generated root `README.md` for the concise quickstart. README is 
 
 ## Prerequisites and generation
 
-Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.6.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.8.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
 
 After the owner publishes the complete compatible alpha set, generate and install:
 
@@ -118,18 +118,32 @@ In Admin open Home, set its title, add blocks, save and publish as the admin. Up
 
 ```bash
 pnpm dev
-# Stop and restart Astro after publication or token/env changes.
+# After publishing: reload dev; restart it only for new/renamed slugs or token/env changes.
 pnpm build
 pnpm typecheck
 ```
 
-`dev` serves editable Astro at its printed URL, normally `http://localhost:4321/`. Each build reads one authenticated published export and derives `/` and `/blog/:slug` routes from it. Publish Home before building. Later draft edits do not change built content. Missing/rejected credentials, unavailable API, unpublished Home and unsupported blocks fail with corrective diagnostics. Run a fresh build after publication; development caches a successful export until restart.
+`dev` serves editable Astro at its printed URL, normally `http://localhost:4321/`. Each static build reads one authenticated published export and derives `/` and `/blog/:slug` routes from it. Publish Home before building. Later draft edits do not change built content. Missing/rejected credentials, unavailable API, unpublished Home and unsupported blocks fail with corrective diagnostics. See [publication visibility](#when-published-content-becomes-visible) for when each mode shows a publication.
 
 ## Full Compose build and persistence
 
 Once the real build token is configured, run `pnpm prod:start`. It starts API/admin, MinIO, explicit migration, dispatcher, fixed-command builder and web proxy. The builder reads generated source read-only and publishes successful static releases atomically. Visit `http://127.0.0.1:8080/` after a successful build. Publication queues a build; Settings also offers an explicit build request. If earlier publications were already built, request a fresh build in Settings. Failed builds retain the last successful release; inspect build history and request retry after correcting the cause. Rendered images use the host API URL, not `http://api:3000/`.
 
 `pnpm dev:stop` and `pnpm prod:stop` retain SQLite in `.lace/data/` and MinIO/static-output volumes. Restart with the corresponding start command. Use `docker compose down --volumes` and remove `.lace/data/` only for disposable test deployments after backing up valuable content.
+
+## When published content becomes visible
+
+Saving a draft never changes any site output and never requests a build. Publishing makes the saved revision the published snapshot that build tokens can read; what visitors see then depends on how the site is rendered. These behaviors were verified against a generated consumer with Template `0.8.0` and compatible Step 29B artifacts.
+
+| Mode                               | After publication                                                                                                                                                                               | Next action                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Generated `pnpm dev`               | Changes to `/` and existing `/blog/:slug` pages appear on reload; dev revalidates the export with its ETag on each render. A new or renamed slug returns 404 because Astro caches static paths. | Reload. Restart `pnpm dev` only for new/renamed slugs or token/environment changes.                                |
+| Manual static build (`pnpm build`) | Existing `site/dist/` output is unchanged.                                                                                                                                                      | Run a fresh `pnpm build`, then deploy `site/dist/` with your own host. Lace cannot see or confirm that deployment. |
+| Compose (`pnpm prod:start`)        | Publication queues a build. The web proxy keeps serving the previous release until the builder switches a complete new one; a failed build keeps the previous release.                          | Watch Builds; reload after the build covering your publication succeeds.                                           |
+
+On the VPS builder a build stays **Pending** while it waits and while the synchronous builder runs, then becomes **Succeeded** or **Failed**; **Running** appears only for providers that report an accepted deployment. The new release can be served a moment before Builds records success. Builds coalesce: one build may cover several publications, so look for a build whose target version is at least the version your publication queued. The web proxy sends `Cache-Control: no-cache` for site responses, so browsers revalidate with the file validators after a release switch instead of reusing heuristically cached HTML. Admin's entry editor follows the covering build and names the current build site, but a succeeded build does not prove a manual or provider deployment.
+
+An existing site with its own SDK integration behaves according to its own code in Astro dev: data read in page code on every render appears on reload, while data passed through `getStaticPaths` props and any new routes stay as loaded until you restart dev. The generated `site/src/lib/site-data.ts` and `site/src/pages/blog/[slug].astro` show the reload-friendly pattern while keeping one export per static build.
 
 ## Configuration, routes, renderers and styling
 
@@ -156,3 +170,37 @@ Block keys are unique within an entry, so scope instance selectors by entry. Bui
 ## Optional Cloudflare Pages
 
 `--cloudflare` adds Pages config and a manual workflow. After a build against your configured API, run `pnpm exec wrangler pages dev site/dist` for local Pages preview. Workflow installation needs compatible published packages; provide API/public URLs and build credentials in CI, never generated files. The CMS Worker is a separate versioned deployment. Complete Cloudflare consumer onboarding, real deployment, artifact preparation and the stable-MVP gate remain separate work.
+
+## Selecting the build site
+
+Build-site selection (introduced in template `0.7.0`) requires compatible freshly built Step 29A or later API, admin, CLI and builder artifacts (or a later compatible published release). Published alpha images are not retroactively updated; this configuration does not publish or download replacement artifacts. Upgrade managed infrastructure with conflict review, retain user-owned README/site/config and manually incorporate guidance in an existing README.
+
+The builder mounts `LACE_BUILD_SOURCE_ROOT` from the host read-only at `/source`. Compose resolves a relative host path against its project directory and refuses to create a missing source directory. Container paths are separate: `LACE_BUILD_SITE_DIR` selects an Astro project relative to `/source`, and `LACE_BUILD_OUTPUT_DIR` selects a static result relative to that project. Install uses `/source/pnpm-lock.yaml` and its root package/workspace declarations, with frozen pnpm and the image-pinned toolchain. It never guesses which example to build. Served releases remain in the shared `/output` volume; your host `dist` is not overwritten.
+
+| Layout                                        | Host source root | Site directory | Output directory |
+| --------------------------------------------- | ---------------- | -------------- | ---------------- |
+| Generated CMS project                         | `.`              | `site`         | `dist`           |
+| Existing standalone Astro root, CMS in `cms/` | `..`             | `.`            | `dist`           |
+| Existing workspace with `web/` and `cms/`     | `..`             | `web`          | `dist`           |
+
+Set these values in the CMS `.env`. For the standalone parent-root example:
+
+```dotenv
+LACE_BUILD_SOURCE_ROOT=..
+LACE_BUILD_SITE_DIR=.
+LACE_BUILD_OUTPUT_DIR=dist
+LACE_BUILD_SITE_ID=public-site
+LACE_BUILD_SITE_LABEL="Public site"
+```
+
+The selected root must contain its regular `package.json` and `pnpm-lock.yaml`; a selected workspace package needs the root `pnpm-workspace.yaml` and must belong to that installation. Mount an independent site's own lockfile root rather than choose a package with a separate nested lockfile. Astro must be a direct dependency/dev dependency of the selected package. Paths cannot be absolute inside `/source`, escape with `..`, contain symlinks or select source/configuration directories as output. `.` is permitted only for the site directory. Existing output, dependencies, Git, environment credentials and nested CMS `.lace/data` are filtered from scratch copies.
+
+An existing site requires user-owned routes, renderers and a server-only `@lacecms/sdk` published-export loader. The generated `site/src/lib/site-data.ts` and renderers are integration references: preserve one validated export per static build, expected published-version validation, draft isolation, all five built-in block renderers, safe rich text/URLs and public media origins. This selection does not install components or modify your existing source, and `create-lace init .` still requires an empty target. Install compatible dependencies and commit a reproducible pnpm lockfile in the selected root before building.
+
+The image runs frozen installation followed by direct `pnpm --dir <selected-site> exec astro build --outDir <selected-output>`. Custom package build/prebuild scripts are not selected. Only static Astro output is served; SSR/server output, incomplete output, linked files, frozen-install failure and version mismatch fail the build. The trusted site configuration and normal dependency hooks still execute during installation/Astro compilation. There is no custom command or extra environment forwarding interface.
+
+`LACE_BUILD_SITE_ID` is a 1–64 character lowercase kebab-case name. `LACE_BUILD_SITE_LABEL` is a 1–80 character display name using ASCII letters/digits, spaces, hyphens and underscores, beginning/ending with a letter or digit. Supply names, never paths, URLs or credentials. Generated Compose supplies the same identity to API and builder. For manual Node/Worker deployments set the identity explicitly; absent identity is shown as unconfigured. Builds shows current configuration separately from historical build records; it does not verify mount accessibility or provider completion.
+
+Review `docker compose config` privately, then recreate affected services using compatible images with `docker compose up -d --force-recreate api dispatcher builder`. Use the existing administrator Request build/Retry build actions in Builds. If a mount is missing or inaccessible, correct the host bind and permissions; if installation/build fails, correct the selected dependencies/lockfile/source and retry. The trigger still accepts only build ID and published version; no HTTP request can change source, command, arguments or environment. A failed build preserves the current complete release until a successful retry switches it atomically. Keep internal `http://api:3000/` export transport separate from `LACE_PUBLIC_BASE_URL` for browser-facing media. Stop without deleting volumes to preserve data and releases.
+
+This section defines deployment selection; a configured identity does not prove a successful deployment. See [publication visibility](#when-published-content-becomes-visible) for dev, manual and automatic behavior after publication.

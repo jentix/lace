@@ -1,3 +1,4 @@
+import { parseBuildSiteIdentity, type LaceAppInput } from "@lacecms/server";
 import type { KVNamespace } from "./cache.js";
 import { DEFAULT_DEPLOY_HOOK_TIMEOUT_MS } from "./deploy-hook.js";
 import type { D1Database } from "./d1.js";
@@ -10,6 +11,8 @@ export interface AssetsFetcher {
 
 /** Bindings, plain variables, and secrets the Worker reads from `env`. */
 export interface CloudflareWorkerEnv {
+  readonly LACE_BUILD_SITE_ID?: unknown;
+  readonly LACE_BUILD_SITE_LABEL?: unknown;
   readonly ASSETS?: unknown;
   readonly CACHE?: unknown;
   readonly DB?: unknown;
@@ -36,6 +39,7 @@ export class CloudflareEnvironmentError extends Error {
 }
 
 export interface CloudflareSettings {
+  readonly buildSite?: LaceAppInput["buildSite"];
   readonly assets?: AssetsFetcher;
   readonly authSecret: string;
   readonly cache?: KVNamespace;
@@ -158,6 +162,7 @@ function timeout(
 /** Parses Worker bindings and secrets once, without exposing supplied values in errors. */
 export function parseCloudflareSettings(env: CloudflareWorkerEnv): CloudflareSettings {
   const issues: CloudflareEnvironmentIssue[] = [];
+  const buildSite = parseBuildSiteIdentity(env);
   const database = binding<D1Database>(env.DB, "DB", ["batch", "prepare"], issues);
   const media = binding<R2Bucket>(env.MEDIA, "MEDIA", ["delete", "get", "head", "put"], issues);
   const cache = binding<KVNamespace>(env.CACHE, "CACHE", ["delete", "get", "put"], issues, true);
@@ -198,6 +203,7 @@ export function parseCloudflareSettings(env: CloudflareWorkerEnv): CloudflareSet
     throw new CloudflareEnvironmentError(Object.freeze(issues));
   }
   return Object.freeze({
+    buildSite,
     ...(assets === undefined ? {} : { assets }),
     authSecret,
     ...(cache === undefined ? {} : { cache }),

@@ -1,4 +1,5 @@
 import type { AdminRole } from "../../entities/session/index.js";
+import { publicationVisibilityModes } from "../../features/publish-entry/index.js";
 import { navigationGroups } from "./navigation.js";
 
 export interface TourStep {
@@ -29,6 +30,9 @@ export function tourSteps(
             ]
           : []),
         "Published content and the served site are separate: when the site updates depends on its rendering and build setup. Publication does not guarantee an immediate site refresh or successful deployment.",
+        `How published content reaches the site: ${publicationVisibilityModes
+          .map((item) => `${item.mode}: ${item.detail}`)
+          .join(" ")}`,
       ],
     },
   ];
@@ -67,7 +71,7 @@ export function tourSteps(
             id: "builds",
             title: item.label,
             paragraphs: [
-              "Inspect recorded site builds and their target versions. Pending work is waiting; running work is in progress; succeeded and failed are terminal outcomes. Failure details explain problems without changing the published content.",
+              "Inspect recorded site builds and their target versions. Pending work is queued or, on a self-hosted builder, building; running work is in progress at a deployment provider; succeeded and failed are terminal outcomes. One build can cover several publications. Failure details explain problems without changing the published content, and the previous release stays served.",
               ...(role === "admin"
                 ? [
                     "Request a build or retry a failed build here. Requests enter the queue and can coalesce; inspect their status rather than assuming the site is already updated.",

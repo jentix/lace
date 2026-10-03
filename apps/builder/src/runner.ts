@@ -13,7 +13,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, relative, sep } from "node:path";
+import { basename, join, relative } from "node:path";
+
+import { copySource, disjointRoots, type SourceSelection } from "./source.js";
 
 export interface BuildRequest {
   readonly buildId: string;
@@ -27,7 +29,7 @@ export type BuildResult =
       readonly reason: "source_invalid" | "install_failed" | "build_failed" | "version_changed";
     }>;
 
-export interface BuilderSettings {
+export interface BuilderSettings extends SourceSelection {
   readonly sourceRoot: string;
   readonly workRoot: string;
   readonly outputRoot: string;
@@ -41,64 +43,11 @@ export interface BuilderSettings {
 }
 
 type Stage = "source_invalid" | "install_failed" | "build_failed" | "version_changed";
-type ProjectLayout = "workspace" | "generated";
 
 class StageError extends Error {
   public constructor(readonly stage: Stage) {
     super(stage);
   }
-}
-
-const SKIPPED_NAMES = new Set([
-  ".git",
-  "node_modules",
-  "dist",
-  ".astro",
-  ".turbo",
-  "coverage",
-  "dev-data",
-  ".lace-acceptance",
-]);
-
-async function copyProject(sourceRoot: string, destination: string): Promise<ProjectLayout> {
-  await cp(sourceRoot, destination, {
-    recursive: true,
-    filter: async (source) => {
-      const name = basename(source);
-      const location = relative(sourceRoot, source);
-      if (location === ".lace/data" || location.startsWith(`.lace/data${sep}`)) return false;
-      if (
-        source !== sourceRoot &&
-        (SKIPPED_NAMES.has(name) || name === ".env" || name.startsWith(".env."))
-      )
-        return false;
-      const stat = await lstat(source);
-      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile()))
-        throw new StageError("source_invalid");
-      return true;
-    },
-  });
-  for (const required of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
-    try {
-      if (!(await lstat(join(destination, required))).isFile()) throw new Error();
-    } catch {
-      throw new StageError("source_invalid");
-    }
-  }
-  const layouts: readonly [ProjectLayout, string][] = [
-    ["workspace", "apps/site/package.json"],
-    ["generated", "site/package.json"],
-  ];
-  const matches: ProjectLayout[] = [];
-  for (const [layout, file] of layouts) {
-    try {
-      if ((await lstat(join(destination, file))).isFile()) matches.push(layout);
-    } catch {
-      /* This layout is absent. */
-    }
-  }
-  if (matches.length !== 1) throw new StageError("source_invalid");
-  return matches[0]!;
 }
 
 async function execute(
@@ -199,12 +148,18 @@ export class FixedCommandBuilder {
     let workDirectory: string | undefined;
     let releaseDirectory: string | undefined;
     try {
+      if (!disjointRoots([sourceRoot, workRoot, outputRoot]))
+        throw new StageError("source_invalid");
       await mkdir(workRoot, { recursive: true });
       const releasesRoot = join(outputRoot, "releases");
       await mkdir(releasesRoot, { recursive: true });
       workDirectory = await mkdtemp(join(workRoot, "build-"));
       const project = join(workDirectory, "project");
-      const layout = await copyProject(sourceRoot, project);
+      try {
+        await copySource(sourceRoot, project, this.settings);
+      } catch {
+        throw new StageError("source_invalid");
+      }
       if (
         (await (this.settings.versionReader?.() ?? currentVersion(this.settings))) !==
         request.targetVersion
@@ -226,28 +181,38 @@ export class FixedCommandBuilder {
       if (
         !(await execute(
           project,
-          layout === "workspace"
-            ? ["install", "--frozen-lockfile", "--filter", "@lacecms/app-site..."]
-            : ["install", "--frozen-lockfile"],
+          ["install", "--frozen-lockfile"],
           environment,
           this.settings.toolPath ?? "pnpm",
           "install",
         ))
       )
         throw new StageError("install_failed");
+      // A non-workspace package must not accidentally use Astro installed at the root.
+      try {
+        await lstat(join(project, this.settings.siteDirectory, "node_modules/astro"));
+      } catch {
+        throw new StageError("source_invalid");
+      }
       if (
         !(await execute(
           project,
-          layout === "workspace"
-            ? ["--filter", "@lacecms/app-site...", "build"]
-            : ["--dir", "site", "build"],
+          [
+            "--dir",
+            this.settings.siteDirectory,
+            "exec",
+            "astro",
+            "build",
+            "--outDir",
+            this.settings.outputDirectory,
+          ],
           environment,
           this.settings.toolPath ?? "pnpm",
           "build",
         ))
       )
         throw new StageError("build_failed");
-      const siteOutput = join(project, layout === "workspace" ? "apps/site/dist" : "site/dist");
+      const siteOutput = join(project, this.settings.siteDirectory, this.settings.outputDirectory);
       if (!(await lstat(join(siteOutput, "index.html"))).isFile())
         throw new StageError("build_failed");
       if (
@@ -259,7 +224,8 @@ export class FixedCommandBuilder {
       await cp(siteOutput, releaseDirectory, {
         recursive: true,
         filter: async (path) => {
-          if ((await lstat(path)).isSymbolicLink()) throw new StageError("build_failed");
+          const stat = await lstat(path);
+          if (!stat.isFile() && !stat.isDirectory()) throw new StageError("build_failed");
           return true;
         },
       });

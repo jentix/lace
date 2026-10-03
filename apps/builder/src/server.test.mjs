@@ -32,6 +32,9 @@ test("builder accepts only authorized closed-shape requests", async () => {
   });
   expect((await invoke(handler, { buildId: "a_1", targetVersion: 2 }, "wrong")).status).toBe(401);
   for (const body of [
+    ...["sourceRoot", "siteDirectory", "outputDirectory", "args", "arguments", "executable"].map(
+      (key) => ({ buildId: "a", targetVersion: 2, [key]: "override" }),
+    ),
     { buildId: "a", targetVersion: 2, command: "whoami" },
     { buildId: "../escape", targetVersion: 2 },
     { buildId: "a", targetVersion: -1 },

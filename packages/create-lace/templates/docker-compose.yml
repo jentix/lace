@@ -44,6 +44,8 @@ services:
   api:
     image: ${LACE_API_IMAGE:?set LACE_API_IMAGE}
     environment: &api-environment
+      LACE_BUILD_SITE_ID: ${LACE_BUILD_SITE_ID:-main-site}
+      LACE_BUILD_SITE_LABEL: ${LACE_BUILD_SITE_LABEL:-Main site}
       LACE_AUTH_SECRET: ${LACE_AUTH_SECRET:?set LACE_AUTH_SECRET}
       LACE_DATABASE_PATH: /data/lace.sqlite
       LACE_HOST: 0.0.0.0
@@ -111,12 +113,21 @@ services:
   builder:
     image: ${LACE_BUILDER_IMAGE:?set LACE_BUILDER_IMAGE}
     environment:
+      LACE_BUILD_SITE_DIR: ${LACE_BUILD_SITE_DIR:-site}
+      LACE_BUILD_OUTPUT_DIR: ${LACE_BUILD_OUTPUT_DIR:-dist}
+      LACE_BUILD_SITE_ID: ${LACE_BUILD_SITE_ID:-main-site}
+      LACE_BUILD_SITE_LABEL: ${LACE_BUILD_SITE_LABEL:-Main site}
       LACE_BUILDER_SECRET: ${LACE_BUILDER_SECRET:?set LACE_BUILDER_SECRET}
       LACE_API_BASE_URL: http://api:3000/
       LACE_BUILD_TOKEN: ${LACE_BUILD_TOKEN:-}
       LACE_PUBLIC_BASE_URL: ${LACE_PUBLIC_BASE_URL:?set LACE_PUBLIC_BASE_URL}
     volumes:
-      - .:/source:ro
+      - type: bind
+        source: ${LACE_BUILD_SOURCE_ROOT:-.}
+        target: /source
+        read_only: true
+        bind:
+          create_host_path: false
       - static-output:/output
     depends_on:
       api: { condition: service_healthy }

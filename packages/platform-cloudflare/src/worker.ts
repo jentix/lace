@@ -265,6 +265,7 @@ export function createCloudflareRuntime(
     auth,
     builds: new SiteBuildUseCases({ builds: repository, clock }),
     config: input.config,
+    buildSite: settings.buildSite ?? null,
     content,
     environment: { engineVersion: "0.0.0", openApiTitle: "Lace API" },
     logger: input.logger ?? defaultLogger,

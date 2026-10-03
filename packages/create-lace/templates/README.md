@@ -65,7 +65,7 @@ pnpm build
 pnpm typecheck
 ```
 
-Astro dev normally prints `http://localhost:4321/`. The current successful export loader caches data during dev; restart Astro after publication or token/environment changes. A static build reads one authenticated published export for `/` and `/blog/:slug`. Draft saves do not change published content, and publication alone does not deploy a manual static build. Missing tokens, unavailable API and unpublished Home give actionable errors. Deploy `site/dist/` through your chosen static host after building.
+Astro dev normally prints `http://localhost:4321/`. After publication, reload: dev revalidates the published export, so changes to `/` and existing posts appear without a restart. Restart dev only for a new or renamed post slug (Astro caches static paths) or token/environment changes. A static build reads one authenticated published export for `/` and `/blog/:slug`. Draft saves do not change published content, and publication alone does not change an existing `site/dist/` or deploy a manual static build; run a fresh build and deploy it yourself. Missing tokens, unavailable API and unpublished Home give actionable errors. Deploy `site/dist/` through your chosen static host after building.
 
 For automatic Compose builds, with a real build token configured:
 
@@ -73,7 +73,7 @@ For automatic Compose builds, with a real build token configured:
 pnpm prod:start
 ```
 
-The fixed-command builder currently builds the generated `site/` source. Configuring a different existing Astro source is later work. Publication queues a build; request another through Settings if an earlier publication was already processed. Check Builds for success/failure; the web proxy serves `http://127.0.0.1:8080/` after a successful release. Failures retain the previous successful output. The builder uses `http://api:3000/` internally for exports, while rendered media uses your public API URL.
+The fixed-command builder explicitly selects the generated `site/` by default. To build an existing standalone or workspace Astro site alongside a CMS directory, configure its host source mount and relative project/output as described in [build-site selection](docs/lace-operations.md#selecting-the-build-site). Builds and administrator Settings show the safe current site identity; this is configuration rather than proof of deployment. Publication queues a build; request another through Settings if an earlier publication was already processed. Check Builds for success/failure; the web proxy serves `http://127.0.0.1:8080/` and switches to new content only after a successful release (a build may show Pending until just after the switch). Failures retain the previous successful output. See [when published content becomes visible](docs/lace-operations.md#when-published-content-becomes-visible) for every mode. The builder uses `http://api:3000/` internally for exports, while rendered media uses your public API URL.
 
 ```bash
 pnpm dev:stop
@@ -95,4 +95,4 @@ README, `lace.config.ts` and `site/**` are user-owned and upgrades preserve edit
 
 ## Optional Cloudflare
 
-`--cloudflare` adds Pages config and a manual workflow for the static site. After building, `pnpm exec wrangler pages dev site/dist` previews Pages locally. It does not deliver or deploy the CMS Worker. Complete generated D1/R2/Worker onboarding remains Step 31 work; configure any independent Worker explicitly and keep remote mutations intentional. See [Cloudflare scope](docs/lace-operations.md#optional-cloudflare-pages). Site-selection and publication guidance will be reconciled as Steps 29–31 land.
+`--cloudflare` adds Pages config and a manual workflow for the static site. After building, `pnpm exec wrangler pages dev site/dist` previews Pages locally. It does not deliver or deploy the CMS Worker. Complete generated D1/R2/Worker onboarding remains Step 31 work; configure any independent Worker explicitly and keep remote mutations intentional. See [Cloudflare scope](docs/lace-operations.md#optional-cloudflare-pages). External site selection requires compatible Step 29A or later artifacts; publication visibility is verified separately in Step 29B.

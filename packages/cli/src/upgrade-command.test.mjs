@@ -67,9 +67,76 @@ async function updateTemplate(root, path, bytes) {
   manifest.templateVersion = "0.3.0";
   manifest.files[path].sha256 = upgradeHash(Buffer.from(bytes));
   await writeFile(location, JSON.stringify(manifest));
+  const instructionsPath = join(root, ".lace/upgrade-instructions.json");
+  const instructions = JSON.parse(await readFile(instructionsPath, "utf8"));
+  instructions.templateVersion = manifest.templateVersion;
+  await writeFile(instructionsPath, JSON.stringify(instructions));
 }
 
 describe("upgrade CLI", () => {
+  it(
+    "upgrades 0.7 proxy and guidance to 0.8 without changing user site source",
+    async () => {
+      const { root, project, template } = await fixture();
+      const manifestPath = join(project, ".lace/manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      manifest.templateVersion = "0.7.0";
+      for (const path of ["deploy/nginx.conf", "docs/lace-operations.md"]) {
+        const old = Buffer.from(`old 0.7 template ${path}\n`);
+        await writeFile(join(project, path), old);
+        manifest.files[path].sha256 = upgradeHash(old);
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      await rm(join(project, ".lace/upgrade-instructions.json"));
+      const preserved = ["site/src/lib/site-data.ts", "site/src/pages/blog/[slug].astro"];
+      for (const path of preserved) await writeFile(join(project, path), `user ${path}\n`);
+      const args = ["--project", project, "--template", template, "--apply", "--json"];
+      const result = cli(args, root);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const outcome = JSON.parse(result.stdout);
+      expect(outcome.data.instructions.templateVersion).toBe("0.8.0");
+      expect(outcome.guidance).toContain("Cache-Control: no-cache");
+      expect(outcome.guidance).toContain("revalidate the build export with its ETag");
+      expect(await readFile(join(project, "deploy/nginx.conf"), "utf8")).toContain(
+        'add_header Cache-Control "no-cache" always;',
+      );
+      for (const path of preserved)
+        expect(await readFile(join(project, path), "utf8")).toBe(`user ${path}\n`);
+    },
+    integrationTimeout,
+  );
+  it(
+    "upgrades 0.6 managed deployment files to 0.8 while preserving user source",
+    async () => {
+      const { root, project, template } = await fixture();
+      const manifestPath = join(project, ".lace/manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      manifest.templateVersion = "0.6.0";
+      for (const path of ["docker-compose.yml", ".env.example", "docs/lace-operations.md"]) {
+        const old = Buffer.from(`old 0.6 template ${path}\n`);
+        await writeFile(join(project, path), old);
+        manifest.files[path].sha256 = upgradeHash(old);
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      await rm(join(project, ".lace/upgrade-instructions.json"));
+      const preserved = ["README.md", "lace.config.ts", "site/src/pages/index.astro"];
+      for (const path of preserved) await writeFile(join(project, path), `user ${path}\n`);
+      const args = ["--project", project, "--template", template, "--apply", "--json"];
+      const result = cli(args, root);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const outcome = JSON.parse(result.stdout);
+      expect(outcome.data.instructions.templateVersion).toBe("0.8.0");
+      expect(outcome.guidance).toContain("compatible freshly built");
+      expect(outcome.guidance).toContain("LACE_BUILD_SOURCE_ROOT");
+      expect(JSON.parse(await readFile(manifestPath, "utf8")).templateVersion).toBe("0.8.0");
+      expect(await readFile(join(project, "docker-compose.yml"), "utf8")).toContain(
+        "create_host_path: false",
+      );
+      for (const path of preserved)
+        expect(await readFile(join(project, path), "utf8")).toBe(`user ${path}\n`);
+    },
+    integrationTimeout,
+  );
   it(
     "loads runtime adapters only after selecting a valid operational command",
     async () => {

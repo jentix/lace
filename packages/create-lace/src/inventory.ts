@@ -5,12 +5,15 @@ export interface TemplateFile {
   readonly owner: FileOwner;
   readonly cloudflare?: true;
   readonly interpolateName?: true;
+  /** Reserved .lace metadata is delivered but never enters the upgrade file inventory. */
+  readonly metadata?: true;
 }
 
-export const TEMPLATE_VERSION = "0.6.0";
+export const TEMPLATE_VERSION = "0.8.0";
 
 /** Every bundled template must appear here with an explicit ownership decision. */
 export const TEMPLATE_FILES: readonly TemplateFile[] = [
+  { path: ".lace/upgrade-instructions.json", owner: "managed", metadata: true },
   { path: "README.md", owner: "user" },
   { path: ".env.example", owner: "managed" },
   { path: ".gitignore", owner: "managed" },

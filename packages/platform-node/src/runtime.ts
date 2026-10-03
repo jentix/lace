@@ -13,6 +13,7 @@ import { appliedMigrationQuery, betterAuthSchema, checkedInMigrations } from "@l
 import { contentModelKey, unixMilliseconds } from "@lacecms/domain";
 import {
   createLaceApp,
+  parseBuildSiteIdentity,
   type ActorResolver,
   type BuiltAdminResponder,
   type LaceAppInput,
@@ -47,6 +48,7 @@ export class NodeEnvironmentError extends Error {
 }
 
 export interface NodeRuntimeSettings {
+  readonly buildSite?: LaceAppInput["buildSite"];
   readonly authSecret: string;
   readonly adminDevOrigin?: URL;
   readonly databasePath: string;
@@ -121,6 +123,7 @@ function positiveInteger(
 /** Parses all runtime settings once, without exposing supplied environment values in errors. */
 export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRuntimeSettings {
   const issues: NodeEnvironmentIssue[] = [];
+  const buildSite = parseBuildSiteIdentity(environment);
   const databasePath = requiredString(environment, "LACE_DATABASE_PATH", issues);
   const authSecret = requiredString(environment, "LACE_AUTH_SECRET", issues);
   const publicBaseUrl = absoluteHttpUrl(
@@ -193,6 +196,7 @@ export function parseNodeRuntimeSettings(environment: NodeEnvironment): NodeRunt
     throw new NodeEnvironmentError(Object.freeze(issues));
   }
   return Object.freeze({
+    buildSite,
     ...(adminDevOrigin === undefined ? {} : { adminDevOrigin }),
     authSecret,
     databasePath,
@@ -460,6 +464,7 @@ export function createNodeRuntime(input: CreateNodeRuntimeInput): NodeRuntime {
     actors: input.actors ?? auth.actors,
     auth,
     builds,
+    buildSite: input.settings.buildSite ?? null,
     config: input.config,
     content,
     environment: input.environment ?? { engineVersion: "0.0.0", openApiTitle: "Lace API" },

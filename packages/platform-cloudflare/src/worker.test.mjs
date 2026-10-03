@@ -467,3 +467,45 @@ test("without a deploy hook, dispatch records a sanitized trigger-unavailable fa
   const builds = await fixture.call("/api/v1/admin/site-builds");
   expect(builds.body.items[0]).toMatchObject({ error: "trigger_unavailable", status: "pending" });
 });
+
+test("Worker loads the same safe current build-site identity", () => {
+  const env = {
+    DB: fakeDatabase,
+    MEDIA: fakeBucket,
+    LACE_AUTH_SECRET: secret,
+    LACE_PUBLIC_BASE_URL: `${origin}/`,
+  };
+  expect(parseCloudflareSettings(env).buildSite).toBe(null);
+  expect(
+    parseCloudflareSettings({
+      ...env,
+      LACE_BUILD_SITE_ID: "real-site",
+      LACE_BUILD_SITE_LABEL: "Real site",
+    }).buildSite,
+  ).toEqual({ id: "real-site", label: "Real site" });
+  expect(() =>
+    parseCloudflareSettings({
+      ...env,
+      LACE_BUILD_SITE_ID: "real-site",
+      LACE_BUILD_SITE_LABEL: "/private/secret",
+    }),
+  ).toThrow("Invalid build site configuration: LACE_BUILD_SITE_ID, LACE_BUILD_SITE_LABEL.");
+});
+
+test.each([null, { id: "real-site", label: "Real site" }])(
+  "Worker composition serves current identity %j",
+  async (site) => {
+    const fixture = await workerFixture({
+      env: site
+        ? {
+            LACE_BUILD_SITE_ID: site.id,
+            LACE_BUILD_SITE_LABEL: site.label,
+          }
+        : {},
+    });
+    await fixture.signIn();
+    const response = await fixture.call("/api/v1/admin/build-site");
+    expect(response.response.status).toBe(200);
+    expect(response.body).toEqual({ site });
+  },
+);
