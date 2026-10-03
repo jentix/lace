@@ -2,9 +2,11 @@
 
 Run the generated project with packaged API/admin runtimes and an editable Astro site. You own `lace.config.ts` and `site/`; the engine checkout is unnecessary.
 
+Start with the generated root `README.md` for the concise quickstart. README is user-owned, without a manifest hash; upgrades preserve its edits. If `init .` encounters an allowed existing README, it preserves every byte and prints this guide's path. Follow this guide directly or manually copy relevant Lace instructions into your existing README. In a `cms/` installation these paths and commands are relative to `cms/`, not its parent application. This guide is managed with hash/conflict review.
+
 ## Prerequisites and generation
 
-Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This template selects Lace `0.1.0-alpha.1`, ownership template `0.4.0`, and matching `ghcr.io/lacecms/api:0.1.0-alpha.1` / `ghcr.io/lacecms/builder:0.1.0-alpha.1` images. The npm alpha channel is `next`; use the exact version below for reproducible generation. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for publication rather than patch dependency references.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.6.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
 
 After the owner publishes the complete compatible alpha set, generate and install:
 
@@ -20,6 +22,25 @@ pnpm env:prepare
 Preparation refuses to replace any existing `.env`, including concurrent creation. If you already have one, retain it and review its settings privately; this command does not rotate credentials. A missing, symlinked or malformed `.env.example` must be restored as a regular file with one single-line `NAME=value` assignment for each generated credential and `LACE_BUILD_TOKEN`. Filesystem failures require checking directory permissions and hard-link support. If preparation was forcibly stopped, `.env` is either absent or fully written; private ignored `.lace-env-*` staging directories can be removed after confirming no preparation is running. Retry only when `.env` is absent.
 
 This preparation flow requires packages packed from the revision that implements Step 26C (or a later compatible published release). Previously published `0.1.0-alpha.1` artifacts are not retroactively updated. The next coherent alpha artifact/version refresh is a separate release step.
+
+## Read-only environment checks
+
+With a CLI packed from Step 27A or a later compatible release, run from this project root:
+
+```bash
+pnpm exec lace doctor --target node --mode compose --stage setup
+pnpm exec lace doctor --target node --mode compose --stage ready --json
+```
+
+Doctor reads a regular `.env`, then lets exported process variables override it; it does not require Node's `--env-file` option. It checks your `package.json` Node/pnpm engine ranges, generated Compose host settings, Docker Compose/daemon, migrations, anonymous API readiness through `LACE_API_BASE_URL` and build-token presence. Select `--mode native` only for an independently configured host Node runtime using its runtime variable names. Target and stage are required; native is the Node default and mode is invalid for Cloudflare. No tools are installed and no configuration or services are changed.
+
+`setup` marks absent databases/ledgers, pending migrations, an unavailable API and the not-yet-issued build token as `expected`; `ready` treats them as failures. Settings/permission/lock/tool/authorization errors and a reachable API returning not-ready fail in both stages. Other check statuses are `pass`, `fail` and `skipped`; skipped checks explain their dependency or inapplicability. A present token remains unverified and is never sent. Readiness does not verify content sync, object storage, publication or a successful site build.
+
+SQLite is inspected without writable runtime opening. WAL-mode databases report `DATABASE_UNAVAILABLE` rather than change SHM reader marks or create sidecars; consult the separate API readiness result. For an independent ledger inspection, stop all API/dispatcher/CLI database users, back up with trusted SQLite tooling, explicitly checkpoint successfully and switch to rollback journal mode (`PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;`), then repeat doctor. These are operator actions; doctor performs none of them. Ordinary Lace startup restores WAL. Never discard WAL/SHM files or use immutable mode on a live database.
+
+Cloudflare needs an installed project-local Wrangler and an explicitly selected `LACE_WRANGLER_CONFIG` with a CMS `DB` binding matching `LACE_D1_DATABASE_ID`. The generated Pages-only file lacks that binding and complete CMS Worker onboarding remains future work. `--target cloudflare-local` additionally needs `LACE_CLOUDFLARE_PERSIST_TO` and a loopback API URL; migration readiness comes from the existing running Worker's readiness and is skipped while offline, without creating local state. `--target cloudflare-remote` needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` and performs only the selected D1 ledger read. Never substitute a remote target for an unavailable local Worker.
+
+`--json` prints one deterministic report with ordered checks and safe recovery guidance. Exit codes: `0` passing/expected setup, `3` invalid arguments, `4` failed compatibility/settings, `5` failed migration state, `6` failed infrastructure/probe. Mixed failures prioritize `4`, then `5`, then `6`. Each probe is limited to five seconds, total diagnosis to thirty seconds and captured data to 64 KiB. Secrets, paths and raw provider/tool errors are excluded, redirects are rejected, and diagnosis never migrates, syncs, bootstraps, starts services or creates credentials.
 
 MinIO is built once from the pinned source in `deploy/minio.Dockerfile`, requiring network access to its source and Go modules and sufficient disk space. Review `LACE_API_IMAGE` and `LACE_BUILDER_IMAGE` in `.env` and select compatible image tags.
 
@@ -50,7 +71,16 @@ Migrations are explicit and repeatable; the API does not apply them on startup. 
 
 With API/admin artifacts built after Step 28A or a later compatible release, open `/admin/` at the configured `LACE_PUBLIC_BASE_URL` origin. The browser shows setup while installation setup is incomplete. Enter your email, a password of 12–1024 characters, and the operator-issued bootstrap token, then create the administrator and sign in normally. The token expires after one hour. After an interruption, retry with the same token and email; the browser checks whether setup completed before offering another submission. Completed setup remains closed and later visitors see sign-in.
 
-The originally published `0.1.0-alpha.1` artifacts predate browser setup. The existing API alternative works with those artifacts too: `POST /api/v1/setup/admin` with exactly `token`, `email`, and `password`. This Bash snippet prompts privately without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
+The originally published `0.1.0-alpha.1` artifacts predate browser setup. As an alternative, including for those artifacts, create the first admin through `POST /api/v1/setup/admin` using exactly `token`, `email`, and `password` (12–1024 characters). For a concise placeholder-only request, replace `<PUBLIC_API_BASE_URL>` with the configured `LACE_PUBLIC_BASE_URL`, keeping any path prefix and trailing slash. Use the one-time token just issued by `pnpm auth:bootstrap` and a password of at least 12 characters:
+
+```bash
+curl --fail-with-body --silent --show-error --request POST \
+  '<PUBLIC_API_BASE_URL>api/v1/setup/admin' \
+  --header 'Content-Type: application/json' \
+  --data '{"token":"<SETUP_TOKEN>","email":"<ADMIN_EMAIL>","password":"<PASSWORD_AT_LEAST_12_CHARACTERS>"}'
+```
+
+Real credentials substituted inline are exposed in shell history and process arguments. Prefer this private-input Bash snippet: it prompts through the terminal without recording credentials in shell history, loads the API origin from `.env`, and prints only status:
 
 ```bash
 bash <<'SH'

@@ -3,17 +3,30 @@ import { EXIT, loadEnvironment, parseArguments, presentResult, usage } from "./i
 import { runUpgradeCommand, upgradeUsage } from "./upgrade-command.js";
 import { describeFailure, failureDiagnostic, identifyOperation } from "./diagnostics.js";
 import type { Target } from "./index.js";
+import { doctorUsage, parseDoctorArguments } from "./doctor-report.js";
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-    console.info(`${usage}\n${upgradeUsage}`);
+    console.info(`${usage}\n${doctorUsage}\n${upgradeUsage}`);
     return EXIT.OK;
   }
   const json = argv.includes("--json");
   const operation = identifyOperation(argv);
   let target: Target = "node";
   try {
+    if (argv[0] === "doctor") {
+      if (argv.length === 2 && (argv[1] === "--help" || argv[1] === "-h")) {
+        console.info(doctorUsage);
+        return EXIT.OK;
+      }
+      const options = parseDoctorArguments(argv.slice(1));
+      target = options.target;
+      const { runDoctor } = await import("./doctor.js");
+      const result = await runDoctor(options);
+      console.info(result.output);
+      return result.exitCode;
+    }
     if (argv[0] === "upgrade") {
       if (argv.length === 2 && (argv[1] === "--help" || argv[1] === "-h")) {
         console.info(upgradeUsage);

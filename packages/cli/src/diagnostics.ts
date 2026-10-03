@@ -1,7 +1,7 @@
 import { CliError, EXIT, type Command, type Target } from "./index.js";
 import { UpgradeError } from "./upgrade-input.js";
 
-export type Operation = Command | "upgrade" | "cli";
+export type Operation = Command | "upgrade" | "doctor" | "cli";
 export type DiagnosticKind =
   | "permission"
   | "path"
@@ -23,6 +23,7 @@ export interface Diagnostic {
 
 /** Recognize command words only; never interpolate supplied arguments. */
 export function identifyOperation(argv: readonly string[]): Operation {
+  if (argv[0] === "doctor") return "doctor";
   if (argv[0] === "upgrade") return "upgrade";
   const words = argv.filter(
     (word, index) => !word.startsWith("--") && argv[index - 1] !== "--target",

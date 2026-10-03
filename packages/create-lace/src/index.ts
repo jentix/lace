@@ -31,6 +31,7 @@ export interface GenerateOptions {
 export interface GeneratedProject {
   readonly path: string;
   readonly manifest: ProjectManifest;
+  readonly readmePreserved: boolean;
   readonly warning?: string;
 }
 
@@ -111,6 +112,7 @@ function errorMessage(error: unknown): string {
 /** Generate in a sibling directory, then publish the completed tree. */
 export async function generateProject(options: GenerateOptions): Promise<GeneratedProject> {
   const { path: target, entries, exists } = await validateTarget(options.target);
+  const readmePreserved = entries.includes("README.md");
   const stage = await mkdtemp(join(dirname(target), `.${basename(target)}.lace-stage-`));
   let backup: string | undefined;
   let published = false;
@@ -122,6 +124,10 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     const files: Record<string, { owner: "user" } | { owner: "managed"; sha256: string }> = {};
     for (const file of TEMPLATE_FILES) {
       if (file.cloudflare && !options.cloudflare) continue;
+      if (file.path === "README.md" && readmePreserved) {
+        files[file.path] = { owner: "user" };
+        continue;
+      }
       const bytes = renderTemplate(
         await readFile(join(TEMPLATE_ROOT, file.path)),
         packageName(target),
@@ -168,12 +174,13 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
         return {
           path: target,
           manifest,
+          readmePreserved,
           warning: `Project was created, but the original backup remains at ${backup}. Inspect it before removal. Cleanup error: ${errorMessage(cleanupError)}`,
         };
       }
       backup = undefined;
     }
-    return { path: target, manifest };
+    return { path: target, manifest, readmePreserved };
   } catch (error) {
     const recover: string[] = [];
     if (!published && backup !== undefined) {
@@ -240,7 +247,9 @@ export async function runCli(
     const result = await generateProject({ target, cloudflare: flags.includes("--cloudflare") });
     stdout.write(`Created Lace project at ${result.path}\n`);
     stdout.write(
-      "Next: follow docs/lace-operations.md for environment, first-admin setup, publication and build.\n",
+      result.readmePreserved
+        ? "Preserved existing README.md. Follow docs/lace-operations.md for Lace setup; manually copy relevant instructions into your README if desired.\n"
+        : "Next: follow README.md for setup, first admin and publication; see docs/lace-operations.md for detailed operation.\n",
     );
     if (result.warning !== undefined) stderr.write(`${result.warning}\n`);
     return 0;
