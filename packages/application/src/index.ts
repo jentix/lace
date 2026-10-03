@@ -737,3 +737,8 @@ export interface MediaDeletionDispatchPort {
 
 export * from "./content-use-cases.js";
 export * from "./media-use-cases.js";
+
+/** Authorizes read-only installation metadata with the existing content permission. */
+export function requireContentReader(actor: Actor): void {
+  requirePermission(actor, "content:read");
+}

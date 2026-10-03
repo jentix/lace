@@ -1715,6 +1715,14 @@ Step 21's fixed-command, single-site, and atomic-release contracts.
 
 ### Session 29A — Operator-selected Astro source
 
+**Completed:** 2026-10-03. Explicit generated, standalone and workspace source
+selection, current-site API/admin identity and ownership-safe template 0.7.0
+guidance are implemented. Real local consumer builds, correction/retry, missing
+binds, concurrent trigger serialization and the reference `apps/site` mount are
+verified. See [29A verification](archive/step-29/step-29a-verification.md) and
+[tested artifacts](archive/step-29/step-29a-artifacts.json). Publication visibility
+verification remains 29B; these local checks do not claim a remote deployment.
+
 1. Define deployment-time selection of the site source, installation/workspace
    root, lockfile, and static output. Support the generated `site/` default and
    a separately configured existing Astro site alongside a CMS subdirectory.

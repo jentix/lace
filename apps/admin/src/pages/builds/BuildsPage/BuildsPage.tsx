@@ -1,3 +1,4 @@
+import { CurrentBuildSite } from "../../../widgets/current-build-site/index.js";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Hammer, RotateCw } from "lucide-react";
 import { useState } from "react";
@@ -99,6 +100,7 @@ export function BuildsPage() {
           </Button>
         ) : undefined}
       </div>
+      <CurrentBuildSite />
       {queuedVersion === null ? undefined : (
         <p className="m-0 text-sm text-success" role="status">
           Build for published version {queuedVersion} queued. It will appear after dispatch.

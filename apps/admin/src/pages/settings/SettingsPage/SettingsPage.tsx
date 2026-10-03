@@ -1,3 +1,4 @@
+import { CurrentBuildSite } from "../../../widgets/current-build-site/index.js";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { KeyRound } from "lucide-react";
@@ -41,6 +42,7 @@ function SettingsManager() {
           Check the site's API and manage the read-only tokens its builds use.
         </p>
       </div>
+      <CurrentBuildSite />
       <SiteStatusCards
         activeTokens={items?.filter((token) => token.revokedAt === undefined).length}
         error={status.error}

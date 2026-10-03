@@ -1,4 +1,6 @@
 import {
+  buildSiteSelectionSchema,
+  type BuildSiteSelectionDto,
   setupStateSchema,
   setupAdminRequestSchema,
   type SetupStateDto,
@@ -46,6 +48,7 @@ import {
 import * as v from "valibot";
 
 export const adminQueryKeys = Object.freeze({
+  buildSite: ["admin", "build-site"] as const,
   builds: ["admin", "builds"] as const,
   buildDetail: (buildId: string) => ["admin", "builds", buildId] as const,
   settingsStatus: ["admin", "settings", "status"] as const,
@@ -106,6 +109,7 @@ export class AdminClientError extends Error {
 export interface AdminClient {
   loadSetupState(): Promise<SetupStateDto>;
   setupAdmin(input: { email: string; password: string; token: string }): Promise<void>;
+  loadBuildSite(): Promise<BuildSiteSelectionDto>;
   listBuilds(): Promise<SiteBuildListDto>;
   getBuild(buildId: string): Promise<SiteBuildRecordDto>;
   requestBuild(): Promise<BuildQueueReceiptDto>;
@@ -352,6 +356,8 @@ export function createAdminClient(injected?: Fetcher, uploader?: MediaUploader):
         });
       }
     },
+    loadBuildSite: async () =>
+      parse(buildSiteSelectionSchema, await request(fetcher, "/api/v1/admin/build-site")),
     listBuilds: async () =>
       parse(siteBuildListSchema, await request(fetcher, "/api/v1/admin/site-builds")),
     getBuild: async (buildId: string) =>

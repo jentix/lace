@@ -16,6 +16,22 @@ const model = {
   version: 1,
 };
 
+test("reads only a validated credentialed build-site identity", async () => {
+  const fetcher = vi.fn(async () => Response.json({ site: { id: "site", label: "Site" } }));
+  await expect(createAdminClient(fetcher).loadBuildSite()).resolves.toEqual({
+    site: { id: "site", label: "Site" },
+  });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/admin/build-site",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  await expect(
+    createAdminClient(async () =>
+      Response.json({ site: { id: "site", label: "/private/secret" } }),
+    ).loadBuildSite(),
+  ).rejects.toBeInstanceOf(AdminClientError);
+});
+
 test("reads validated build history and sends administrator build commands", async () => {
   const build = {
     id: "build-1",

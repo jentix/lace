@@ -30,6 +30,7 @@ async function fixture({
   models,
   builds,
   security,
+  buildSite,
 } = {}) {
   const config = await defineConfig({
     blocks: [
@@ -82,6 +83,7 @@ async function fixture({
     adminAssets: { fetch: async () => new Response("admin-shell") },
     config,
     content,
+    buildSite,
     ...(builds === undefined ? {} : { builds }),
     ...(security === undefined ? {} : { security }),
     environment: { engineVersion: "0.0.0-test", openApiTitle: "Lace test" },
@@ -972,4 +974,32 @@ test("setup persistence failure never reports an incomplete installation", async
   const body = await response.text();
   expect(body).not.toContain("SQL");
   expect(body).not.toContain("setupComplete");
+});
+
+test.each([admin, editor, { id: actorId("viewer"), role: "viewer" }])(
+  "current build site is a safe read for $role",
+  async (actor) => {
+    const site = { id: "public-site", label: "Public site" };
+    const { app } = await fixture({ actor, buildSite: site });
+    const response = await app.fetch(new Request("https://lace.test/api/v1/admin/build-site"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ site });
+    expect(
+      (
+        await app.fetch(
+          new Request("https://lace.test/api/v1/admin/build-site", { method: "POST" }),
+        )
+      ).status,
+    ).toBe(404);
+  },
+);
+test("current build site is unknown by default and anonymous reads fail", async () => {
+  const { app } = await fixture();
+  expect(
+    await (await app.fetch(new Request("https://lace.test/api/v1/admin/build-site"))).json(),
+  ).toEqual({ site: null });
+  const anonymous = (await fixture({ actor: null })).app;
+  expect(
+    (await anonymous.fetch(new Request("https://lace.test/api/v1/admin/build-site"))).status,
+  ).toBe(403);
 });

@@ -1,3 +1,4 @@
+import { buildSiteJourney } from "./build-site-acceptance.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -102,12 +103,23 @@ async function captureSnapshot(project) {
   const manifest = JSON.parse(manifestText);
   const classified = Object.keys(manifest.files).sort();
   if (
-    JSON.stringify(tree.filter((path) => path !== ".lace/manifest.json")) !==
-    JSON.stringify(classified)
+    JSON.stringify(
+      tree.filter(
+        (path) => ![".lace/manifest.json", ".lace/upgrade-instructions.json"].includes(path),
+      ),
+    ) !== JSON.stringify(classified)
   ) {
     throw new Error("snapshot: unclassified generated files");
   }
   const digests = {};
+  const instructions = JSON.parse(
+    await readFile(join(project, ".lace/upgrade-instructions.json"), "utf8"),
+  );
+  if (instructions.templateVersion !== manifest.templateVersion || instructions.schemaVersion !== 1)
+    throw new Error("snapshot: invalid upgrade instruction metadata");
+  digests[".lace/upgrade-instructions.json"] = createHash("sha256")
+    .update(await readFile(join(project, ".lace/upgrade-instructions.json")))
+    .digest("hex");
   for (const path of classified) {
     const bytes = await readFile(join(project, path));
     const digest = createHash("sha256").update(bytes).digest("hex");
@@ -1259,7 +1271,9 @@ async function inspectShipping(context) {
 
 async function main() {
   const phase = process.argv[2] ?? "all";
-  if (!["release", "packages", "node", "all", "snapshots", "self-test"].includes(phase)) {
+  if (
+    !["release", "packages", "node", "all", "build-site", "snapshots", "self-test"].includes(phase)
+  ) {
     throw new Error(`Unknown acceptance phase: ${phase}`);
   }
   const parent = await mkdtemp(join(tmpdir(), "lace-generated-acceptance-"));
@@ -1351,6 +1365,18 @@ async function main() {
   const session = await nodeJourney(context);
   if (phase === "node") return;
   await productionSmoke(context, session);
+  if (phase === "build-site") {
+    await buildSiteJourney(context, session, {
+      compose,
+      request,
+      run,
+      waitBuild,
+      writeEnvironment,
+      secretValues,
+      referenceRoot: workspace,
+    });
+    return;
+  }
   await cloudflareSmoke(context, tarballs);
 }
 

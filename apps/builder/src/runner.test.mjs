@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   writeFile,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +32,12 @@ async function fixture() {
     "pnpm-workspace.yaml",
     "apps/site/package.json",
   ])
-    await writeFile(join(source, file), "{}");
+    await writeFile(
+      join(source, file),
+      file.endsWith("site/package.json")
+        ? JSON.stringify({ dependencies: { astro: "7.3.1" } })
+        : "{}",
+    );
   await writeFile(join(source, ".env"), "SECRET=do-not-copy");
   const tool = join(root, "fake-pnpm");
   await writeFile(
@@ -40,11 +46,16 @@ async function fixture() {
 if [ "$1" = "install" ]; then
   test "$2" = "--frozen-lockfile" || exit 1
   test ! -e .env || exit 1
+  mkdir -p apps/site/node_modules/astro
   exit 0
 fi
-test "$1" = "--filter" || exit 1
-test "$2" = "@lacecms/app-site..." || exit 1
-test "$3" = "build" || exit 1
+test "$1" = "--dir" || exit 1
+test "$2" = "apps/site" || exit 1
+test "$3" = "exec" || exit 1
+test "$4" = "astro" || exit 1
+test "$5" = "build" || exit 1
+test "$6" = "--outDir" || exit 1
+test "$7" = "dist" || exit 1
 test ! -e fail-build || exit 1
 mkdir -p apps/site/dist
 echo '<h1>ok</h1>' > apps/site/dist/index.html
@@ -54,6 +65,8 @@ echo '<h1>ok</h1>' > apps/site/dist/index.html
   let version = 1;
   const builder = new FixedCommandBuilder({
     sourceRoot: source,
+    siteDirectory: "apps/site",
+    outputDirectory: "dist",
     workRoot: join(root, "work"),
     outputRoot: join(root, "output"),
     apiBaseUrl: "http://api.test/",
@@ -104,6 +117,8 @@ test("version advancement during a build leaves output unpublished", async () =>
   let reads = 0;
   const builder = new FixedCommandBuilder({
     sourceRoot: source,
+    siteDirectory: "apps/site",
+    outputDirectory: "dist",
     workRoot: join(root, "work-advanced"),
     outputRoot: join(root, "output-advanced"),
     apiBaseUrl: "http://api.test/",
@@ -163,24 +178,32 @@ test("builds the exact generated site layout with fixed commands", async () => {
   const { root, source, tool } = await fixture();
   await rm(join(source, "apps"), { recursive: true });
   await mkdir(join(source, "site"));
-  await writeFile(join(source, "site/package.json"), "{}");
+  await writeFile(
+    join(source, "site/package.json"),
+    JSON.stringify({ dependencies: { astro: "7.3.1" } }),
+  );
   await writeFile(
     tool,
     `#!/bin/sh
 if [ "$1" = "install" ]; then
   test "$2" = "--frozen-lockfile" || exit 1
   test "$#" = "2" || exit 1
+  mkdir -p site/node_modules/astro
   exit 0
 fi
 test "$1" = "--dir" || exit 1
 test "$2" = "site" || exit 1
-test "$3" = "build" || exit 1
+test "$3" = "exec" || exit 1
+test "$4" = "astro" || exit 1
+test "$5" = "build" || exit 1
 mkdir -p site/dist
 echo '<h1>generated</h1>' > site/dist/index.html
 `,
   );
   const builder = new FixedCommandBuilder({
     sourceRoot: source,
+    siteDirectory: "site",
+    outputDirectory: "dist",
     workRoot: join(root, "generated-work"),
     outputRoot: join(root, "generated-output"),
     apiBaseUrl: "http://api.test/",
@@ -195,4 +218,69 @@ echo '<h1>generated</h1>' > site/dist/index.html
   expect(await readFile(join(root, "generated-output", current, "index.html"), "utf8")).toContain(
     "generated",
   );
+});
+
+test("standalone Astro build uses its root lockfile and selected custom output", async () => {
+  const { root, source, tool } = await fixture();
+  await rm(join(source, "pnpm-workspace.yaml"));
+  await writeFile(
+    join(source, "package.json"),
+    JSON.stringify({ dependencies: { astro: "7.3.1" } }),
+  );
+  await writeFile(
+    tool,
+    `#!/bin/sh
+if [ "$1" = "install" ]; then
+  test "$#" = "2" || exit 1
+  mkdir -p node_modules/astro
+  exit 0
+fi
+test "$1" = "--dir" && test "$2" = "." && test "$3" = "exec" && test "$4" = "astro" && test "$5" = "build" && test "$6" = "--outDir" && test "$7" = "release" || exit 1
+mkdir release
+echo '<h1>real-standalone</h1>' > release/index.html
+`,
+  );
+  const builder = new FixedCommandBuilder({
+    sourceRoot: source,
+    siteDirectory: ".",
+    outputDirectory: "release",
+    workRoot: join(root, "standalone-work"),
+    outputRoot: join(root, "standalone-output"),
+    apiBaseUrl: "http://api.test/",
+    buildToken: "token",
+    toolPath: tool,
+    versionReader: async () => 1,
+  });
+  expect(await builder.build({ buildId: "standalone", targetVersion: 1 })).toEqual({
+    status: "succeeded",
+  });
+  expect(await readFile(join(root, "standalone-output/current/index.html"), "utf8")).toContain(
+    "real-standalone",
+  );
+});
+
+test("linked output cannot replace a successful current release", async () => {
+  const { builder, root, source, tool } = await fixture();
+  expect((await builder.build({ buildId: "first", targetVersion: 1 })).status).toBe("succeeded");
+  const current = await readlink(join(root, "output/current"));
+  await writeFile(
+    tool,
+    `#!/bin/sh
+if [ "$1" = "install" ]; then mkdir -p apps/site/node_modules/astro; exit 0; fi
+mkdir -p apps/site/dist
+echo '<h1>unsafe</h1>' > apps/site/unsafe.html
+ln -s ../unsafe.html apps/site/dist/index.html
+`,
+  );
+  expect(await builder.build({ buildId: "unsafe", targetVersion: 1 })).toEqual({
+    status: "failed",
+    reason: "build_failed",
+  });
+  expect(await readlink(join(root, "output/current"))).toBe(current);
+  await symlink("apps/site", join(source, "linked"));
+  expect(await builder.build({ buildId: "linked-source", targetVersion: 1 })).toEqual({
+    status: "failed",
+    reason: "source_invalid",
+  });
+  expect(await readlink(join(root, "output/current"))).toBe(current);
 });

@@ -136,6 +136,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
       const output = join(stage, file.path);
       await mkdir(dirname(output), { recursive: true });
       await writeFile(output, bytes, { flag: "wx" });
+      if (file.metadata) continue;
       files[file.path] =
         file.owner === "managed"
           ? { owner: "managed", sha256: createHash("sha256").update(bytes).digest("hex") }
@@ -148,7 +149,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
         Object.entries(files).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
       ),
     };
-    await mkdir(join(stage, ".lace"));
+    await mkdir(join(stage, ".lace"), { recursive: true });
     await writeFile(join(stage, ".lace/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, {
       flag: "wx",
     });

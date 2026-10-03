@@ -6,7 +6,7 @@ Start with the generated root `README.md` for the concise quickstart. README is 
 
 ## Prerequisites and generation
 
-Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.6.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
+Use Node `>=24.12.0 <25`, pnpm 12 and Docker Compose. Obtain compatible Lace packages, generator and API/builder image tags from the same release. This source template uses ownership template `0.7.0`; published Lace `0.1.0-alpha.1` packages/images retain their original template and behavior. The root quickstart and concise setup example require a generator built from Step 27B; its commands also need current matching packages/images. Package and image coordinates remain `0.1.0-alpha.1` until the separate coherent alpha artifact refresh. The npm alpha channel is `next`; use the exact version below for reproducible generation of that published alpha's template, not a claim that it includes the current source quickstart. These coordinates become downloadable only after owner publication. Before publication, repository verification uses local artifacts; ordinary consumers must wait for a compatible publication rather than patch dependency references.
 
 After the owner publishes the complete compatible alpha set, generate and install:
 
@@ -156,3 +156,37 @@ Block keys are unique within an entry, so scope instance selectors by entry. Bui
 ## Optional Cloudflare Pages
 
 `--cloudflare` adds Pages config and a manual workflow. After a build against your configured API, run `pnpm exec wrangler pages dev site/dist` for local Pages preview. Workflow installation needs compatible published packages; provide API/public URLs and build credentials in CI, never generated files. The CMS Worker is a separate versioned deployment. Complete Cloudflare consumer onboarding, real deployment, artifact preparation and the stable-MVP gate remain separate work.
+
+## Selecting the build site
+
+Template `0.7.0` requires compatible freshly built Step 29A or later API, admin, CLI and builder artifacts (or a later compatible published release). Published alpha images are not retroactively updated; this configuration does not publish or download replacement artifacts. Upgrade managed infrastructure with conflict review, retain user-owned README/site/config and manually incorporate guidance in an existing README.
+
+The builder mounts `LACE_BUILD_SOURCE_ROOT` from the host read-only at `/source`. Compose resolves a relative host path against its project directory and refuses to create a missing source directory. Container paths are separate: `LACE_BUILD_SITE_DIR` selects an Astro project relative to `/source`, and `LACE_BUILD_OUTPUT_DIR` selects a static result relative to that project. Install uses `/source/pnpm-lock.yaml` and its root package/workspace declarations, with frozen pnpm and the image-pinned toolchain. It never guesses which example to build. Served releases remain in the shared `/output` volume; your host `dist` is not overwritten.
+
+| Layout                                        | Host source root | Site directory | Output directory |
+| --------------------------------------------- | ---------------- | -------------- | ---------------- |
+| Generated CMS project                         | `.`              | `site`         | `dist`           |
+| Existing standalone Astro root, CMS in `cms/` | `..`             | `.`            | `dist`           |
+| Existing workspace with `web/` and `cms/`     | `..`             | `web`          | `dist`           |
+
+Set these values in the CMS `.env`. For the standalone parent-root example:
+
+```dotenv
+LACE_BUILD_SOURCE_ROOT=..
+LACE_BUILD_SITE_DIR=.
+LACE_BUILD_OUTPUT_DIR=dist
+LACE_BUILD_SITE_ID=public-site
+LACE_BUILD_SITE_LABEL="Public site"
+```
+
+The selected root must contain its regular `package.json` and `pnpm-lock.yaml`; a selected workspace package needs the root `pnpm-workspace.yaml` and must belong to that installation. Mount an independent site's own lockfile root rather than choose a package with a separate nested lockfile. Astro must be a direct dependency/dev dependency of the selected package. Paths cannot be absolute inside `/source`, escape with `..`, contain symlinks or select source/configuration directories as output. `.` is permitted only for the site directory. Existing output, dependencies, Git, environment credentials and nested CMS `.lace/data` are filtered from scratch copies.
+
+An existing site requires user-owned routes, renderers and a server-only `@lacecms/sdk` published-export loader. The generated `site/src/lib/site-data.ts` and renderers are integration references: preserve one validated export per static build, expected published-version validation, draft isolation, all five built-in block renderers, safe rich text/URLs and public media origins. This selection does not install components or modify your existing source, and `create-lace init .` still requires an empty target. Install compatible dependencies and commit a reproducible pnpm lockfile in the selected root before building.
+
+The image runs frozen installation followed by direct `pnpm --dir <selected-site> exec astro build --outDir <selected-output>`. Custom package build/prebuild scripts are not selected. Only static Astro output is served; SSR/server output, incomplete output, linked files, frozen-install failure and version mismatch fail the build. The trusted site configuration and normal dependency hooks still execute during installation/Astro compilation. There is no custom command or extra environment forwarding interface.
+
+`LACE_BUILD_SITE_ID` is a 1–64 character lowercase kebab-case name. `LACE_BUILD_SITE_LABEL` is a 1–80 character display name using ASCII letters/digits, spaces, hyphens and underscores, beginning/ending with a letter or digit. Supply names, never paths, URLs or credentials. Generated Compose supplies the same identity to API and builder. For manual Node/Worker deployments set the identity explicitly; absent identity is shown as unconfigured. Builds shows current configuration separately from historical build records; it does not verify mount accessibility or provider completion.
+
+Review `docker compose config` privately, then recreate affected services using compatible images with `docker compose up -d --force-recreate api dispatcher builder`. Use the existing administrator Request build/Retry build actions in Builds. If a mount is missing or inaccessible, correct the host bind and permissions; if installation/build fails, correct the selected dependencies/lockfile/source and retry. The trigger still accepts only build ID and published version; no HTTP request can change source, command, arguments or environment. A failed build preserves the current complete release until a successful retry switches it atomically. Keep internal `http://api:3000/` export transport separate from `LACE_PUBLIC_BASE_URL` for browser-facing media. Stop without deleting volumes to preserve data and releases.
+
+This section defines deployment selection. Dev refresh, manual deployment and automatic publication visibility are verified separately in Step 29B; do not infer their success from a configured identity.

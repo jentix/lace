@@ -56,6 +56,54 @@
         }
       }
     },
+    "/api/v1/admin/build-site": {
+      "get": {
+        "operationId": "getApiV1AdminBuildSite",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "site": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "maxLength": 80,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+                              "type": "string"
+                            }
+                          },
+                          "required": ["id", "label"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["site"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Current configuration, not deployment verification"
+          }
+        },
+        "summary": "Read current configured build site"
+      }
+    },
     "/api/v1/admin/builds": {
       "post": {
         "operationId": "postApiV1AdminBuilds",

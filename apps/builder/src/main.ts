@@ -12,6 +12,8 @@ if (secret === undefined || apiBaseUrl === undefined || buildToken === undefined
 
 const builder = new FixedCommandBuilder({
   sourceRoot: "/source",
+  siteDirectory: process.env.LACE_BUILD_SITE_DIR ?? "site",
+  outputDirectory: process.env.LACE_BUILD_OUTPUT_DIR ?? "dist",
   workRoot: "/work",
   outputRoot: "/output",
   apiBaseUrl,
