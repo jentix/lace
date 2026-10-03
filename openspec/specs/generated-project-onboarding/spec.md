@@ -18,7 +18,7 @@ Generated projects SHALL document generation, dependency installation, environme
 - **THEN** the guide explains that completed setup refuses bootstrap and expired setup requires a newly issued token, without suggesting default credentials
 
 ### Requirement: Generated starter renders published exports with owned safe renderers
-The generated home and posts models SHALL permit all five built-in blocks. The site SHALL derive home and canonical blog routes from one validated authenticated published export per static build, preserving block order, safe structural rich-text rendering and stable entry, block and part styling hooks. Renderers and their helpers SHALL be user-owned. Unknown blocks SHALL fail with model, entry and block identifiers. Missing home, unavailable API and rejected/missing build credentials SHALL produce actionable diagnostics without revealing credentials; failed export reads SHALL be retryable. Drafts SHALL NOT affect static output until publication. Build credentials SHALL NOT appear in static output or browser configuration.
+The generated home and posts models SHALL permit all five built-in blocks. The site SHALL derive home and canonical blog routes from one validated authenticated published export per static build, preserving block order, safe structural rich-text rendering and stable entry, block and part styling hooks. In Astro development the site SHALL revalidate that export with its entity tag on each render so published changes to existing routes appear on reload, and post pages SHALL read the current published entry for their slug rather than route data cached at startup. Renderers and their helpers SHALL be user-owned. Unknown blocks SHALL fail with model, entry and block identifiers. Missing home, unavailable API and rejected/missing build credentials SHALL produce actionable diagnostics without revealing credentials; failed export reads SHALL be retryable. Drafts SHALL NOT affect static or dev output until publication. Build credentials SHALL NOT appear in static output or browser configuration.
 
 #### Scenario: Complete published starter build
 - **WHEN** the export contains published home and posts with hero, richText, image, quote and cta blocks
@@ -31,6 +31,10 @@ The generated home and posts models SHALL permit all five built-in blocks. The s
 #### Scenario: Later draft exists
 - **WHEN** a draft is edited after publication
 - **THEN** the built title, route and blocks still come exclusively from the published export
+
+#### Scenario: Development revalidation
+- **WHEN** generated Astro dev renders again after an unchanged or changed publication
+- **THEN** it sends a conditional export request, reuses the validated export on not-modified, and renders the newly published content after a change
 
 ### Requirement: Builder transport and media origins are independently configured
 Generated Compose SHALL use an internal API URL for authenticated build exports and a separately configured browser-facing public API base URL for rendered media. Local Astro development/build SHALL support the same distinct settings and preserve intentional public URL path prefixes.
@@ -86,7 +90,7 @@ README and operations SHALL include the same short placeholder-only `curl` examp
 - **THEN** the guide directs unfinished setup to bootstrap again and completed setup to existing-admin login without reopening registration
 
 ### Requirement: External site operation documents mount and integration prerequisites
-The operations guide SHALL document generated and external-site selection for Node/VPS, including a standalone Astro root containing `cms/`, a workspace root containing the selected site and CMS packages, root lockfile ownership, read-only bind accessibility, container-relative selection and fixed release storage. It SHALL identify the currently configured safe site identity, teach operators to configure the same identity for API and builder and restart affected services, and explain that identity is configuration rather than deployment verification. External sites SHALL require an existing compatible Astro dependency, pnpm lockfile and user-owned published-export SDK loader/routes/renderers with server-only credentials and expected published-version handling. Documentation SHALL preserve separate internal export and browser-facing media origins, give sanitized failure/retry guidance, and explain that failed builds preserve the last served release. It SHALL NOT promise automatic existing-site modification, renderer installation, generator initialization in a populated directory or dev refresh behavior not verified in 29B.
+The operations guide SHALL document generated and external-site selection for Node/VPS, including a standalone Astro root containing `cms/`, a workspace root containing the selected site and CMS packages, root lockfile ownership, read-only bind accessibility, container-relative selection and fixed release storage. It SHALL identify the currently configured safe site identity, teach operators to configure the same identity for API and builder and restart affected services, and explain that identity is configuration rather than deployment verification. External sites SHALL require an existing compatible Astro dependency, pnpm lockfile and user-owned published-export SDK loader/routes/renderers with server-only credentials and expected published-version handling. Documentation SHALL preserve separate internal export and browser-facing media origins, give sanitized failure/retry guidance, and explain that failed builds preserve the last served release. For an existing site's own dev integration it SHALL explain the verified behavior: data read in page code on each render appears on reload, data passed through cached `getStaticPaths` props and new routes appear after restarting Astro dev. It SHALL NOT promise automatic existing-site modification, renderer installation or generator initialization in a populated directory.
 
 #### Scenario: Existing standalone Astro site
 - **WHEN** an operator follows the parent-root example from a generated `cms/` directory
@@ -99,3 +103,14 @@ The operations guide SHALL document generated and external-site selection for No
 #### Scenario: Mount or build fails
 - **WHEN** the selected source is missing or a frozen install or Astro build fails
 - **THEN** the guide describes checking deployment mounts and dependencies, correcting source and retrying without claiming deployment success or replacing the previous release
+
+#### Scenario: Existing site in Astro dev
+- **WHEN** an operator integrates an existing site and runs its Astro dev server
+- **THEN** the guide explains which reads appear on reload and which require a dev restart, without prescribing a restart after every publication
+
+### Requirement: Generated guides explain publication visibility per mode
+The generated README and operations guide SHALL separately explain draft save, CMS publication, Astro dev visibility, manual static build and deployment, and automatic Compose build/release visibility. They SHALL state that dev shows publications to existing routes on reload and needs a restart for new or renamed slugs, token or environment changes; that a manual static build requires a fresh build and the operator's own deployment; and that Compose serves content after a succeeded covering build, keeps the previous release on failure, may serve a release moments before Builds records success, and sends revalidating cache headers. They SHALL direct operators to Builds for pending/running/succeeded/failed state and SHALL NOT claim dev, manual or provider deployment success from CMS publication state.
+
+#### Scenario: Operator publishes in each mode
+- **WHEN** an operator follows the guide after publishing a change
+- **THEN** the documented next action for dev, manual static and Compose produces the observed visible result without an unnecessary restart or rebuild

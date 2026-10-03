@@ -1,4 +1,5 @@
 import { buildSiteJourney } from "./build-site-acceptance.mjs";
+import { publicationVisibilityJourney } from "./publication-visibility-acceptance.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -1272,7 +1273,16 @@ async function inspectShipping(context) {
 async function main() {
   const phase = process.argv[2] ?? "all";
   if (
-    !["release", "packages", "node", "all", "build-site", "snapshots", "self-test"].includes(phase)
+    ![
+      "release",
+      "packages",
+      "node",
+      "all",
+      "build-site",
+      "publication-visibility",
+      "snapshots",
+      "self-test",
+    ].includes(phase)
   ) {
     throw new Error(`Unknown acceptance phase: ${phase}`);
   }
@@ -1375,6 +1385,10 @@ async function main() {
       secretValues,
       referenceRoot: workspace,
     });
+    return;
+  }
+  if (phase === "publication-visibility") {
+    await publicationVisibilityJourney(context, session, { request, run, secretValues });
     return;
   }
   await cloudflareSmoke(context, tarballs);

@@ -5,11 +5,14 @@ import { getSiteData } from "../../lib/site-data.js";
 
 export async function getStaticPaths() {
   const { posts } = await getSiteData();
-  return posts.map((entry) => ({ params: { slug: entry.slug }, props: { entry } }));
+  return posts.map((entry) => ({ params: { slug: entry.slug } }));
 }
 
-const { entry } = Astro.props;
-const { mediaUrl } = await getSiteData();
+// Read the current post rather than cached route props so Astro dev shows
+// publications on reload; a static build uses the same single export.
+const { mediaUrl, posts } = await getSiteData();
+const entry = posts.find((post) => post.slug === Astro.params.slug);
+if (entry === undefined) return new Response(null, { status: 404 });
 ---
 
 <BaseLayout entry={entry} title={entry.title}>

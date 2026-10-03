@@ -1,4 +1,5 @@
 import { CurrentBuildSite } from "../../../widgets/current-build-site/index.js";
+import { publicationVisibilityModes } from "../../../features/publish-entry/index.js";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Hammer, RotateCw } from "lucide-react";
 import { useState } from "react";
@@ -46,6 +47,29 @@ function BuildStatus({ status }: { readonly status: SiteBuildRecordDto["status"]
           ? "warning"
           : "secondary";
   return <Badge variant={variant}>{status[0]!.toUpperCase() + status.slice(1)}</Badge>;
+}
+
+/** Verified mode guidance; the CMS cannot tell which mode serves the site. */
+function PublicationVisibility() {
+  return (
+    <section className={cardClass} aria-labelledby="publication-visibility-title">
+      <h2 className="m-0" id="publication-visibility-title">
+        When published content becomes visible
+      </h2>
+      <dl className="m-0 grid gap-2 text-sm">
+        {publicationVisibilityModes.map((item) => (
+          <div className="grid gap-0.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-3" key={item.mode}>
+            <dt className="font-medium">{item.mode}</dt>
+            <dd className="m-0 text-muted-foreground">{item.detail}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="m-0 text-sm text-muted-foreground">
+        A self-hosted build stays pending while it runs. One build can cover several publications. A
+        recorded build does not confirm Astro dev or a manual deployment.
+      </p>
+    </section>
+  );
 }
 
 export function BuildsPage() {
@@ -101,6 +125,7 @@ export function BuildsPage() {
         ) : undefined}
       </div>
       <CurrentBuildSite />
+      <PublicationVisibility />
       {queuedVersion === null ? undefined : (
         <p className="m-0 text-sm text-success" role="status">
           Build for published version {queuedVersion} queued. It will appear after dispatch.

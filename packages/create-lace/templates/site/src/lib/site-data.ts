@@ -48,6 +48,11 @@ export interface SiteData {
 export interface SiteDataLoaderOptions {
   readonly environment?: SiteEnvironment;
   readonly fetch?: LaceFetch;
+  /**
+   * Revalidates the export with its ETag on every call. Astro dev uses this so
+   * publications appear on reload; static builds keep one export per build.
+   */
+  readonly revalidate?: boolean;
 }
 
 function toSiteEntry(value: ExportEntry): SiteEntry | undefined {
@@ -101,9 +106,11 @@ function environmentFromProcess(): SiteEnvironment {
   return process.env;
 }
 
-async function loadExport(
-  options: SiteDataLoaderOptions,
-): Promise<{ exported: BuildExport; mediaBaseUrl: string }> {
+type ExportRead =
+  | { readonly changed: false; readonly etag: string }
+  | { readonly changed: true; readonly etag: string; readonly siteData: SiteData };
+
+async function readExport(options: SiteDataLoaderOptions, etag?: string): Promise<ExportRead> {
   const environment = options.environment ?? environmentFromProcess();
   const baseUrl = environment.LACE_API_BASE_URL;
   if (
@@ -125,7 +132,7 @@ async function loadExport(
   });
   let result;
   try {
-    result = await client.getBuildExport();
+    result = await client.getBuildExport(etag === undefined ? {} : { etag });
   } catch (error) {
     if (error instanceof LaceHttpError && (error.status === 401 || error.status === 403)) {
       throw new Error(
@@ -139,28 +146,55 @@ async function loadExport(
     }
     throw error;
   }
-  if (!result.changed)
-    throw new TypeError("A live build without an ETag must receive a build export.");
+  if (!result.changed) {
+    if (etag === undefined)
+      throw new TypeError("A live build without an ETag must receive a build export.");
+    return { changed: false, etag: result.etag };
+  }
   const expectedVersion = environment.LACE_EXPECTED_PUBLISHED_VERSION;
   if (expectedVersion !== undefined && result.etag !== `"${expectedVersion}"`)
     throw new TypeError("The published-state version changed during the site build.");
-  return { mediaBaseUrl: environment.LACE_PUBLIC_BASE_URL || baseUrl, exported: result.export };
+  const media = createLaceClient({ baseUrl: environment.LACE_PUBLIC_BASE_URL || baseUrl });
+  return {
+    changed: true,
+    etag: result.etag,
+    siteData: deriveSiteData(result.export, (mediaId) => media.getPublicMediaUrl(mediaId)),
+  };
 }
 
 export async function loadSiteData(options: SiteDataLoaderOptions = {}): Promise<SiteData> {
-  const { mediaBaseUrl, exported } = await loadExport(options);
-  const client = createLaceClient({ baseUrl: mediaBaseUrl });
-  return deriveSiteData(exported, (mediaId) => client.getPublicMediaUrl(mediaId));
+  const read = await readExport(options);
+  if (!read.changed)
+    throw new TypeError("A live build without an ETag must receive a build export.");
+  return read.siteData;
 }
 
 export function createSiteDataLoader(options: SiteDataLoaderOptions = {}): () => Promise<SiteData> {
   let siteData: Promise<SiteData> | undefined;
+  if (!options.revalidate) {
+    return () => {
+      siteData ??= loadSiteData(options).catch((error: unknown) => {
+        siteData = undefined;
+        throw error;
+      });
+      return siteData;
+    };
+  }
+  let current: { readonly etag: string; readonly siteData: SiteData } | undefined;
+  let pending: Promise<SiteData> | undefined;
   return () => {
-    siteData ??= loadSiteData(options).catch((error: unknown) => {
-      siteData = undefined;
-      throw error;
-    });
-    return siteData;
+    // Concurrent calls share one conditional request; later calls revalidate.
+    pending ??= readExport(options, current?.etag)
+      .then((read) => {
+        if (read.changed) current = { etag: read.etag, siteData: read.siteData };
+        if (current === undefined)
+          throw new TypeError("A live build without an ETag must receive a build export.");
+        return current.siteData;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
+    return pending;
   };
 }
 
@@ -169,4 +203,5 @@ export const getSiteData = createSiteDataLoader({
     ...import.meta.env,
     ...process.env,
   },
+  revalidate: import.meta.env?.DEV === true,
 });

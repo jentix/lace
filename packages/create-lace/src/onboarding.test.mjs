@@ -68,6 +68,46 @@ test("generated live loader shares exports, retries failures and isolates build 
   });
 });
 
+test("generated dev loader revalidates exports with their ETag", async () => {
+  const generated = await project();
+  const fixturePath = join(workspace, "apps/site/src/fixtures/published-export.json");
+  const code = `
+    import assert from 'node:assert/strict';
+    import { readFile } from 'node:fs/promises';
+    import { createSiteDataLoader } from './src/lib/site-data.ts';
+    const fixture = JSON.parse(await readFile(${JSON.stringify(fixturePath)}, 'utf8'));
+    const environment = { LACE_API_BASE_URL: 'http://api:3000/', LACE_BUILD_TOKEN: 'private-build-credential' };
+    const conditions = [];
+    let version = 7;
+    let failNext = false;
+    const loader = createSiteDataLoader({ environment, revalidate: true, fetch: async (_url, init) => {
+      conditions.push(new Headers(init.headers).get('if-none-match'));
+      if (failNext) { failNext = false; throw new Error('connection refused'); }
+      const etag = '"' + version + '"';
+      if (new Headers(init.headers).get('if-none-match') === etag) return new Response(null, { status: 304, headers: { etag } });
+      const exported = structuredClone(fixture);
+      exported.entries[0].entry.published.title = 'Home v' + version;
+      return new Response(JSON.stringify(exported), { headers: { etag } });
+    }});
+    const [left, right] = await Promise.all([loader(), loader()]);
+    assert.equal(left, right);
+    assert.deepEqual(conditions, [null]);
+    assert.equal(await loader(), left);
+    assert.deepEqual(conditions, [null, '"7"']);
+    version = 8;
+    const changed = await loader();
+    assert.notEqual(changed, left);
+    assert.equal(changed.home.title, 'Home v8');
+    failNext = true;
+    await assert.rejects(loader(), /API is unavailable/);
+    assert.equal((await loader()).home.title, 'Home v8');
+    assert.deepEqual(conditions, [null, '"7"', '"7"', '"8"', '"8"']);
+  `;
+  await exec(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: join(generated.path, "site"),
+  });
+});
+
 test("generated Astro builds all five blocks from one export and rejects unsupported content", async () => {
   const generated = await project();
   const fixture = JSON.parse(

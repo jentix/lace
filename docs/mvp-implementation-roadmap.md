@@ -1742,6 +1742,16 @@ verification remains 29B; these local checks do not claim a remote deployment.
 
 ### Session 29B — Verify and explain publication visibility
 
+**Completed:** 2026-10-03. A packed-consumer acceptance phase reproduced the four
+modes. Generated Astro dev memoized its first export, so publications stayed
+invisible until restart; it now revalidates the export with its ETag and reads
+posts by slug, so existing routes update on reload while new/renamed slugs still
+need a dev restart. Manual static output changes only with a fresh build, and
+Compose serves a release after its covering build (pending through the
+synchronous build) with `Cache-Control: no-cache`. Template 0.8.0, generated
+guides, Builds, the entry editor and the tour explain each mode without deployment
+claims. See [29B verification](archive/step-29/step-29b-verification.md).
+
 1. Reproduce publication in generated Astro dev, the independent existing-site
    dev integration, manual static build, and Compose automatic build. Record
    actual refresh/cache behavior before proposing changes; feedback does not

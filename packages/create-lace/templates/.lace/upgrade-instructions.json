@@ -1,8 +1,11 @@
 {
   "schemaVersion": 1,
-  "templateVersion": "0.7.0",
+  "templateVersion": "0.8.0",
   "database": [],
   "configuration": [
+    "Template 0.8.0: review the managed deploy/nginx.conf change, which sends Cache-Control: no-cache for served site responses so browsers revalidate after a release switch, then recreate the web service. The proxy and operations-guide changes need no new API, admin, CLI or builder artifacts; Admin publication-visibility guidance appears with compatible freshly built Step 29B or later admin artifacts.",
+    "Site source stays user-owned and is not changed by upgrade. To see publications on reload in Astro dev, optionally adopt the generated pattern: revalidate the build export with its ETag in development while keeping one memoized export per static build, and read the current post by slug instead of getStaticPaths props. New or renamed slugs still need an Astro dev restart. See docs/lace-operations.md for each publication visibility mode.",
+    "Template 0.7.0 (included when upgrading from 0.6.0 or earlier):",
     "Use compatible freshly built Step 29A or later API, admin, CLI and builder artifacts; previously published alpha artifacts do not acquire this behavior. No package or image is published by this upgrade.",
     "Review managed Compose and environment changes. Set LACE_BUILD_SOURCE_ROOT to the host installation root containing pnpm-lock.yaml, LACE_BUILD_SITE_DIR to the relative Astro directory and LACE_BUILD_OUTPUT_DIR to its relative static output. Generated defaults are ., site and dist. For an existing standalone Astro root above cms/, use .., . and dist.",
     "Set LACE_BUILD_SITE_ID and LACE_BUILD_SITE_LABEL to safe operator-authored names shared by API and builder, then recreate the affected services. Current identity is configuration, not verification of a successful deployment.",

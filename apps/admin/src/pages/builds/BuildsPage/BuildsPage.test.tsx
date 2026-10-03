@@ -99,3 +99,24 @@ test("empty history can queue a build and a failed read can recover", async () =
   await user.click(screen.getByRole("button", { name: "Request build" }));
   expect(await screen.findByRole("status")).toHaveTextContent("version 0 queued");
 });
+
+test("every role sees verified publication visibility guidance without deployment claims", async () => {
+  for (const role of ["admin", "editor", "viewer"] as const) {
+    renderRoute(
+      "/builds",
+      createStaticSessionSource({ id: `${role}-1`, role }),
+      stubClient({ listBuilds: async () => ({ items: [] }) }),
+    );
+    const section = await screen.findByRole("region", {
+      name: "When published content becomes visible",
+    });
+    expect(section).toHaveTextContent("Saving a draft never changes the site");
+    expect(section).toHaveTextContent("Reload to see published changes to existing pages.");
+    expect(section).toHaveTextContent("Restart dev for new or renamed URLs.");
+    expect(section).toHaveTextContent("deploy its output yourself");
+    expect(section).toHaveTextContent("A failed build keeps the previous release.");
+    expect(section).toHaveTextContent("does not confirm Astro dev or a manual deployment");
+    expect(within(section).queryByRole("button")).not.toBeInTheDocument();
+    document.body.replaceChildren();
+  }
+});

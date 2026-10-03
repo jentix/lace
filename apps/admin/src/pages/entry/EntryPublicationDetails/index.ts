@@ -1,1 +1,1 @@
-export { EntryPublicationDetails, type BuildDispatchStatus } from "./EntryPublicationDetails.js";
+export { EntryPublicationDetails, type BuildDispatchResult } from "./EntryPublicationDetails.js";

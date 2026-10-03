@@ -205,7 +205,9 @@ test("admin confirms publication and sees an independent pending-build outcome",
     "entry-1",
     expect.objectContaining({ expectedRevision: 2, idempotencyKey: expect.any(String) }),
   );
-  expect(await screen.findByText("Published. Build pending.")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Published. Build for version 1 is queued and not yet recorded."),
+  ).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Publication status" })).toHaveTextContent("Published");
 });
 
@@ -235,7 +237,9 @@ test("publish retries an uncertain network outcome with the same attempt key", a
   await user.click(screen.getByRole("button", { name: "Retry publish" }));
   await waitFor(() => expect(publishEntry).toHaveBeenCalledTimes(2));
   expect(publishEntry.mock.calls[1]![1]).toEqual(publishEntry.mock.calls[0]![1]);
-  expect(await screen.findByText("Published. Build pending.")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Published. Build for version 1 is queued and not yet recorded."),
+  ).toBeInTheDocument();
 });
 
 test("a publish revision conflict leaves the loaded form available for explicit recovery", async () => {

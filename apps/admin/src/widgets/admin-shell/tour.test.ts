@@ -28,7 +28,11 @@ test("tour mirrors navigation and available actions for each role", () => {
     ])
       expect(text.includes(instruction)).toBe(role === "admin");
     expect(text).toContain("Publication does not guarantee");
-    expect(text).not.toMatch(/restart|reboot/i);
+    expect(text).toContain("Reload to see published changes to existing pages.");
+    expect(text).toContain("Restart dev for new or renamed URLs.");
+    expect(text).toContain("Run a fresh build after publishing");
+    expect(text).toContain("previous release stays served");
+    expect(text).not.toMatch(/restart[^.]*after (each|every) publication/i);
     if (role === "admin") {
       expect(text).toContain("read access only");
       expect(text).toContain("shown once");

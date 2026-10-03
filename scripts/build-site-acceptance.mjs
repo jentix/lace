@@ -302,7 +302,9 @@ try {
     JSON.stringify({
       result: "passed",
       platform: `linux/${process.arch}`,
-      templateVersion: "0.7.0",
+      templateVersion: JSON.parse(
+        await readFile(join(context.project, ".lace/manifest.json"), "utf8"),
+      ).templateVersion,
       images: images.map((image) => ({ id: image.Id, architecture: image.Architecture })),
       sites: evidence,
       identities,
